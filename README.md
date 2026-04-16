@@ -1,5 +1,9 @@
 # RailPredict: High-Efficiency UK Rail Data Engine
 
+The current version and last worked on date should be noted at the top of this file below this line:
+
+**version = "0.1.0" -- 17/04/2026**
+
 ## Project Vision
 To build a high-performance, low-latency "Shadow System" for UK Rail data that minimizes expensive API calls to Great British Railways (GBR) by using predictive logic, historical analysis, and state-machine-driven polling.
 

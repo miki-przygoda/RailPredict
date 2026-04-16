@@ -22,3 +22,5 @@ target/
 # Other:
 
 .env
+/data
+/logs
