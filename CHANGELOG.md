@@ -2,7 +2,30 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.1.0" -- 17/04/2026**
+**version = "1.1.1" -- 17/04/2026**
+
+---
+
+## v1.1.1 — 17/04/2026 — FrontEndHardening epic complete
+
+Completes all four phases of `TODOs/FrontEndHardening.md`.
+
+**Phase 3 — SSE "Live Updates Paused" banner**
+- `src/frontend/layout.rs` — existing hidden `#stale-banner` slot given `warning-banner` class and "⚠ Live updates paused — showing last known state" text; inline JS extended to listen to `htmx:sseError` (show banner + add `data-stale` to `#live-status`) and `htmx:sseOpen` (reverse on reconnect).
+- `static/style.css` — `.warning-banner` (amber background, black text); `#live-status.data-stale` (40% grayscale + amber left border).
+
+**Phase 1 — Stale data overlay**
+- `src/api/types.rs` — `DepartureBoardEntry` gains `last_updated_secs_ago: Option<u64>` and `destination_name: Option<String>`.
+- `src/frontend/search.rs` + `src/api/handlers.rs` — staleness computed from max `last_updated` across `actual_estimated_departure`, `reported_delay_mins`, `actual_platform`, `is_cancelled`; cards older than 120 s emit `data-stale="true"`.
+- `static/style.css` — `.train-card[data-stale="true"]` gets 60% grayscale + 0.75 opacity + amber `"stale"` `::after` label.
+
+**Phase 4 — Destination station on departure board cards**
+- `src/types/train_status.rs` — `pub destination_crs: Option<String>` added; initialised to `None`.
+- `src/ingestion/parser.rs` — Location handler overwrites `destination_crs` with each `tpl` so after all locations are processed it holds the final (destination) CRS.
+- `src/frontend/search.rs` — `span .train-destination { "→ " (dest) }` rendered on card. DB name lookup stubbed (renders raw CRS) pending `AppState::db` wiring.
+
+**Phase 2 — Optimistic departure board**
+- `src/frontend/search.rs` — form trigger changed from `hx-trigger="submit"` to `hx-trigger="submit, every 30s"` with `hx-swap="innerHTML transition:true"`; board stays populated between refreshes.
 
 ---
 

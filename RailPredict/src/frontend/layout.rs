@@ -21,9 +21,10 @@ pub fn base(title: &str, content: Markup) -> Markup {
                 main {
                     (content)
                 }
-                div # "stale-banner" .hidden {
-                    "Live updates paused — "
+                div # "stale-banner" .hidden ."warning-banner" {
+                    "⚠ Live updates paused — showing last known state ("
                     span # "stale-timestamp" {}
+                    ")"
                 }
                 script {
                     (PreEscaped(r#"
@@ -32,10 +33,14 @@ pub fn base(title: &str, content: Markup) -> Markup {
                             var ts = document.getElementById('stale-timestamp');
                             if (ts) ts.textContent = 'last seen ' + new Date().toLocaleTimeString();
                             if (banner) banner.classList.remove('hidden');
+                            var live = document.getElementById('live-status');
+                            if (live) live.classList.add('data-stale');
                         });
                         document.addEventListener('htmx:sseOpen', function() {
                             var banner = document.getElementById('stale-banner');
                             if (banner) banner.classList.add('hidden');
+                            var live = document.getElementById('live-status');
+                            if (live) live.classList.remove('data-stale');
                         });
                     "#))
                 }
