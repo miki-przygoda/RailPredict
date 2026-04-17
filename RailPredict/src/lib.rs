@@ -9,5 +9,6 @@ pub mod config;
 pub mod frontend;
 pub mod ingestion;
 pub mod networking;
+pub mod prediction;
 pub mod state_machine;
 pub mod types;

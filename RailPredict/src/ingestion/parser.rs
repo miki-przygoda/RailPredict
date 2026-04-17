@@ -48,6 +48,8 @@ pub enum ParsedUpdate {
 #[derive(Debug, Clone)]
 pub struct TsUpdate {
     pub rid: TrainId,
+    /// RTTI UID (e.g. "C12345") — stable service identity, used as prediction key.
+    pub uid: Option<String>,
     /// Scheduled service date — used to anchor NaiveTime departure times.
     pub ssd: NaiveDate,
     /// Scheduled public departure (from `ptd` attribute on the first Location).
@@ -124,11 +126,13 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                         let rid_str = attr_str(e, b"rid", "TS", "rid")?;
                         let ssd_str = attr_str(e, b"ssd", "TS", "ssd")?;
                         let is_cancelled = attr_bool(e, b"can");
+                        let uid = attr_opt(e, b"uid");
                         let rid = TrainId::rid(&rid_str)
                             .map_err(|err| ParseError::InvalidRid(rid_str.clone(), err))?;
                         let ssd = parse_ssd(&ssd_str)?;
                         current_ts = Some(TsUpdate {
                             rid,
+                            uid,
                             ssd,
                             scheduled_departure: None,
                             estimated_departure: None,

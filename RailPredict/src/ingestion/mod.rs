@@ -44,6 +44,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::cache::TrainRegistry;
+use crate::prediction::PredictionEngine;
 use crate::state_machine::poll_manager::StateChangeEvent;
 use crate::state_machine::train_state::{PromotionReason, TrainState};
 use crate::types::train_status::{Stamped, UpdateSource};
@@ -63,6 +64,7 @@ pub struct IngestionPipeline {
     filter: Filter,
     registry: Arc<TrainRegistry>,
     state_change_tx: broadcast::Sender<StateChangeEvent>,
+    prediction_engine: PredictionEngine,
 }
 
 impl IngestionPipeline {
@@ -71,12 +73,14 @@ impl IngestionPipeline {
         watched_routes: HashSet<String>,
         registry: Arc<TrainRegistry>,
         state_change_tx: broadcast::Sender<StateChangeEvent>,
+        prediction_engine: PredictionEngine,
     ) -> Self {
         Self {
             stomp,
             filter: Filter::new(watched_routes),
             registry,
             state_change_tx,
+            prediction_engine,
         }
     }
 
@@ -85,7 +89,7 @@ impl IngestionPipeline {
         registry: Arc<TrainRegistry>,
         state_change_tx: broadcast::Sender<StateChangeEvent>,
     ) -> Self {
-        Self::new(stomp, HashSet::new(), registry, state_change_tx)
+        Self::new(stomp, HashSet::new(), registry, state_change_tx, PredictionEngine::new())
     }
 
     /// Start the pipeline. Runs until the STOMP connection closes or all senders are dropped.
@@ -164,21 +168,41 @@ impl IngestionPipeline {
                             tracing::debug!(rid = %rid, "Registering new train from TS message");
                             let mut new_status = crate::types::TrainStatus::new(rid.clone(), sched, publ);
                             new_status.origin_crs = ts_update.station_crs.clone();
+                            new_status.uid = ts_update.uid.clone();
                             self.registry.upsert(rid.clone(), new_status);
                         }
                     }
 
+                    // Capture values needed inside the closure before borrowing self.
+                    let estimated_dep = ts_update.estimated_departure;
+                    let platform = ts_update.platform.clone();
+                    let ts_uid = ts_update.uid.clone();
+                    let engine = self.prediction_engine.clone();
+
                     // Apply live fields to registry (works whether just registered or pre-existing).
                     self.registry
                         .update(&rid, |status| {
-                            if let Some(dep) = ts_update.estimated_departure {
+                            if let Some(dep) = estimated_dep {
                                 status.actual_estimated_departure = Stamped::new(Some(dep));
+
+                                // Compute reported delay from (estimated - scheduled) in minutes.
+                                let delay_mins =
+                                    (dep - status.scheduled_departure.value).num_minutes() as i32;
+                                status.reported_delay_mins = Stamped::new(Some(delay_mins));
                             }
-                            if let Some(platform) = ts_update.platform.clone() {
-                                status.actual_platform = Stamped::new(Some(platform));
+                            if let Some(p) = platform {
+                                status.actual_platform = Stamped::new(Some(p));
+                            }
+                            // Populate uid on first sighting.
+                            if status.uid.is_none() {
+                                status.uid = ts_uid;
                             }
                             status.is_cancelled = Stamped::new(is_cancelled);
                             status.last_update_source = UpdateSource::StompFirehose;
+
+                            // Feed confirmed delay into historical store, then refresh prediction.
+                            engine.record_outcome(status);
+                            engine.predict_and_update(status);
                         })
                         .await;
 

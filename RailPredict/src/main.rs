@@ -31,6 +31,7 @@ use railpredict::cache::TrainRegistry;
 use railpredict::config::{Config, LogFormat};
 use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
+use railpredict::prediction::PredictionEngine;
 use railpredict::state_machine::PollManager;
 
 fn init_tracing(config: &Config) {
@@ -65,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "RailPredict starting");
 
     let registry = Arc::new(TrainRegistry::new());
+    let prediction_engine = PredictionEngine::new();
 
     // Single broadcast channel shared by PollManager, IngestionPipeline, and SSE handlers.
     // Buffer of 1024: at peak (~400 msg/s Darwin) this gives ~2.5 seconds headroom before
@@ -108,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
         config.watched_routes.clone(),
         Arc::clone(&registry),
         sc_tx.clone(),
+        prediction_engine,
     );
 
     let pipeline_token = token.clone();
