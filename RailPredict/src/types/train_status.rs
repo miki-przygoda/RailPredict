@@ -84,6 +84,15 @@ pub struct TrainStatus {
     pub is_cancelled: Stamped<bool>,
     pub cancellation_reason: Stamped<Option<String>>,
 
+    // --- Origin station ---
+
+    /// CRS code of the origin station, set from the first Darwin TS message.
+    pub origin_crs: Option<String>,
+
+    /// RTTI UID (e.g. "C12345") — stable service identity used as the prediction key.
+    /// `None` until the first Darwin TS message carrying a `uid` attribute is processed.
+    pub uid: Option<String>,
+
     // --- Environmental context ---
 
     pub volatility: VolatilityContext,
@@ -117,6 +126,8 @@ impl TrainStatus {
             actual_platform: Stamped::new(None),
             is_cancelled: Stamped::new(false),
             cancellation_reason: Stamped::new(None),
+            origin_crs: None,
+            uid: None,
             volatility: VolatilityContext::unknown(),
             last_update_source: UpdateSource::RestPoll,
         }

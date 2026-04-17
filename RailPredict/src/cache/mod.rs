@@ -1,0 +1,10 @@
+//! In-memory cache layer — the fast local store all read queries hit.
+//!
+//! `TrainRegistry` is the single shared store, backed by `dashmap` for concurrent reads
+//! without a global lock. The `Arc<RwLock<TrainStatus>>` per entry means readers can
+//! snapshot a train's status without blocking writers on other trains.
+
+pub mod train_registry;
+
+#[allow(unused_imports)]
+pub use train_registry::TrainRegistry;

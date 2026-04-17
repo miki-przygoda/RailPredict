@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "0.2.0" -- 17/04/2026**
+**version = "0.7.0" -- 17/04/2026**
 
 ---
 
@@ -23,42 +23,33 @@ The current version and last worked on date should be noted at the top of this f
 ## Current Epics
 
 ### ~~Epic 1 — Core Data Types~~ — COMPLETE (v0.2.0)
+### ~~Epic 2 — State Machine~~ — COMPLETE (v0.3.0)
+### ~~Epic 3 — Networking Layer~~ — COMPLETE (v0.4.0)
+### ~~Epic 4 — Data Ingestion~~ — COMPLETE (v0.5.0)
+### ~~Epic 5 — In-Memory Cache~~ — COMPLETE (v0.6.0)
 
-### Epic 2 — State Machine (`TODOs/StateMachine.md`)
-The polling pulse of the system. Depends on Epic 1 types being in place.
+### ~~Epic 6 — Runtime Wiring & Observability~~ — COMPLETE (v0.7.0)
 
-- [ ] Create `src/state_machine/` module
-- [ ] Implement `TrainState` enum: `Dormant`, `Monitored`, `Active`, `Critical`
-- [ ] Implement time-based transition logic (promotion and demotion)
-- [ ] Implement emergency promotion logic (volatility triggers)
-- [ ] Build global poll manager using `BinaryHeap` ordered by next-poll time
-- [ ] Wire up `mpsc` broadcast channel for state change notifications
+### Epic 7 — HTTP API + Rust Frontend (`TODOs/UI.md`)
+Two sub-epics: axum REST/SSE API first, then Rust/maud/htmx frontend. No Node, no npm.
 
-### Epic 3 — Networking Layer (`TODOs/Networking.md`)
-The GBR API interface with all safeguards. Depends on Epic 1 types.
+**Sub-Epic A — axum API**
+- [ ] `src/api/types.rs` — client DTOs: `TrainSummary`, `DepartureBoardEntry`, `LiveUpdateEvent`
+- [ ] `GET /stations/{crs}/departures` — Tier A, zero live calls; returns JSON or maud HTML fragment
+- [ ] `GET /trains/{rid}` — Tier B from registry, coalesced GBR fallback
+- [ ] `GET /trains/{rid}/live` — SSE stream of `LiveUpdateEvent` (maud OOB swap fragments), heartbeat every 15s
+- [ ] CORS + `TraceLayer` middleware
+- [ ] Wire axum into `main.rs` alongside existing tasks
+- [ ] API integration test
 
-- [ ] Create `src/networking/` module
-- [ ] Implement `gbr_client.rs` — `reqwest`-based GBR REST wrapper
-- [ ] Implement request coalescer (`oneshot` fan-out pattern)
-- [ ] Implement rate limiter (token bucket; configurable threshold)
-- [ ] Implement circuit breaker (503 detection → Cache Only mode → cool-down)
-
-### Epic 4 — Data Ingestion (`TODOs/DataIngestion.md`)
-Darwin STOMP firehose connection and processing pipeline. Depends on Epic 1 types.
-
-- [ ] Create `src/ingestion/` module
-- [ ] Implement STOMP client connecting to Darwin Push Port
-- [ ] Implement region/route filter (applied **before** any parsing)
-- [ ] Implement sequence-aware update logic (never overwrite newer with older)
-- [ ] Implement Darwin XML parser using `serde-xml-rs` → internal types
-
-### Epic 5 — In-Memory Cache
-The fast local store that all read queries hit. Depends on Epics 1 and 4.
-
-- [ ] Create `src/cache/` module
-- [ ] Implement `train_registry.rs` using `moka` or `dashmap`
-- [ ] Cache eviction policy (trains that have departed + buffer window)
-- [ ] Cache warm-up from Tier A static data on startup
+**Sub-Epic B — Rust/maud/htmx frontend**
+- [ ] `src/frontend/` module — `layout.rs`, `search.rs`, `detail.rs`, `components.rs`
+- [ ] `/` Search page — maud full-page render; htmx departure board swap
+- [ ] `/trains/:rid` Detail page — maud render + `hx-ext="sse"` live updates
+- [ ] Live route diagram (maud SVG, position updated by htmx OOB swap on SSE)
+- [ ] Delay badge component — `fn delay_badge(minutes, cancelled) -> Markup`
+- [ ] Stale-data banner — htmx SSE error handler reveals/dismisses
+- [ ] `rust-embed` bundles `static/style.css` into binary at compile time — no filesystem dep
 
 ---
 
