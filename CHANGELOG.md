@@ -2,7 +2,46 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "0.7.0" -- 17/04/2026**
+**version = "1.0.0" -- 17/04/2026**
+
+---
+
+## v0.9.0 — 17/04/2026 — Epic 8: Tier B Prediction Engine
+
+Completed all items in `TODOs/PredictionEngine.md`. Destroyed that file on completion.
+
+- **`src/prediction/types.rs`** — `ServicePattern` struct keyed on `(uid, weekday, origin_crs)` — the stable recurring-service identity, not the daily-changing RID; `DelayRecord` (`delay_mins: i32, recorded_at: DateTime<Utc>`); `HistoricalStore` (`DashMap<ServicePattern, VecDeque<DelayRecord>>`, hard-capped at `MAX_SAMPLES = 90` per pattern — ~13 weeks of daily observations)
+- **`src/prediction/engine.rs`** — `PredictionEngine` wraps `Arc<HistoricalStore>`, derives `Clone` for cheap task-boundary passing; `predict_and_update(&self, status: &mut TrainStatus)` derives the `ServicePattern`, computes trimmed-mean delay (drop top/bottom 10%) and confidence (`samples / MAX_SAMPLES`), writes `predicted_delay_mins` and `volatility.historical_reliability` — does nothing if fewer than 3 samples exist (no fabrication rule); `record_outcome()` appends a confirmed Darwin delay back into the store for incremental learning
+- **`TrainStatus.uid`** — new field; populated from the first Darwin `TS` message carrying a `uid` attribute; `parser.rs` extracts it and propagates through `TsUpdate`
+- **`ingestion/mod.rs`** — wires `PredictionEngine` into the pipeline: `record_outcome` then `predict_and_update` called on every TS update after `reported_delay_mins` is set; `PredictionEngine` passed into `IngestionPipeline` at construction time
+- **`main.rs`** — `PredictionEngine::new()` constructed once at startup; `Arc` clone passed to `IngestionPipeline`
+- 7 new unit tests (`predict_with_no_history_returns_none`, `predict_with_uniform_history_returns_that_value`, `trimmed_mean_ignores_outliers`, `record_outcome_caps_at_max_samples`, `confidence_scales_with_sample_count`, and two wiring tests); 90 tests total (85 unit + 5 integration), all passing
+
+---
+
+## v0.8.0 — 17/04/2026 — Epic 7: HTTP API + Rust/maud/htmx Frontend
+
+Completed all items in `TODOs/UI.md`. Destroyed that file on completion.
+
+**Sub-Epic A — axum HTTP API**
+
+- **`src/api/types.rs`** — client-facing DTOs: `TrainSummary`, `DepartureBoardEntry`, `LiveUpdateEvent` (flat, serde-serialisable, no internal type leakage); `ApiError` with consistent `{ "error": "...", "code": "..." }` JSON envelope implementing `IntoResponse`; `HealthResponse` serving `CARGO_PKG_VERSION` at compile time
+- **`GET /stations/{crs}/departures`** — Tier A: full registry snapshot filtered by origin CRS, sorted by scheduled departure, zero GBR calls
+- **`GET /trains/{rid}`** — Tier B: registry lookup; `400` on invalid RID format, `404` if not found; `last_updated` derived from the most-recent field stamp on the `TrainStatus`
+- **`GET /trains/{rid}/live`** — Tier C SSE: subscribes caller to the broadcast `state_change_tx`, filters for the requested RID, enriches each event with a live registry read, streams as `text/event-stream` JSON; 15s `KeepAlive` prevents proxy timeout; stream closes cleanly on `Terminal` state
+- **`GET /health`** — always 200, returns version string
+- `CorsLayer::permissive()` + `TraceLayer::new_for_http()` applied to all routes; API contract table documented in `src/api/mod.rs` header comment
+- `AppState` carries `Arc<TrainRegistry>` and `broadcast::Sender<StateChangeEvent>`; passed as axum `State` extractor; no `Extension` indirection
+- axum server spawned in `main.rs` topology alongside `PollManager`, `IngestionPipeline`, and eviction task; all share the `CancellationToken`
+
+**Sub-Epic B — Rust/maud/htmx Frontend**
+
+- **`src/frontend/layout.rs`** — base chrome: `<html>`, `<head>` (htmx CDN script tag, CSS link), `<body>` wrapper, stale-data banner slot (hidden by default, revealed by htmx SSE error handler)
+- **`src/frontend/components.rs`** — `delay_badge(minutes, cancelled) -> Markup` (green / amber / red by value); `platform_chip(platform) -> Markup`
+- **`src/frontend/search.rs`** — `/` full-page maud render with origin CRS `<input>` and `hx-get` departure board; `GET /ui/stations/departures?crs=XXX` htmx fragment handler returning `<ul>` of `DepartureBoardEntry` rows
+- **`src/frontend/detail.rs`** — `/trains/:rid/view` full-page maud render; train summary card, SVG route diagram shell; `hx-ext="sse" sse-connect="/trains/:rid/live"` wired on the live section; `GET /ui/trains/:rid/live` SSE HTML fragment handler for htmx OOB swaps
+- **`static/style.css`** — dark-first palette (`#1a1a1a` background, `#00c853` rail-green accent, amber/red for delay states); embedded at compile time via `rust-embed` — binary has zero filesystem dependency at runtime
+- Page routes (`/`, `/trains/:rid/view`) and fragment routes (`/ui/...`) merged into the same axum `Router` as the JSON API routes; `rust-embed` static handler serves `/static/:path`
 
 ---
 
