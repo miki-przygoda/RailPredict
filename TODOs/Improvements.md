@@ -72,14 +72,19 @@ matching the RTT API v1 schema, deserialize the 200 body, and map into `TrainSta
 This unblocks the entire Tier C path.
 
 ### 2.3 Departure board reads from live registry, ignores Tier A DB data
+
+> ⚠️ COMPLETED AS PREREQ — implemented as prerequisite for Observability epic (cache hit ratio metric).
+> Added `pub db: Db` to AppState and wired in main.rs. Full tier-routing logic (merging DB + registry
+> in departures_handler) remains to be done as part of the Improvements epic.
+
 `GET /stations/{crs}/departures` and `/ui/stations/departures` scan `TrainRegistry`.
 If Darwin is not connected (all dev/CI environments), they return empty.
 The `timetable_calls` table and `departures_from()` query exist but are never called
 from any handler. `AppState` does not carry a DB pool, making it unreachable from handlers.
-**Fix:** add `db: Db` to `AppState`. In `departures_handler`, merge DB rows
-(`departures_from`) with registry live data: start from the DB timetable for the day,
-then overlay any live `TrainStatus` fields (estimated departure, platform, delay) where
-a matching RID exists in the registry.
+**Fix (remaining):** In `departures_handler`, merge DB rows (`departures_from`) with
+registry live data: start from the DB timetable for the day, then overlay any live
+`TrainStatus` fields (estimated departure, platform, delay) where a matching RID exists
+in the registry. The `pub db: Db` field is now in AppState — handlers can reach the DB.
 
 ### 2.4 Station name search not possible — only CRS codes work
 The search page `<input>` says "Station code (e.g. KGX)". Normal users type names.

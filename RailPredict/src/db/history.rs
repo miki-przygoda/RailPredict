@@ -1,12 +1,18 @@
 //! Tier B delay history persistence.
 //!
 //! On startup: `load_history(db)` rebuilds the in-memory `HistoricalStore` from the
-//! most recent MAX_SAMPLES rows per (uid, weekday, origin_crs) pattern.
+//! most recent MAX_SAMPLES rows per (uid, weekday, origin_crs, departure_hour) pattern.
 //!
 //! On flush: `flush_history(db, store)` batch-inserts new observations using
 //! `ON CONFLICT DO NOTHING` so repeated flushes are idempotent.
 //!
 //! Chunk size is 500 rows per INSERT to stay well under PG's 65535 parameter limit.
+//!
+//! ## Phase 3 (AdvancedAnalytics): departure_hour column
+//! The `ServicePattern` key now includes `departure_hour: u8`, so the window function
+//! partition and the unique conflict index include it. Existing rows in DB will have
+//! `departure_hour = 0` (the DEFAULT from the migration) until replaced by fresh
+//! observations with correct hour values.
 
 use std::sync::Arc;
 
@@ -46,12 +52,14 @@ fn num_to_weekday(n: i16) -> Weekday {
 /// Rebuild a `HistoricalStore` from the database.
 ///
 /// Uses a window function to select only the MAX_SAMPLES most recent rows per
-/// pattern, so the returned store is immediately ready for predictions.
+/// (uid, weekday, origin_crs, departure_hour) pattern, so the returned store is
+/// immediately ready for predictions.
 #[derive(FromRow)]
 struct DelayRow {
     uid: String,
     weekday: i16,
     origin_crs: String,
+    departure_hour: i16,
     delay_mins: i32,
     recorded_at: chrono::DateTime<chrono::Utc>,
 }
@@ -59,17 +67,17 @@ struct DelayRow {
 pub async fn load_history(db: &Db) -> anyhow::Result<HistoricalStore> {
     let rows = sqlx::query_as::<_, DelayRow>(
         r#"
-        SELECT uid, weekday, origin_crs, delay_mins, recorded_at
+        SELECT uid, weekday, origin_crs, departure_hour, delay_mins, recorded_at
         FROM (
-            SELECT uid, weekday, origin_crs, delay_mins, recorded_at,
+            SELECT uid, weekday, origin_crs, departure_hour, delay_mins, recorded_at,
                    ROW_NUMBER() OVER (
-                       PARTITION BY uid, weekday, origin_crs
+                       PARTITION BY uid, weekday, origin_crs, departure_hour
                        ORDER BY recorded_at DESC
                    ) AS rn
             FROM delay_history
         ) ranked
         WHERE rn <= $1
-        ORDER BY uid, weekday, origin_crs, recorded_at ASC
+        ORDER BY uid, weekday, origin_crs, departure_hour, recorded_at ASC
         "#,
     )
     .bind(MAX_SAMPLES as i64)
@@ -83,6 +91,7 @@ pub async fn load_history(db: &Db) -> anyhow::Result<HistoricalStore> {
             uid: row.uid.trim().to_string(),
             weekday: num_to_weekday(row.weekday),
             origin_crs: row.origin_crs.trim().to_string(),
+            departure_hour: row.departure_hour.clamp(0, 23) as u8,
         };
         store.insert(
             pattern,
@@ -108,25 +117,36 @@ pub async fn flush_history(db: &Db, store: &Arc<HistoricalStore>) -> anyhow::Res
         return Ok(());
     }
 
+    // Phase 2: record flush duration and rows inserted.
+    let flush_start = std::time::Instant::now();
+
     let mut inserted_total = 0usize;
     for chunk in records.chunks(FLUSH_CHUNK) {
         let mut qb = QueryBuilder::new(
-            "INSERT INTO delay_history (uid, weekday, origin_crs, delay_mins, recorded_at) ",
+            "INSERT INTO delay_history (uid, weekday, origin_crs, departure_hour, delay_mins, recorded_at) ",
         );
         qb.push_values(chunk, |mut b, (pattern, record)| {
             b.push_bind(&pattern.uid)
                 .push_bind(weekday_to_num(pattern.weekday))
                 .push_bind(&pattern.origin_crs)
+                .push_bind(pattern.departure_hour as i16)
                 .push_bind(record.delay_mins)
                 .push_bind(record.recorded_at);
         });
-        qb.push(" ON CONFLICT (uid, weekday, origin_crs, recorded_at) DO NOTHING");
+        qb.push(
+            " ON CONFLICT (uid, weekday, origin_crs, departure_hour, recorded_at) DO NOTHING",
+        );
         let result = qb.build().execute(db).await?;
         inserted_total += result.rows_affected() as usize;
     }
 
+    // Phase 2: emit flush duration histogram and inserted row counter.
+    let flush_duration_ms = flush_start.elapsed().as_millis() as f64;
+    metrics::histogram!("db_flush_duration_ms").record(flush_duration_ms);
+    metrics::counter!("db_flush_rows_inserted_total").increment(inserted_total as u64);
+
     if inserted_total > 0 {
-        tracing::debug!(inserted = inserted_total, "Flushed delay history to DB");
+        tracing::debug!(inserted = inserted_total, flush_duration_ms, "Flushed delay history to DB");
     }
     Ok(())
 }

@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use clap::Parser;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use tokio::sync::broadcast;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -92,6 +93,14 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // --- Install Prometheus metrics recorder (Phase 1) ---
+    // Must be installed before any metrics::* macros are called.
+    let prometheus_handle = PrometheusBuilder::new()
+        .install_recorder()
+        .map_err(|e| anyhow::anyhow!("Failed to install Prometheus recorder: {e}"))?;
+    let prometheus_handle = Arc::new(prometheus_handle);
+    tracing::info!("Prometheus metrics recorder installed — GET /metrics enabled");
+
     // --- Normal server startup ---
     let db_pool = db::connect(&config.database_url).await?;
 
@@ -128,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
             );
             wait_for_shutdown(
                 token, pm_task, registry, sc_tx, &config,
-                Arc::clone(&history_store), db_pool,
+                Arc::clone(&history_store), db_pool, Arc::clone(&prometheus_handle),
             )
             .await;
             return Ok(());
@@ -165,10 +174,13 @@ async fn main() -> anyhow::Result<()> {
                 _ = interval.tick() => {
                     let before = eviction_registry.len();
                     eviction_registry.evict_departed(Utc::now()).await;
-                    let evicted = before.saturating_sub(eviction_registry.len());
+                    let after = eviction_registry.len();
+                    let evicted = before.saturating_sub(after);
                     if evicted > 0 {
                         tracing::info!(evicted, "Evicted departed trains from registry");
                     }
+                    // Phase 2: registry size gauge — updated every 60s alongside eviction.
+                    metrics::gauge!("registry_train_count").set(after as f64);
                 }
             }
         }
@@ -199,6 +211,8 @@ async fn main() -> anyhow::Result<()> {
     let app_state = AppState {
         registry: Arc::clone(&registry),
         state_change_tx: sc_tx,
+        db: db_pool.clone(),
+        prometheus: Arc::clone(&prometheus_handle),
     };
     let app = router(app_state);
     let bind_addr: std::net::SocketAddr = config
@@ -258,8 +272,14 @@ async fn wait_for_shutdown(
     config: &Config,
     history_store: Arc<railpredict::prediction::types::HistoricalStore>,
     db_pool: db::Db,
+    prometheus_handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
 ) {
-    let app_state = AppState { registry, state_change_tx: sc_tx };
+    let app_state = AppState {
+        registry,
+        state_change_tx: sc_tx,
+        db: db_pool.clone(),
+        prometheus: prometheus_handle,
+    };
     let app = router(app_state);
 
     if let Ok(addr) = config.api_bind_addr.parse::<std::net::SocketAddr>() {
