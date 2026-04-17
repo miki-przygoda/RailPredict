@@ -211,9 +211,51 @@ alerts for specific trains.
 
 ---
 
-## 6. Performance & Observability
+## 6. Operational Maintenance
 
-### 6.1 Departure board handler holds many read locks sequentially
+### 6.1 No cleanup job for `timetable_calls` rows
+`timetable_calls` accumulates ~500k rows per weekly GTFS import with no expiry
+mechanism. After a month, the table holds 2M+ rows for operating dates that have
+already passed. The departure-board query `WHERE location_crs = $1 AND operating_date = $2`
+uses the `tc_location_date_idx` index so reads stay fast, but the table grows unboundedly
+and `VACUUM` time increases with size.
+**Fix:** add a scheduled cleanup task in `main.rs` (or a separate CLI subcommand
+`railpredict prune`) that runs `DELETE FROM timetable_calls WHERE operating_date < CURRENT_DATE - INTERVAL '7 days'`
+once per day. Note: the column is `operating_date DATE`, not `departure_time` — there
+is no timestamp column on this table, so `NOW()` comparisons require `CURRENT_DATE`. Wire it as a tokio task with a 24h interval, or invoke it manually
+before each GTFS refresh. Similarly prune `delay_history` rows older than
+`MAX_SAMPLES` × 7 days per pattern.
+
+### 6.2 PollManager cannot proactively wake Dormant trains from Tier A
+Currently the only way a train enters the registry is via a Darwin STOMP message
+(`IngestionPipeline` registers it on first TS message receipt). A train departing in
+90 minutes (which should be `Monitored`) will not enter the registry until Darwin
+mentions it — which may not happen until 30 minutes before departure. Until then, the
+departure board entry comes from the DB timetable with no live state attached.
+**Fix:** at startup (after `load_history`), query `timetable_calls WHERE operating_date = today
+AND scheduled_departure > NOW()` and call `registry.warm()` with a `TrainStatus` for
+each future departure, setting the state via `TrainState::from_departure`. Register
+each with `PollManager` at the appropriate interval. This closes the gap between Tier A
+(timetable data) and the live state machine without waiting for Darwin to mention the train.
+
+### 6.3 HTMX SSE client has no error handling — freezes silently on disconnect
+`detail.rs` handles `RecvError::Lagged` and `RecvError::Closed` on the server side, but
+the client HTML has no `htmx:sseError` event listener. When the SSE connection drops
+(network interruption, server restart, circuit breaker entering Cache Only mode), the
+`div#live-status` simply freezes on whatever the last update was — no banner, no retry
+indicator, no visual difference from "healthy".
+**Fix:** in `detail.rs`'s `base()` layout or in the live section, attach a JavaScript
+`htmx.on("htmx:sseError", ...)` handler that reveals a hidden "Live updates paused"
+banner (the banner slot already exists in `layout.rs`) and sets a CSS class on the
+live section. On `htmx:sseOpen` (reconnect), hide the banner again. This gives users
+an honest signal when they are seeing stale data, consistent with the Circuit Breaker's
+"Cache Only" state on the backend.
+
+---
+
+## 7. Performance & Observability
+
+### 7.1 Departure board handler holds many read locks sequentially
 `departures_handler` and `departures_fragment` both iterate `snapshot_all()` and call
 `arc.read().await` inside a loop. With 500 active trains, this is 500 sequential async
 lock acquisitions per page load. `snapshot_all` returns `Arc<RwLock<TrainStatus>>` clones
@@ -222,13 +264,13 @@ lock acquisitions per page load. `snapshot_all` returns `Arc<RwLock<TrainStatus>
 acquires each lock and copies the needed fields in one pass, returning plain structs.
 Handlers get a `Vec<DepartureBoardEntry>` directly without touching `AppState` guts.
 
-### 6.2 No Prometheus metrics endpoint
+### 7.2 No Prometheus metrics endpoint
 `tracing` is wired but there is no `/metrics` endpoint. Latency histograms per route,
 registry size, flush counts, STOMP reconnect counts, circuit breaker state — none are
 observable without reading logs.
 **Fix:** add `prometheus` + `axum-prometheus` crate; expose `GET /metrics`.
 
-### 6.3 DB pool is hardcoded at 10 — no tuning path
+### 7.3 DB pool is hardcoded at 10 — no tuning path
 `PgPoolOptions::new().max_connections(10)` is a guess. The correct value depends on the
 Postgres `max_connections` setting and the number of concurrent flush + query tasks.
 **Fix:** read `DB_MAX_CONNECTIONS` env var (default 10); document the calculation in
@@ -236,9 +278,49 @@ Postgres `max_connections` setting and the number of concurrent flush + query ta
 
 ---
 
-## 7. Technical Debt
+## 8. Blind Spots — Subtle Correctness Risks
 
-### 7.1 `Stamped<bool>` for `is_cancelled` should be `Stamped<Option<bool>>`
+### 8.1 "Last writer wins" race between Darwin push and GBR poll
+`TrainRegistry` stores `Arc<RwLock<TrainStatus>>`. The `SequenceGuard` in `filter.rs`
+prevents a stale **Darwin** message from overwriting a newer one, but it only guards
+messages coming from the STOMP firehose. Once the networking layer is wired (Improvements.md
+item 2.1), a PollManager-triggered GBR fetch (Tier C) will also write to `TrainStatus`.
+If a Darwin TS message arrives 50ms into a 200ms GBR round-trip, both writes race to the
+same `RwLock`. The RwLock serialises them correctly, but **the GBR response will overwrite
+the Darwin update** with data that was fetched before the Darwin message was processed.
+Darwin is always more current than a polled GBR response.
+
+**Fix:** before applying any GBR poll result to `TrainStatus`, compare the GBR response's
+embedded timestamp (once response parsing is implemented — see item 2.2) against the
+`Stamped::last_updated` on the fields being written. Only apply if the GBR data is newer.
+This mirrors the same "never overwrite with older data" principle the `SequenceGuard`
+already enforces for Darwin messages.
+
+### 8.2 `delay_history` will become a write-heavy bottleneck at UK-network scale
+The 60s flush writes up to ~24,000 rows per flush at Darwin's peak (400 msg/s × 60s,
+assuming one observation per message). Each insert checks the `UNIQUE INDEX` on
+`(uid, weekday, origin_crs, recorded_at)` for conflict. The `ON CONFLICT DO NOTHING`
+is correct for idempotency but still triggers index lookups for every row.
+At full UK-network scale (~3,000 active services), `delay_history` grows by ~12M rows
+per day if not pruned. After one year without pruning: ~4 billion rows.
+
+This is not a crisis today (dev environment, regional scope) but should be addressed
+before a production deployment covering the full national timetable.
+
+**Options in order of complexity:**
+1. The prune job in item 6.1 keeps the table bounded — sufficient for regional scope.
+2. Postgres range partitioning on `recorded_at` (quarterly partitions) keeps each
+   partition small so index maintenance stays fast. Add this as a migration before
+   data volume grows. The comment in `20240417120002_create_timetable_calls.sql`
+   mentions this for timetable_calls — apply the same thinking to delay_history.
+3. TimescaleDB — purpose-built for time-series append workloads, with automatic chunk
+   management and compression. Relevant if the full national network is ever targeted.
+
+---
+
+## 9. Technical Debt
+
+### 9.1 `Stamped<bool>` for `is_cancelled` should be `Stamped<Option<bool>>`
 `is_cancelled` defaults to `Stamped::new(false)`, meaning a train that has never
 received a Darwin TS message is represented as "definitely not cancelled" rather than
 "cancellation status unknown". If a handler serves this train before any Darwin data
@@ -246,18 +328,18 @@ arrives, it silently asserts the train is running.
 **Fix:** change to `Stamped<Option<bool>>` and update all callers to treat `None` as
 "unknown".
 
-### 7.2 `best_delay_mins` and `best_platform` are not documented
+### 9.2 `best_delay_mins` and `best_platform` are not documented
 These helper methods on `TrainStatus` make a policy choice (predicted vs reported for
 delay; actual vs scheduled for platform) that every UI caller relies on. The choice
 should be explicit and tested.
 
-### 7.3 STOMP frame body is read byte-by-byte
+### 9.3 STOMP frame body is read byte-by-byte
 `read_frame` reads the NULL-terminated body one byte at a time in a loop. At Darwin's
 peak of ~400 msg/s with typical message sizes of 2–10 KB, this is up to 4 million
 single-byte async reads per second. Use `read_until(0, &mut body)` from `AsyncBufReadExt`
 instead — one syscall per message body.
 
-### 7.4 `departures_handler` sorts by stringified RFC3339 timestamp
+### 9.4 `departures_handler` sorts by stringified RFC3339 timestamp
 `entries.sort_by_key(|e| e.scheduled_departure.clone())` sorts by the string
 representation of the timestamp. RFC3339 strings sort correctly only if all are in the
 same timezone offset. Since all times are UTC (ending in `Z`), this is safe today, but
@@ -265,7 +347,7 @@ it's a hidden invariant.
 **Fix:** sort by the parsed `chrono::DateTime<Utc>` value in `scheduled_departure.value`
 before converting to string, or define an explicit sort key on `DepartureBoardEntry`.
 
-### 7.5 `IngestSource::Cif` panics with `unimplemented!()`
+### 9.5 `IngestSource::Cif` panics with `unimplemented!()`
 If a user runs `railpredict ingest-static --source cif`, the process panics.
 **Fix:** return a proper `anyhow::bail!("CIF ingest is not yet implemented")` error
 so the process exits cleanly with an error message rather than a panic backtrace.
@@ -274,20 +356,25 @@ so the process exits cleanly with an error message rather than a panic backtrace
 
 ## Priority Summary
 
-| # | Item | Effort | Impact |
-|---|------|--------|--------|
-| 1.1 | STOMP TLS | Medium | Production-blocking |
-| 1.2 | STOMP auto-reconnect | Small | Production-blocking |
-| 1.3 | `.sqlx/` snapshot + CI | Small | Docker build broken |
-| 2.3 | Add DB to AppState | Small | Tier A unusable |
-| 2.1 | Wire networking → PollManager | Large | Tier C non-functional |
-| 2.2 | Parse GBR JSON response | Medium | Tier C non-functional |
-| 2.4 | Station name autocomplete | Medium | UX blocker for real users |
-| 4.1 | CI pipeline | Small | Foundational |
-| 2.5 | GTFS trips + stop_times ingest | Medium | Tier A boarding data missing |
-| 2.6 | State transitions after registration | Medium | State machine incomplete |
-| 1.4 | CORS tightening | Small | Security |
-| 1.5 | HTTP rate limiting | Small | Security |
-| 7.3 | STOMP byte-by-byte read fix | Trivial | Performance |
-| 7.1 | `is_cancelled` → `Option<bool>` | Small | Correctness |
-| 4.4 | Fix README tech stack table | Trivial | Housekeeping |
+| #   | Item                                         | Effort  | Impact                       |
+|-----|----------------------------------------------|---------|------------------------------|
+| 1.1 | STOMP TLS                                    | Medium  | Production-blocking          |
+| 1.2 | STOMP auto-reconnect                         | Small   | Production-blocking          |
+| 1.3 | `.sqlx/` snapshot + CI                       | Small   | Docker build broken          |
+| 2.3 | Add DB to AppState                           | Small   | Tier A unusable              |
+| 2.1 | Wire networking → PollManager                | Large   | Tier C non-functional        |
+| 2.2 | Parse GBR JSON response                      | Medium  | Tier C non-functional        |
+| 6.2 | DB-driven proactive train wake-up            | Medium  | State machine gap            |
+| 6.3 | HTMX SSE client error handling               | Small   | UX correctness               |
+| 2.4 | Station name autocomplete                    | Medium  | UX blocker for real users    |
+| 4.1 | CI pipeline                                  | Small   | Foundational                 |
+| 2.5 | GTFS trips + stop_times ingest               | Medium  | Tier A boarding data missing |
+| 2.6 | State transitions after registration         | Medium  | State machine incomplete     |
+| 6.1 | `timetable_calls` cleanup job                | Small   | DB hygiene                   |
+| 1.4 | CORS tightening                              | Small   | Security                     |
+| 1.5 | HTTP rate limiting                           | Small   | Security                     |
+| 8.1 | Darwin/GBR last-writer-wins race             | Small   | Correctness (after 2.1 done) |
+| 9.3 | STOMP byte-by-byte read fix                  | Trivial | Performance                  |
+| 9.1 | `is_cancelled` → `Option<bool>`              | Small   | Correctness                  |
+| 8.2 | `delay_history` partitioning plan            | Medium  | Scale readiness              |
+| 4.4 | Fix README tech stack table                  | Trivial | Housekeeping                 |
