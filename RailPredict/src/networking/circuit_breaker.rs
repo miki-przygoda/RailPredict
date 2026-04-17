@@ -86,8 +86,14 @@ impl CircuitBreaker {
                 // Check if cool-down has elapsed and promote to HalfOpen.
                 if inner.opened_at.is_some_and(|t| t.elapsed() >= self.cool_down) {
                     inner.state = CircuitBreakerState::HalfOpen;
+                    // Phase 2: record state transition to HalfOpen.
+                    metrics::gauge!("circuit_breaker_state", "state" => "HalfOpen").set(1.0);
+                    metrics::gauge!("circuit_breaker_state", "state" => "Open").set(0.0);
+                    metrics::gauge!("circuit_breaker_state", "state" => "Closed").set(0.0);
                     true // allow the single probe request
                 } else {
+                    // Phase 2: count requests blocked by an Open breaker.
+                    metrics::counter!("circuit_breaker_blocked_total").increment(1);
                     false
                 }
             }
@@ -100,11 +106,22 @@ impl CircuitBreaker {
     pub async fn record_success(&self) {
         let mut inner = self.inner.lock().await;
         inner.consecutive_failures = 0;
+        let prev = inner.state;
         inner.state = CircuitBreakerState::Closed;
         inner.opened_at = None;
+        // Phase 2: record state transition to Closed if we were in a non-Closed state.
+        if prev != CircuitBreakerState::Closed {
+            metrics::gauge!("circuit_breaker_state", "state" => "Closed").set(1.0);
+            metrics::gauge!("circuit_breaker_state", "state" => "Open").set(0.0);
+            metrics::gauge!("circuit_breaker_state", "state" => "HalfOpen").set(0.0);
+        }
     }
 
     /// Call on a 503 / unavailable response. Opens the breaker after threshold failures.
+    ///
+    /// `#[cold]` biases the branch predictor in callers toward the not-taken (success)
+    /// direction — recommended by CLAUDE.md pattern #8 for rare error paths.
+    #[cold]
     pub async fn record_failure(&self) {
         let mut inner = self.inner.lock().await;
         inner.consecutive_failures += 1;
@@ -112,9 +129,16 @@ impl CircuitBreaker {
         if inner.consecutive_failures >= self.failure_threshold
             || inner.state == CircuitBreakerState::HalfOpen
         {
+            let prev = inner.state;
             // HalfOpen probe failed: re-open and reset timer.
             inner.state = CircuitBreakerState::Open;
             inner.opened_at = Some(Instant::now());
+            // Phase 2: record state transition to Open.
+            if prev != CircuitBreakerState::Open {
+                metrics::gauge!("circuit_breaker_state", "state" => "Open").set(1.0);
+                metrics::gauge!("circuit_breaker_state", "state" => "Closed").set(0.0);
+                metrics::gauge!("circuit_breaker_state", "state" => "HalfOpen").set(0.0);
+            }
         }
     }
 

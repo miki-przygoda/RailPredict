@@ -117,6 +117,15 @@ impl GbrClient for LiveGbrClient {
             ENDPOINT_TRAIN_STATUS.replace("{rid}", rid_str)
         );
 
+        // Phase 2: record latency histogram per endpoint + status.
+        // Phase 4: annotate the current tracing span with RID and call metadata
+        //          so Grafana latency spikes can be traced back to a specific RID in logs.
+        let span = tracing::Span::current();
+        span.record("rid", rid_str.as_str());
+        span.record("endpoint", "train_status");
+
+        let start = std::time::Instant::now();
+
         let resp = self
             .http
             .get(&url)
@@ -124,7 +133,36 @@ impl GbrClient for LiveGbrClient {
             .send()
             .await?;
 
-        match resp.status().as_u16() {
+        let status_code = resp.status().as_u16();
+        let latency_ms = start.elapsed().as_millis() as f64;
+
+        // Phase 4: record latency and status code on the span for log correlation.
+        span.record("latency_ms", latency_ms);
+        span.record("status_code", status_code);
+
+        let outcome = match status_code {
+            200 => "ok",
+            429 => "rate_limited",
+            503 => "unavailable",
+            _ => "error",
+        };
+
+        // Phase 2: histogram with "endpoint" and "status" labels.
+        metrics::histogram!(
+            "gbr_api_latency_ms",
+            "endpoint" => "train_status",
+            "status"   => outcome
+        )
+        .record(latency_ms);
+
+        tracing::debug!(
+            rid = %rid_str,
+            latency_ms,
+            status_code,
+            "GBR API call complete"
+        );
+
+        match status_code {
             200 => {
                 // TODO: parse GBR JSON into TrainStatus once Darwin credentials arrive
                 // and response schema is confirmed. For now return NotFound to signal
@@ -133,9 +171,9 @@ impl GbrClient for LiveGbrClient {
             }
             429 => Err(GbrClientError::RateLimited),
             503 => Err(GbrClientError::ServiceUnavailable),
-            status => {
+            _ => {
                 let body = resp.text().await.unwrap_or_default();
-                Err(GbrClientError::UnexpectedStatus { status, body })
+                Err(GbrClientError::UnexpectedStatus { status: status_code, body })
             }
         }
     }

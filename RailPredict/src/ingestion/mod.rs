@@ -122,12 +122,17 @@ impl IngestionPipeline {
             return;
         }
 
+        // Phase 2: count every Darwin message received from the broker.
+        metrics::counter!("darwin_messages_received_total").increment(1);
+
         let xml_bytes = &frame.body;
 
         // Gate 1: taxonomy + route filter (no XML parse).
         // We don't have a CRS at this point (pre-parse); pass None to rely on taxonomy only.
         // A more sophisticated implementation would do a fast scan for the `tpl` attribute.
         if !self.filter.should_parse(xml_bytes, None) {
+            // Phase 2: count messages dropped at the taxonomy/route filter stage.
+            metrics::counter!("darwin_messages_dropped_total", "reason" => "taxonomy").increment(1);
             return;
         }
 
@@ -135,6 +140,8 @@ impl IngestionPipeline {
             Ok(s) => s,
             Err(_) => {
                 tracing::warn!("Received non-UTF-8 Darwin frame — dropping");
+                // Phase 2: count messages dropped due to encoding errors.
+                metrics::counter!("darwin_messages_dropped_total", "reason" => "encoding").increment(1);
                 return;
             }
         };
@@ -143,9 +150,18 @@ impl IngestionPipeline {
             Ok(result) => result,
             Err(e) => {
                 tracing::warn!(error = %e, "Darwin XML parse error — dropping frame");
+                // Phase 2: count messages dropped due to XML parse errors.
+                metrics::counter!("darwin_messages_dropped_total", "reason" => "parse_error").increment(1);
                 return;
             }
         };
+
+        // Phase 4: attach trace_id to the current span for log correlation.
+        // Allows correlating a Grafana spike in darwin_messages_dropped_total back to
+        // a specific frame in the structured log stream.
+        let span = tracing::Span::current();
+        let trace_id = format!("{:?}", span.id());
+        span.record("trace_id", trace_id.as_str());
 
         for update in updates {
             match update {
@@ -153,6 +169,8 @@ impl IngestionPipeline {
                     // Gate 2: sequence guard.
                     if !self.filter.should_apply(&ts_update.rid, msg_ts) {
                         tracing::trace!(rid = %ts_update.rid, "Dropping stale TS message");
+                        // Phase 2: count messages dropped by the sequence guard.
+                        metrics::counter!("darwin_messages_dropped_total", "reason" => "stale").increment(1);
                         continue;
                     }
 
@@ -169,6 +187,7 @@ impl IngestionPipeline {
                             tracing::debug!(rid = %rid, "Registering new train from TS message");
                             let mut new_status = crate::types::TrainStatus::new(rid.clone(), sched, publ);
                             new_status.origin_crs = ts_update.station_crs.clone();
+                            new_status.destination_crs = ts_update.destination_crs.clone();
                             new_status.uid = ts_update.uid.clone();
                             self.registry.upsert(rid.clone(), new_status);
                         }
@@ -178,6 +197,7 @@ impl IngestionPipeline {
                     let estimated_dep = ts_update.estimated_departure;
                     let platform = ts_update.platform.clone();
                     let ts_uid = ts_update.uid.clone();
+                    let ts_destination_crs = ts_update.destination_crs.clone();
                     let engine = self.prediction_engine.clone();
 
                     // Apply live fields to registry (works whether just registered or pre-existing).
@@ -198,6 +218,11 @@ impl IngestionPipeline {
                             if status.uid.is_none() {
                                 status.uid = ts_uid;
                             }
+                            // Update destination_crs whenever the parser emits one —
+                            // the last Location in the TS message is always the destination.
+                            if ts_destination_crs.is_some() {
+                                status.destination_crs = ts_destination_crs;
+                            }
                             status.is_cancelled = Stamped::new(is_cancelled);
                             status.last_update_source = UpdateSource::StompFirehose;
 
@@ -206,6 +231,12 @@ impl IngestionPipeline {
                             engine.predict_and_update(status);
                         })
                         .await;
+
+                    // Phase 2: count messages successfully applied to the registry.
+                    metrics::counter!("darwin_messages_applied_total").increment(1);
+
+                    // TODO: uncomment when tier routing wired (Improvements 2.1-2.3)
+                    // metrics::counter!("request_served_tier_total", "tier" => "C").increment(1);
 
                     // Emit state-change event for emergency promotions.
                     if is_cancelled || is_delayed {

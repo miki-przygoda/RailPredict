@@ -64,6 +64,49 @@ services:
     networks:
       - railpredict
 
+  # ── Prometheus (monitoring profile) ──────────────────────────────────────────
+  # Start with: docker compose --profile monitoring up
+  # Scrapes GET /metrics from the app container every 15s.
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - app
+    networks:
+      - railpredict
+
+  # ── Grafana (monitoring profile) ─────────────────────────────────────────────
+  # Start with: docker compose --profile monitoring up
+  # Connect to Prometheus datasource at http://prometheus:9090
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - railpredict
+
   # ── pgAdmin (dev only) ────────────────────────────────────────────────────────
   # Start with: docker compose --profile dev up
   pgadmin:
@@ -86,6 +129,8 @@ services:
 
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   railpredict:

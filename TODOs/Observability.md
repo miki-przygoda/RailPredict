@@ -24,6 +24,17 @@ Without these numbers, you're operating on faith.
 
 ---
 
+## Implementation Status — Phase 1
+
+**COMPLETE** — implemented 17/04/2026.
+
+Changed files:
+- `RailPredict/Cargo.toml` — added `metrics = "0.23"` and `metrics-exporter-prometheus = "0.15"`
+- `RailPredict/src/main.rs` — `PrometheusBuilder::new().install_recorder()?` before spawning tasks; handle stored in `Arc<PrometheusHandle>`
+- `RailPredict/src/api/mod.rs` — `AppState.prometheus: Arc<PrometheusHandle>`; `GET /metrics` route on a sub-router without CORS middleware; gated by `METRICS_ENABLED` env var (default: enabled)
+
+---
+
 ## Phase 1 — Prometheus Metrics Endpoint
 
 ### Dependencies to add
@@ -45,6 +56,23 @@ Add `GET /metrics` to the router in `src/api/mod.rs`. This endpoint should NOT b
 behind CORS — it is for internal scraping only. Consider gating it behind an
 `METRICS_ENABLED` env var (default: off in production, on in dev) or restricting to
 localhost-only via a separate listener.
+
+---
+
+## Implementation Status — Phase 2
+
+**COMPLETE** (except prediction accuracy metric — see note below) — implemented 17/04/2026.
+
+Changed files:
+- `RailPredict/src/ingestion/mod.rs` — `darwin_messages_received_total`, `darwin_messages_dropped_total` (reasons: taxonomy, encoding, parse_error, stale), `darwin_messages_applied_total`; Phase 4 `trace_id` span field
+- `RailPredict/src/networking/gbr_client.rs` — `gbr_api_latency_ms` histogram with "endpoint" and "status" labels; Phase 4 `rid`, `latency_ms`, `status_code` span fields
+- `RailPredict/src/networking/circuit_breaker.rs` — `circuit_breaker_state` gauge (per-state labels) on transitions; `circuit_breaker_blocked_total` counter; `#[cold]` on `record_failure`
+- `RailPredict/src/main.rs` — `registry_train_count` gauge updated in eviction task
+- `RailPredict/src/db/history.rs` — `db_flush_duration_ms` histogram + `db_flush_rows_inserted_total` counter
+
+**Deviations / TODOs:**
+- Cache hit ratio counters (`request_served_tier_total` tier A/B/C) left as commented-out stubs in `ingestion/mod.rs`. Full wiring requires Improvements 2.1-2.3 (tier routing logic in handlers). See `// TODO: uncomment when tier routing wired` comments.
+- **Prediction accuracy metric** (`prediction_error_mins` histogram in `prediction/engine.rs`) is owned by the AdvancedAnalytics agent and must be implemented there. This agent does not own `src/prediction/engine.rs`.
 
 ---
 
@@ -134,6 +162,19 @@ metrics::counter!("db_flush_rows_inserted_total").increment(inserted_total as u6
 
 ---
 
+## Implementation Status — Phase 3
+
+**COMPLETE** — implemented 17/04/2026.
+
+Changed files:
+- `docker-compose.yml` — `prometheus` service (image: `prom/prometheus`) and `grafana` service (image: `grafana/grafana`) both under `profiles: [monitoring]`; `prometheus_data` and `grafana_data` named volumes
+- `prometheus.yml` (new file at repo root) — scrape config targeting `app:3000/metrics` every 15s
+
+Usage: `docker compose --profile monitoring up`
+Grafana listens on `localhost:3001` (to avoid clash with the app on `:3000`). Default password via `GRAFANA_PASSWORD` env var (default: `admin`).
+
+---
+
 ## Phase 3 — Grafana Dashboard
 
 Once Prometheus is scraping `/metrics`, set up a Grafana dashboard with:
@@ -151,6 +192,18 @@ Once Prometheus is scraping `/metrics`, set up a Grafana dashboard with:
 
 Add the Grafana service to `docker-compose.yml` under a `--profile monitoring` flag,
 similar to how pgadmin is gated behind `--profile dev`.
+
+---
+
+## Implementation Status — Phase 4
+
+**COMPLETE** — implemented 17/04/2026.
+
+Changed files:
+- `RailPredict/src/networking/gbr_client.rs` — `rid`, `endpoint`, `latency_ms`, `status_code` recorded on `tracing::Span::current()` for every GBR API call
+- `RailPredict/src/ingestion/mod.rs` — `trace_id` (from `Span::current().id()`) recorded on the processing span for every Darwin frame that passes Gate 1
+
+This enables the workflow: Grafana spike in `gbr_api_latency_ms` → find the specific RID in the structured JSON log stream → correlate with the Darwin message that triggered the poll (via `trace_id`).
 
 ---
 

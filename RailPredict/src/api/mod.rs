@@ -28,18 +28,20 @@ pub mod types;
 use std::sync::Arc;
 
 use axum::{
-    extract::Path,
+    extract::{Path, State},
     http::{header, StatusCode},
     response::IntoResponse,
     routing::get,
     Router,
 };
+use metrics_exporter_prometheus::PrometheusHandle;
 use rust_embed::RustEmbed;
 use tokio::sync::broadcast;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
     cache::TrainRegistry,
+    db::Db,
     frontend::{detail, search},
     state_machine::poll_manager::StateChangeEvent,
 };
@@ -77,6 +79,36 @@ pub struct AppState {
     pub registry: Arc<TrainRegistry>,
     /// Broadcast sender: SSE handlers call `.subscribe()` to get a receiver.
     pub state_change_tx: broadcast::Sender<StateChangeEvent>,
+    /// DB connection pool — Tier A static data queries (timetable_calls, stations).
+    /// Added as prereq for Observability epic (cache hit ratio metric) and Improvements 2.3.
+    pub db: Db,
+    /// Prometheus scrape handle — rendered by GET /metrics.
+    pub prometheus: Arc<PrometheusHandle>,
+}
+
+// ---------------------------------------------------------------------------
+// Metrics handler — GET /metrics
+//
+// Renders the current Prometheus scrape output as plain text.
+// Gated behind the METRICS_ENABLED env var (default: enabled).
+// This route is intentionally NOT behind the CORS middleware — it is for
+// internal scraping by Prometheus only, not browser access.
+// ---------------------------------------------------------------------------
+
+async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let enabled = std::env::var("METRICS_ENABLED")
+        .map(|v| v.to_lowercase() != "false" && v != "0")
+        .unwrap_or(true);
+
+    if !enabled {
+        return (StatusCode::NOT_FOUND, "Metrics disabled").into_response();
+    }
+
+    (
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        state.prometheus.render(),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +116,12 @@ pub struct AppState {
 // ---------------------------------------------------------------------------
 
 pub fn router(state: AppState) -> Router {
+    // /metrics is registered on a sub-router WITHOUT the CORS layer so that
+    // Prometheus can scrape it without preflight issues.
+    let metrics_router = Router::new()
+        .route("/metrics", get(metrics_handler))
+        .with_state(state.clone());
+
     Router::new()
         // Embedded static assets (CSS baked in at compile time)
         .route("/static/:path", get(static_handler))
@@ -101,4 +139,5 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+        .merge(metrics_router)
 }

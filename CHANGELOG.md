@@ -2,7 +2,37 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.1.1" -- 17/04/2026**
+**version = "1.1.2" -- 17/04/2026**
+
+---
+
+## v1.1.2 — 17/04/2026 — Observability epic complete + Improvements 2.3 prereq
+
+Completes all four phases of `TODOs/Observability.md`. Also completes `Improvements.md` item 2.3 (DB in AppState) as a prerequisite for the cache hit ratio metric. Item 2.3 is marked in `TODOs/Improvements.md`.
+
+**Improvements 2.3 (prereq) — DB in AppState**
+- `src/api/mod.rs` — `pub db: Db` and `pub prometheus: Arc<PrometheusHandle>` added to `AppState`.
+- `src/main.rs` — `db: db_pool.clone()` wired into AppState construction.
+
+**Phase 1 — Prometheus metrics endpoint**
+- `Cargo.toml` — `metrics = "0.23"` and `metrics-exporter-prometheus = "0.15"` added.
+- `src/main.rs` — `PrometheusBuilder::new().install_recorder()?` installed before any tasks spawn; handle stored in `Arc<PrometheusHandle>` passed into AppState.
+- `src/api/mod.rs` — `GET /metrics` handler returns current scrape text; registered outside the CORS layer; gated by `METRICS_ENABLED` env var (default: enabled).
+
+**Phase 2 — Core metrics instrumentation**
+- `src/ingestion/mod.rs` — `darwin_messages_received_total`, `darwin_messages_dropped_total` (labelled by reason), `darwin_messages_applied_total`; cache hit ratio stubs commented with TODO pending Improvements 2.1–2.3.
+- `src/networking/gbr_client.rs` — `gbr_api_latency_ms` histogram with `endpoint` and `status` labels; `rid`/`latency_ms`/`status_code` added as tracing span fields (Phase 4 log correlation).
+- `src/networking/circuit_breaker.rs` — `circuit_breaker_state` gauge + `circuit_breaker_blocked_total` counter; `#[cold]` on `record_failure`.
+- `src/main.rs` — `registry_train_count` gauge in 60s eviction task.
+- `src/db/history.rs` — `db_flush_duration_ms` histogram + `db_flush_rows_inserted_total` counter.
+
+**Phase 3 — Grafana + Prometheus in docker-compose**
+- `docker-compose.yml` — `prometheus` (`prom/prometheus:latest`) and `grafana` (`grafana/grafana:latest`) services added under `--profile monitoring`; Grafana on port 3001; named volumes `prometheus_data` and `grafana_data`.
+- `prometheus.yml` (new at repo root) — scrape config targeting `app:3000/metrics` every 15 s.
+
+**Phase 4 — Structured log correlation**
+- `src/ingestion/mod.rs` — `trace_id` from `Span::current().id()` on frame-processing spans.
+- `src/networking/gbr_client.rs` — span fields enable Grafana spike → specific RID correlation in JSON logs.
 
 ---
 
