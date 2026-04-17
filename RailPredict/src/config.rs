@@ -3,19 +3,20 @@
 //!
 //! ## Env vars
 //!
-//! | Variable             | Required | Default                          | Description                        |
-//! |----------------------|----------|----------------------------------|------------------------------------|
-//! | `GBR_API_KEY`        | yes      | —                                | x-apikey header for GBR Retail API |
-//! | `GBR_API_BASE_URL`   | no       | https://api.rtt.io/api           | Override for testing/staging       |
-//! | `DARWIN_HOST`        | yes      | —                                | Darwin STOMP broker hostname       |
-//! | `DARWIN_PORT`        | no       | 61613                            | Darwin STOMP broker port           |
-//! | `DARWIN_USERNAME`    | yes      | —                                | Darwin ActiveMQ username           |
-//! | `DARWIN_PASSWORD`    | yes      | —                                | Darwin ActiveMQ password           |
-//! | `DARWIN_DESTINATION` | no       | /topic/darwin.pushport-v16       | STOMP subscription topic           |
-//! | `WATCHED_ROUTES`     | no       | "" (watch everything)            | Comma-separated CRS codes          |
-//! | `LOG_LEVEL`          | no       | info                             | tracing level filter               |
-//! | `LOG_FORMAT`         | no       | pretty                           | `pretty` or `json`                 |
-//! | `API_BIND_ADDR`      | no       | 0.0.0.0:3000                     | axum server bind address (Epic 7)  |
+//! | Variable             | Required | Default                               | Description                        |
+//! |----------------------|----------|---------------------------------------|------------------------------------|
+//! | `DATABASE_URL`       | yes      | —                                     | PostgreSQL connection string        |
+//! | `GBR_API_KEY`        | yes      | —                                     | x-apikey header for GBR Retail API |
+//! | `GBR_API_BASE_URL`   | no       | https://api.rtt.io/api                | Override for testing/staging       |
+//! | `DARWIN_HOST`        | yes      | —                                     | Darwin STOMP broker hostname       |
+//! | `DARWIN_PORT`        | no       | 61613                                 | Darwin STOMP broker port           |
+//! | `DARWIN_USERNAME`    | yes      | —                                     | Darwin ActiveMQ username           |
+//! | `DARWIN_PASSWORD`    | yes      | —                                     | Darwin ActiveMQ password           |
+//! | `DARWIN_DESTINATION` | no       | /topic/darwin.pushport-v16            | STOMP subscription topic           |
+//! | `WATCHED_ROUTES`     | no       | "" (watch everything)                 | Comma-separated CRS codes          |
+//! | `LOG_LEVEL`          | no       | info                                  | tracing level filter               |
+//! | `LOG_FORMAT`         | no       | pretty                                | `pretty` or `json`                 |
+//! | `API_BIND_ADDR`      | no       | 0.0.0.0:3000                          | axum server bind address           |
 
 use std::collections::HashSet;
 use std::fmt;
@@ -48,6 +49,9 @@ impl std::error::Error for ConfigError {}
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    // Database
+    pub database_url: String,
+
     // GBR Retail API
     pub gbr_api_key: String,
     pub gbr_api_base_url: String,
@@ -67,7 +71,7 @@ pub struct Config {
     pub log_level: String,
     pub log_format: LogFormat,
 
-    // API server (used in Epic 7)
+    // API server
     pub api_bind_addr: String,
 }
 
@@ -98,6 +102,7 @@ impl Config {
             };
         }
 
+        let database_url = require!("DATABASE_URL");
         let gbr_api_key = require!("GBR_API_KEY");
         let darwin_host = require!("DARWIN_HOST");
         let darwin_username = require!("DARWIN_USERNAME");
@@ -126,6 +131,7 @@ impl Config {
         };
 
         Ok(Self {
+            database_url,
             gbr_api_key,
             gbr_api_base_url: optional!("GBR_API_BASE_URL", "https://api.rtt.io/api"),
             darwin_host,
@@ -147,6 +153,7 @@ impl Config {
     /// Does not require any environment variables to be set.
     pub fn for_testing() -> Self {
         Self {
+            database_url: "postgres://railpredict:railpredict@localhost:5432/railpredict".to_string(),
             gbr_api_key: "test-key".to_string(),
             gbr_api_base_url: "http://localhost:9999".to_string(),
             darwin_host: "localhost".to_string(),
@@ -190,6 +197,7 @@ mod tests {
     fn watched_routes_parsed_from_csv() {
         // SAFETY: single-threaded test; no other thread reads these vars concurrently.
         unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
             std::env::set_var("GBR_API_KEY", "k");
             std::env::set_var("DARWIN_HOST", "h");
             std::env::set_var("DARWIN_USERNAME", "u");
@@ -204,7 +212,7 @@ mod tests {
         assert_eq!(config.watched_routes.len(), 3);
 
         unsafe {
-            for v in ["GBR_API_KEY","DARWIN_HOST","DARWIN_USERNAME","DARWIN_PASSWORD","WATCHED_ROUTES"] {
+            for v in ["DATABASE_URL","GBR_API_KEY","DARWIN_HOST","DARWIN_USERNAME","DARWIN_PASSWORD","WATCHED_ROUTES"] {
                 std::env::remove_var(v);
             }
         }
@@ -214,6 +222,7 @@ mod tests {
     fn log_format_json_parsed() {
         // SAFETY: single-threaded test; no other thread reads these vars concurrently.
         unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
             std::env::set_var("GBR_API_KEY", "k");
             std::env::set_var("DARWIN_HOST", "h");
             std::env::set_var("DARWIN_USERNAME", "u");
@@ -225,9 +234,15 @@ mod tests {
         assert_eq!(config.log_format, LogFormat::Json);
 
         unsafe {
-            for v in ["GBR_API_KEY","DARWIN_HOST","DARWIN_USERNAME","DARWIN_PASSWORD","LOG_FORMAT"] {
+            for v in ["DATABASE_URL","GBR_API_KEY","DARWIN_HOST","DARWIN_USERNAME","DARWIN_PASSWORD","LOG_FORMAT"] {
                 std::env::remove_var(v);
             }
         }
+    }
+
+    #[test]
+    fn database_url_required() {
+        let err = ConfigError { missing: vec!["DATABASE_URL"] };
+        assert!(err.to_string().contains("DATABASE_URL"));
     }
 }

@@ -57,6 +57,21 @@ impl HistoricalStore {
         Some(entry.iter().map(|r| r.delay_mins).collect())
     }
 
+    /// Flat snapshot of every record across all patterns. Used by the DB flush task.
+    pub fn all_records(&self) -> Vec<(ServicePattern, DelayRecord)> {
+        self.inner
+            .iter()
+            .flat_map(|entry| {
+                let pattern = entry.key().clone();
+                entry
+                    .value()
+                    .iter()
+                    .map(move |r| (pattern.clone(), r.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// Number of distinct service patterns tracked.
     #[cfg(test)]
     pub fn pattern_count(&self) -> usize {
@@ -67,5 +82,98 @@ impl HistoricalStore {
     #[cfg(test)]
     pub fn sample_count(&self, pattern: &ServicePattern) -> usize {
         self.inner.get(pattern).map(|e| e.len()).unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn record(delay_mins: i32) -> DelayRecord {
+        DelayRecord { delay_mins, recorded_at: Utc::now() }
+    }
+
+    fn pattern() -> ServicePattern {
+        ServicePattern {
+            uid: "C12345".to_string(),
+            weekday: chrono::Weekday::Mon,
+            origin_crs: "LDS".to_string(),
+        }
+    }
+
+    #[test]
+    fn get_samples_returns_none_for_unknown_pattern() {
+        let store = HistoricalStore::new();
+        assert!(store.get_samples(&pattern()).is_none());
+    }
+
+    #[test]
+    fn insert_and_get_samples_roundtrip() {
+        let store = HistoricalStore::new();
+        let p = pattern();
+        store.insert(p.clone(), record(5));
+        store.insert(p.clone(), record(10));
+        let samples = store.get_samples(&p).unwrap();
+        assert_eq!(samples.len(), 2);
+        assert!(samples.contains(&5));
+        assert!(samples.contains(&10));
+    }
+
+    #[test]
+    fn insert_caps_at_max_samples() {
+        let store = HistoricalStore::new();
+        let p = pattern();
+        for i in 0..MAX_SAMPLES + 10 {
+            store.insert(p.clone(), record(i as i32));
+        }
+        assert_eq!(store.sample_count(&p), MAX_SAMPLES);
+    }
+
+    #[test]
+    fn insert_evicts_oldest_entry_at_cap() {
+        let store = HistoricalStore::new();
+        let p = pattern();
+        for _ in 0..MAX_SAMPLES {
+            store.insert(p.clone(), record(0));
+        }
+        store.insert(p.clone(), record(999));
+        let samples = store.get_samples(&p).unwrap();
+        assert_eq!(samples.len(), MAX_SAMPLES);
+        assert!(samples.contains(&999), "newest value must survive eviction");
+        assert_eq!(
+            samples.iter().filter(|&&v| v == 0).count(),
+            MAX_SAMPLES - 1,
+            "exactly one 0 should have been evicted"
+        );
+    }
+
+    #[test]
+    fn pattern_count_tracks_distinct_patterns() {
+        let store = HistoricalStore::new();
+        let p1 = ServicePattern {
+            uid: "C12345".to_string(),
+            weekday: chrono::Weekday::Mon,
+            origin_crs: "LDS".to_string(),
+        };
+        let p2 = ServicePattern {
+            uid: "C12345".to_string(),
+            weekday: chrono::Weekday::Tue,
+            origin_crs: "LDS".to_string(),
+        };
+        store.insert(p1, record(1));
+        store.insert(p2, record(2));
+        assert_eq!(store.pattern_count(), 2);
+    }
+
+    #[test]
+    fn different_uids_are_distinct_patterns() {
+        let store = HistoricalStore::new();
+        let p1 = ServicePattern { uid: "A00001".to_string(), weekday: chrono::Weekday::Mon, origin_crs: "LDS".to_string() };
+        let p2 = ServicePattern { uid: "A00002".to_string(), weekday: chrono::Weekday::Mon, origin_crs: "LDS".to_string() };
+        store.insert(p1.clone(), record(3));
+        store.insert(p2.clone(), record(7));
+        assert_eq!(store.get_samples(&p1).unwrap(), vec![3]);
+        assert_eq!(store.get_samples(&p2).unwrap(), vec![7]);
     }
 }

@@ -34,6 +34,16 @@ impl PredictionEngine {
         Self { store: Arc::new(HistoricalStore::new()) }
     }
 
+    /// Construct with an existing store (used when pre-loading from the DB on startup).
+    pub fn with_store(store: Arc<HistoricalStore>) -> Self {
+        Self { store }
+    }
+
+    /// Returns a cheap `Arc` clone of the store — used by the background DB flush task.
+    pub fn arc_store(&self) -> Arc<HistoricalStore> {
+        Arc::clone(&self.store)
+    }
+
     /// Compute a prediction from historical data and write it into `status.predicted_delay_mins`
     /// and `status.volatility.historical_reliability`.
     ///
