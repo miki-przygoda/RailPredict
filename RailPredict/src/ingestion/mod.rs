@@ -35,6 +35,7 @@
 //! signal to investigate the filter/parser throughput, not to allocate more memory.
 
 pub mod filter;
+pub mod gtfs;
 pub mod parser;
 pub mod stomp_client;
 
