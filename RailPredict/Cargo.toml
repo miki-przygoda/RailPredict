@@ -31,3 +31,5 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 async-stream = "0.3"
 futures-core = "0.3"
 serde_json = "1"
+maud = { version = "0.26", features = ["axum"] }
+rust-embed = "8"
