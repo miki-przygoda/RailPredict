@@ -199,4 +199,33 @@ mod tests {
     fn new_status_is_not_cancelled() {
         assert!(!make_status().is_cancelled.value);
     }
+
+    #[test]
+    fn best_platform_none_when_both_absent() {
+        assert!(make_status().best_platform().is_none());
+    }
+
+    #[test]
+    fn stamped_is_stale_when_older_than_max_age() {
+        use chrono::Duration;
+        // Create a Stamped with a timestamp 2 minutes in the past.
+        let mut s = Stamped::new(42u32);
+        s.last_updated = Utc::now() - Duration::minutes(2);
+        assert!(s.is_stale(Duration::minutes(1)));
+    }
+
+    #[test]
+    fn stamped_not_stale_when_within_max_age() {
+        use chrono::Duration;
+        let s = Stamped::new(42u32);
+        assert!(!s.is_stale(Duration::minutes(5)));
+    }
+
+    #[test]
+    fn stamped_new_captures_current_time() {
+        let before = Utc::now();
+        let s = Stamped::new(0u32);
+        let after = Utc::now();
+        assert!(s.last_updated >= before && s.last_updated <= after);
+    }
 }

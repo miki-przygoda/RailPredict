@@ -201,4 +201,84 @@ mod tests {
         assert_eq!(TrainState::Critical.poll_interval(), Some(std::time::Duration::from_secs(10)));
         assert_eq!(TrainState::Terminal.poll_interval(), None);
     }
+
+    // --- Boundary conditions (pin `now` to avoid sub-millisecond drift) ---
+
+    #[test]
+    fn exactly_120_mins_is_dormant() {
+        // mins_until == 120 → NOT < 120 → Dormant
+        let now = Utc::now();
+        let departure = now + Duration::minutes(120);
+        let state = TrainState::from_departure(departure, now, false, false);
+        assert_eq!(state, TrainState::Dormant);
+    }
+
+    #[test]
+    fn exactly_30_mins_is_monitored() {
+        // mins_until == 30 → NOT < 30 → Monitored
+        let now = Utc::now();
+        let departure = now + Duration::minutes(30);
+        let state = TrainState::from_departure(departure, now, false, false);
+        assert_eq!(state, TrainState::Monitored);
+    }
+
+    #[test]
+    fn exactly_5_mins_is_active() {
+        // mins_until == 5 → NOT < 5 → Active
+        let now = Utc::now();
+        let departure = now + Duration::minutes(5);
+        let state = TrainState::from_departure(departure, now, false, false);
+        assert_eq!(state, TrainState::Active);
+    }
+
+    #[test]
+    fn just_under_120_is_monitored() {
+        let now = Utc::now();
+        let departure = now + Duration::minutes(119);
+        let state = TrainState::from_departure(departure, now, false, false);
+        assert_eq!(state, TrainState::Monitored);
+    }
+
+    #[test]
+    fn just_under_30_is_active() {
+        let now = Utc::now();
+        let departure = now + Duration::minutes(29);
+        let state = TrainState::from_departure(departure, now, false, false);
+        assert_eq!(state, TrainState::Active);
+    }
+
+    #[test]
+    fn just_under_5_is_critical() {
+        let now = Utc::now();
+        let departure = now + Duration::minutes(4);
+        let state = TrainState::from_departure(departure, now, false, false);
+        assert_eq!(state, TrainState::Critical);
+    }
+
+    // --- Emergency promotions ---
+
+    #[test]
+    fn incident_detected_promotes_any_state_to_critical() {
+        for base in [TrainState::Dormant, TrainState::Monitored, TrainState::Active] {
+            let new = base.emergency_promote(&PromotionReason::IncidentDetected);
+            assert_eq!(new, TrainState::Critical, "{base} should promote to Critical");
+        }
+    }
+
+    #[test]
+    fn time_based_reason_leaves_critical_unchanged() {
+        let new = TrainState::Critical.emergency_promote(&PromotionReason::TimeBased);
+        assert_eq!(new, TrainState::Critical);
+    }
+
+    // --- Display ---
+
+    #[test]
+    fn display_all_states() {
+        assert_eq!(TrainState::Dormant.to_string(), "Dormant");
+        assert_eq!(TrainState::Monitored.to_string(), "Monitored");
+        assert_eq!(TrainState::Active.to_string(), "Active");
+        assert_eq!(TrainState::Critical.to_string(), "Critical");
+        assert_eq!(TrainState::Terminal.to_string(), "Terminal");
+    }
 }

@@ -207,4 +207,67 @@ mod tests {
         reg.warm(batch);
         assert_eq!(reg.len(), 5);
     }
+
+    #[tokio::test]
+    async fn update_returns_false_for_unregistered_train() {
+        let reg = TrainRegistry::new();
+        let id = TrainId::rid("202404170000099").unwrap();
+        let changed = reg.update(&id, |_s| {}).await;
+        assert!(!changed);
+    }
+
+    #[tokio::test]
+    async fn snapshot_all_returns_all_registered_trains() {
+        let reg = TrainRegistry::new();
+        for i in 1..=3u8 {
+            let (id, status) = make_status(&format!("2024041700000{:02}", i));
+            reg.upsert(id, status);
+        }
+        let snap = reg.snapshot_all();
+        assert_eq!(snap.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn snapshot_all_empty_registry_returns_empty_vec() {
+        let reg = TrainRegistry::new();
+        assert!(reg.snapshot_all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn evict_uses_actual_estimated_departure_when_set() {
+        let reg = TrainRegistry::new();
+        let id = TrainId::rid("202404170000001").unwrap();
+        // scheduled 1 hour in future, but actual estimated 10 minutes ago
+        let future = Utc::now() + chrono::Duration::hours(1);
+        let past = Utc::now() - chrono::Duration::minutes(10);
+        let mut status = TrainStatus::new(id.clone(), future, future);
+        status.actual_estimated_departure =
+            crate::types::train_status::Stamped::new(Some(past));
+        reg.upsert(id.clone(), status);
+
+        reg.evict_departed(Utc::now()).await;
+        // Should be evicted because actual estimated departure is past the buffer window.
+        assert!(reg.get(&id).is_none());
+    }
+
+    #[tokio::test]
+    async fn warm_with_empty_iterator_is_noop() {
+        let reg = TrainRegistry::new();
+        reg.warm(std::iter::empty());
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn is_empty_true_for_new_registry() {
+        let reg = TrainRegistry::new();
+        assert!(reg.is_empty());
+    }
+
+    #[tokio::test]
+    async fn is_empty_false_after_upsert() {
+        let reg = TrainRegistry::new();
+        let (id, status) = make_status("202404170000001");
+        reg.upsert(id, status);
+        assert!(!reg.is_empty());
+    }
 }
