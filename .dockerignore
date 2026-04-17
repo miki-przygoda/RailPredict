@@ -1,0 +1,25 @@
+# Build artefacts — never copy these into the image
+RailPredict/target/
+logs/
+
+# Data directory contains the HFT-Engine reference project (gitignored, large)
+data/
+
+# Git metadata
+.git/
+.gitignore
+
+# Documentation — not needed at runtime
+*.md
+TODOs/
+
+# Dev tooling
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

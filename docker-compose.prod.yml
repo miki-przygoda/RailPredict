@@ -1,0 +1,28 @@
+# Production overrides — apply on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Differences from dev:
+#   - app pulls a tagged registry image instead of building locally
+#   - db port is NOT exposed to the host (internal network only)
+#   - pgadmin is absent
+#   - both services restart unless explicitly stopped
+
+services:
+
+  db:
+    # Do not expose the DB port externally in production.
+    ports: []
+    restart: unless-stopped
+
+  app:
+    # Pull the pre-built image tagged with the release version.
+    # Set RAILPREDICT_IMAGE in CI/CD before deploying.
+    image: ${RAILPREDICT_IMAGE:?RAILPREDICT_IMAGE must be set for production deploys}
+    build: !reset null
+    restart: unless-stopped
+    # Give the flush task time to write to DB before SIGKILL.
+    stop_grace_period: 30s
+    # Harden the container filesystem — all writable state lives in the DB.
+    read_only: true
+    environment:
+      LOG_FORMAT: json

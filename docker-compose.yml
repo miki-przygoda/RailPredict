@@ -1,0 +1,92 @@
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: railpredict
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-railpredict}
+      POSTGRES_DB: railpredict
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Exposed on host for local psql / pgadmin access (dev only).
+      # Remove or restrict in docker-compose.prod.yml.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "railpredict", "-d", "railpredict"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - railpredict
+
+  # ── RailPredict app ───────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Override the DATABASE_URL so the app connects to the compose db service,
+      # not whatever the developer has in their local .env.
+      DATABASE_URL: postgres://railpredict:${DB_PASSWORD:-railpredict}@db:5432/railpredict
+    ports:
+      - "3000:3000"
+    networks:
+      - railpredict
+
+  # ── Static data ingest (run manually; exits after completion) ─────────────────
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: "no"
+    profiles:
+      - ingest
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://railpredict:${DB_PASSWORD:-railpredict}@db:5432/railpredict
+    command: ["ingest-static", "--source", "gtfs", "--url", "${GTFS_URL}"]
+    networks:
+      - railpredict
+
+  # ── pgAdmin (dev only) ────────────────────────────────────────────────────────
+  # Start with: docker compose --profile dev up
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    profiles:
+      - dev
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@railpredict.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "127.0.0.1:5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - railpredict
+
+volumes:
+  postgres_data:
+
+networks:
+  railpredict:
+    driver: bridge
