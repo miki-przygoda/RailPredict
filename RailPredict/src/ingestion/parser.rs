@@ -1,0 +1,335 @@
+//! Darwin Push Port XML parser.
+//!
+//! ## Parser choice
+//! Uses `quick-xml`'s event-based reader rather than `serde-xml-rs` for two reasons:
+//! 1. Darwin XML uses multiple namespace prefixes (ns3:, ns5:, etc.) that vary between
+//!    message versions. `quick-xml`'s `local_name()` strips prefixes reliably.
+//! 2. The event API is zero-copy and streaming — no intermediate DOM allocation.
+//!
+//! ## Messages handled
+//! - `TS` (Train Status): delay, platform, estimated departure, cancellation flag.
+//! - `deactivated`: train has been cancelled or has departed — triggers Terminal state.
+//!
+//! ## Envelope
+//! All Darwin messages are wrapped in a `<Pport ts="..." version="...">` element.
+//! The `ts` attribute is the authoritative message timestamp used by the sequence guard.
+//!
+//! ## Darwin XML structure (simplified)
+//! ```xml
+//! <Pport ts="2024-04-17T12:00:00" version="16.0">
+//!   <uR updateOrigin="Darwin">
+//!     <TS rid="202404170123456" ssd="2024-04-17" uid="C12345">
+//!       <Location tpl="LEEDS" wtd="12:00" ptd="12:00">
+//!         <dep et="12:05" at="12:07" delayed="true"/>
+//!       </Location>
+//!     </TS>
+//!   </uR>
+//! </Pport>
+//! ```
+
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
+use quick_xml::{events::Event, Reader};
+use thiserror::Error;
+
+use crate::types::TrainId;
+
+// ---------------------------------------------------------------------------
+// Output types
+// ---------------------------------------------------------------------------
+
+/// A parsed update ready to be applied to the registry.
+#[derive(Debug, Clone)]
+pub enum ParsedUpdate {
+    TrainStatus(TsUpdate),
+    Deactivated(DeactivatedUpdate),
+}
+
+/// Parsed content of a Darwin `TS` message.
+#[derive(Debug, Clone)]
+pub struct TsUpdate {
+    pub rid: TrainId,
+    /// Scheduled service date — used to anchor NaiveTime departure times.
+    pub ssd: NaiveDate,
+    /// Scheduled public departure (from `ptd` attribute on the first Location).
+    pub scheduled_departure: Option<DateTime<Utc>>,
+    /// Estimated departure from Darwin (`et` attribute on `dep` element).
+    pub estimated_departure: Option<DateTime<Utc>>,
+    /// Actual recorded departure (`at` attribute), if the train has already left.
+    pub actual_departure: Option<DateTime<Utc>>,
+    /// Current platform assignment (`plat` attribute on Location).
+    pub platform: Option<String>,
+    /// Whether this service is cancelled (`can` attribute on TS element).
+    pub is_cancelled: bool,
+    /// Whether departure is flagged as delayed (`delayed` attribute on dep element).
+    pub is_delayed: bool,
+    /// CRS code of the first Location element (`tpl` attribute), used as origin station.
+    pub station_crs: Option<String>,
+}
+
+/// Parsed content of a Darwin `deactivated` message.
+#[derive(Debug, Clone)]
+pub struct DeactivatedUpdate {
+    pub rid: TrainId,
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("XML parse error: {0}")]
+    Xml(#[from] quick_xml::Error),
+
+    #[error("Missing required attribute '{attr}' on element '{element}'")]
+    MissingAttribute { element: &'static str, attr: &'static str },
+
+    #[error("Invalid RID '{0}': {1}")]
+    InvalidRid(String, crate::types::train_id::TrainIdError),
+
+    #[error("Invalid timestamp '{0}'")]
+    InvalidTimestamp(String),
+
+    #[allow(dead_code)]
+    #[error("Message contains no recognised updates")]
+    Empty,
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Parse a full Darwin Pport XML payload.
+/// Returns the envelope timestamp and all parsed updates contained in the message.
+pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), ParseError> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    let mut pport_ts: Option<DateTime<Utc>> = None;
+    let mut updates: Vec<ParsedUpdate> = Vec::new();
+
+    // Parser state: we track whether we're inside a TS block.
+    let mut current_ts: Option<TsUpdate> = None;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let local = e.local_name();
+
+                match local.as_ref() {
+                    b"Pport" => {
+                        pport_ts = Some(extract_pport_ts(e)?);
+                    }
+                    b"TS" => {
+                        let rid_str = attr_str(e, b"rid", "TS", "rid")?;
+                        let ssd_str = attr_str(e, b"ssd", "TS", "ssd")?;
+                        let is_cancelled = attr_bool(e, b"can");
+                        let rid = TrainId::rid(&rid_str)
+                            .map_err(|err| ParseError::InvalidRid(rid_str.clone(), err))?;
+                        let ssd = parse_ssd(&ssd_str)?;
+                        current_ts = Some(TsUpdate {
+                            rid,
+                            ssd,
+                            scheduled_departure: None,
+                            estimated_departure: None,
+                            actual_departure: None,
+                            platform: None,
+                            is_cancelled,
+                            is_delayed: false,
+                            station_crs: None,
+                        });
+                    }
+                    b"Location" if current_ts.is_some() => {
+                        if let Some(ref mut ts) = current_ts {
+                            if ts.scheduled_departure.is_none() {
+                                // Use `ptd` (public timetable departure) from the first location.
+                                if let Some(ptd) = attr_opt(e, b"ptd") {
+                                    ts.scheduled_departure =
+                                        parse_hhmm_on_date(&ptd, ts.ssd).ok();
+                                }
+                                ts.platform = attr_opt(e, b"plat");
+                                ts.station_crs = attr_opt(e, b"tpl");
+                            }
+                        }
+                    }
+                    b"dep" if current_ts.is_some() => {
+                        if let Some(ref mut ts) = current_ts {
+                            if let Some(et) = attr_opt(e, b"et") {
+                                ts.estimated_departure = parse_hhmm_on_date(&et, ts.ssd).ok();
+                            }
+                            if let Some(at) = attr_opt(e, b"at") {
+                                ts.actual_departure = parse_hhmm_on_date(&at, ts.ssd).ok();
+                            }
+                            ts.is_delayed = attr_bool(e, b"delayed");
+                        }
+                    }
+                    b"deactivated" => {
+                        let rid_str = attr_str(e, b"rid", "deactivated", "rid")?;
+                        let rid = TrainId::rid(&rid_str)
+                            .map_err(|err| ParseError::InvalidRid(rid_str.clone(), err))?;
+                        updates.push(ParsedUpdate::Deactivated(DeactivatedUpdate { rid }));
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(Event::End(ref e)) => {
+                if e.local_name().as_ref() == b"TS" {
+                    if let Some(ts) = current_ts.take() {
+                        updates.push(ParsedUpdate::TrainStatus(ts));
+                    }
+                }
+            }
+
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(ParseError::Xml(e)),
+            _ => {}
+        }
+    }
+
+    let ts = pport_ts.ok_or(ParseError::MissingAttribute {
+        element: "Pport",
+        attr: "ts",
+    })?;
+
+    Ok((ts, updates))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn extract_pport_ts(
+    e: &quick_xml::events::BytesStart,
+) -> Result<DateTime<Utc>, ParseError> {
+    let ts_str = attr_str(e, b"ts", "Pport", "ts")?;
+    DateTime::parse_from_rfc3339(&ts_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|_| ParseError::InvalidTimestamp(ts_str))
+}
+
+fn attr_str(
+    e: &quick_xml::events::BytesStart,
+    name: &[u8],
+    element: &'static str,
+    attr: &'static str,
+) -> Result<String, ParseError> {
+    e.attributes()
+        .filter_map(|a| a.ok())
+        .find(|a| a.key.local_name().as_ref() == name)
+        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        .ok_or(ParseError::MissingAttribute { element, attr })
+}
+
+fn attr_opt(e: &quick_xml::events::BytesStart, name: &[u8]) -> Option<String> {
+    e.attributes()
+        .filter_map(|a| a.ok())
+        .find(|a| a.key.local_name().as_ref() == name)
+        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+}
+
+fn attr_bool(e: &quick_xml::events::BytesStart, name: &[u8]) -> bool {
+    attr_opt(e, name).is_some_and(|v| v == "true")
+}
+
+fn parse_ssd(ssd: &str) -> Result<NaiveDate, ParseError> {
+    NaiveDate::parse_from_str(ssd, "%Y-%m-%d")
+        .map_err(|_| ParseError::InvalidTimestamp(ssd.to_string()))
+}
+
+/// Parse a `HH:MM` time string into a `DateTime<Utc>` anchored on `date`.
+fn parse_hhmm_on_date(hhmm: &str, date: NaiveDate) -> Result<DateTime<Utc>, ParseError> {
+    let t = NaiveTime::parse_from_str(hhmm, "%H:%M")
+        .or_else(|_| NaiveTime::parse_from_str(hhmm, "%H:%M:%S"))
+        .map_err(|_| ParseError::InvalidTimestamp(hhmm.to_string()))?;
+    Utc.from_local_datetime(&date.and_time(t))
+        .single()
+        .ok_or_else(|| ParseError::InvalidTimestamp(hhmm.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_TS: &str = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR updateOrigin="Darwin">
+    <TS rid="202404170123456" ssd="2024-04-17" uid="C12345">
+      <Location tpl="LEEDS" ptd="12:00" plat="3">
+        <dep et="12:05" delayed="true"/>
+      </Location>
+    </TS>
+  </uR>
+</Pport>"#;
+
+    const SAMPLE_CANCELLED: &str = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR>
+    <TS rid="202404170123456" ssd="2024-04-17" uid="C12345" can="true">
+      <Location tpl="LEEDS" ptd="12:00"/>
+    </TS>
+  </uR>
+</Pport>"#;
+
+    const SAMPLE_DEACTIVATED: &str = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T13:00:00Z" version="16.0">
+  <uR>
+    <deactivated rid="202404170123456"/>
+  </uR>
+</Pport>"#;
+
+    #[test]
+    fn parses_ts_message() {
+        let (ts, updates) = parse_pport(SAMPLE_TS).unwrap();
+        assert_eq!(updates.len(), 1);
+        assert!(matches!(updates[0], ParsedUpdate::TrainStatus(_)));
+        assert_eq!(ts.to_rfc3339(), "2024-04-17T12:00:00+00:00");
+    }
+
+    #[test]
+    fn ts_extracts_rid_and_platform() {
+        let (_, updates) = parse_pport(SAMPLE_TS).unwrap();
+        if let ParsedUpdate::TrainStatus(ts) = &updates[0] {
+            assert_eq!(ts.rid.as_str(), "202404170123456");
+            assert_eq!(ts.platform.as_deref(), Some("3"));
+            assert!(ts.is_delayed);
+        } else {
+            panic!("expected TrainStatus");
+        }
+    }
+
+    #[test]
+    fn ts_extracts_estimated_departure() {
+        let (_, updates) = parse_pport(SAMPLE_TS).unwrap();
+        if let ParsedUpdate::TrainStatus(ts) = &updates[0] {
+            assert!(ts.estimated_departure.is_some());
+        }
+    }
+
+    #[test]
+    fn cancelled_flag_parsed() {
+        let (_, updates) = parse_pport(SAMPLE_CANCELLED).unwrap();
+        if let ParsedUpdate::TrainStatus(ts) = &updates[0] {
+            assert!(ts.is_cancelled);
+        } else {
+            panic!("expected TrainStatus");
+        }
+    }
+
+    #[test]
+    fn parses_deactivated_message() {
+        let (_, updates) = parse_pport(SAMPLE_DEACTIVATED).unwrap();
+        assert_eq!(updates.len(), 1);
+        assert!(matches!(updates[0], ParsedUpdate::Deactivated(_)));
+    }
+
+    #[test]
+    fn missing_pport_ts_returns_error() {
+        let xml = r#"<Pport version="16.0"><uR></uR></Pport>"#;
+        assert!(parse_pport(xml).is_err());
+    }
+}
