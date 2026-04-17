@@ -7,6 +7,10 @@
 //!
 //! Each time-varying field carries a `last_updated` timestamp so stale-data detection
 //! can be applied per-field rather than per-record.
+//!
+//! ## Phase 2 (AdvancedAnalytics): `calling_points` added
+//! Stores the full TIPLOC sequence for the service, populated from Darwin TS `<Location>`
+//! elements. Used by `TrainRegistry`'s reverse TIPLOC index for cascade propagation.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -89,9 +93,21 @@ pub struct TrainStatus {
     /// CRS code of the origin station, set from the first Darwin TS message.
     pub origin_crs: Option<String>,
 
+    /// CRS code of the destination station, set from the last `<Location>` element in
+    /// the Darwin TS message. `None` until the first multi-location TS message is parsed.
+    pub destination_crs: Option<String>,
+
     /// RTTI UID (e.g. "C12345") — stable service identity used as the prediction key.
     /// `None` until the first Darwin TS message carrying a `uid` attribute is processed.
     pub uid: Option<String>,
+
+    // --- Calling pattern (Phase 2 AdvancedAnalytics: TIPLOC cascade) ---
+
+    /// Full ordered list of (TIPLOC code, scheduled arrival time) pairs for this service.
+    /// Populated from Darwin TS `<Location>` elements as they arrive.
+    /// Empty until the first TS message with location data is processed.
+    /// Used by `TrainRegistry::update_tiploc_index` to maintain the reverse TIPLOC → TrainId map.
+    pub calling_points: Vec<(String, DateTime<Utc>)>,
 
     // --- Environmental context ---
 
@@ -127,7 +143,9 @@ impl TrainStatus {
             is_cancelled: Stamped::new(false),
             cancellation_reason: Stamped::new(None),
             origin_crs: None,
+            destination_crs: None,
             uid: None,
+            calling_points: Vec::new(),
             volatility: VolatilityContext::unknown(),
             last_update_source: UpdateSource::RestPoll,
         }

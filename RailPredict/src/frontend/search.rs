@@ -19,7 +19,8 @@ pub async fn search_page() -> Markup {
                 form
                     hx-get="/ui/stations/departures"
                     hx-target="#results"
-                    hx-trigger="submit"
+                    hx-trigger="submit, every 30s"
+                    hx-swap="innerHTML transition:true"
                 {
                     input
                         type="text"
@@ -54,6 +55,31 @@ pub async fn departures_fragment(
         {
             continue;
         }
+
+        // Phase 1: compute how many seconds ago the most recently updated Stamped field was
+        // written. We take the maximum (most recent) last_updated across the fields that change
+        // from live sources so the staleness indicator reflects whether *any* live data arrived.
+        let most_recent = [
+            status.actual_estimated_departure.last_updated,
+            status.reported_delay_mins.last_updated,
+            status.actual_platform.last_updated,
+            status.is_cancelled.last_updated,
+        ]
+        .into_iter()
+        .max();
+        let last_updated_secs_ago = most_recent.map(|ts| {
+            let delta = chrono::Utc::now() - ts;
+            delta.num_seconds().max(0) as u64
+        });
+
+        // Phase 4: destination station name from destination_crs on TrainStatus.
+        // AppState does not yet expose db — add a TODO note and leave None for now.
+        // TODO: wire AppState::db and call db::static_data::get_station to resolve destination_crs
+        let destination_name: Option<String> = status
+            .destination_crs
+            .as_deref()
+            .map(|crs| crs.to_string()); // fallback: render CRS directly until DB is wired
+
         entries.push(DepartureBoardEntry {
             rid: status.id.to_string(),
             scheduled_departure: status.scheduled_departure.value.to_rfc3339(),
@@ -64,6 +90,8 @@ pub async fn departures_fragment(
             delay_mins: status.best_delay_mins(),
             platform: status.best_platform().map(str::to_string),
             is_cancelled: status.is_cancelled.value,
+            last_updated_secs_ago,
+            destination_name,
         });
     }
     entries.sort_by_key(|e| e.scheduled_departure.clone());
@@ -79,12 +107,21 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
             div .departure-board {
                 h2 { "Departures from " (crs) }
                 @for entry in entries {
-                    a .train-card href={ "/trains/" (entry.rid) "/view" } {
+                    // Phase 1: mark cards whose data is older than 120 seconds as stale.
+                    @let stale = entry.last_updated_secs_ago.map_or(false, |s| s > 120);
+                    a .train-card
+                      data-stale=[if stale { Some("true") } else { None::<&str> }]
+                      href={ "/trains/" (entry.rid) "/view" }
+                    {
                         div .train-card-left {
                             span .train-time {
                                 (entry.scheduled_departure.get(11..16).unwrap_or("--:--"))
                             }
                             (delay_badge(entry.delay_mins, entry.is_cancelled))
+                            // Phase 4: destination station name.
+                            @if let Some(dest) = &entry.destination_name {
+                                span .train-destination { "→ " (dest) }
+                            }
                         }
                         div .train-card-right {
                             span .train-rid { (entry.rid) }

@@ -66,6 +66,9 @@ pub struct TsUpdate {
     pub is_delayed: bool,
     /// CRS code of the first Location element (`tpl` attribute), used as origin station.
     pub station_crs: Option<String>,
+    /// CRS code of the last Location element (`tpl` attribute), used as destination station.
+    /// Equals `station_crs` when the TS message contains only a single Location element.
+    pub destination_crs: Option<String>,
 }
 
 /// Parsed content of a Darwin `deactivated` message.
@@ -141,10 +144,12 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                             is_cancelled,
                             is_delayed: false,
                             station_crs: None,
+                            destination_crs: None,
                         });
                     }
                     b"Location" if current_ts.is_some() => {
                         if let Some(ref mut ts) = current_ts {
+                            let tpl = attr_opt(e, b"tpl");
                             if ts.scheduled_departure.is_none() {
                                 // Use `ptd` (public timetable departure) from the first location.
                                 if let Some(ptd) = attr_opt(e, b"ptd") {
@@ -152,7 +157,12 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                                         parse_hhmm_on_date(&ptd, ts.ssd).ok();
                                 }
                                 ts.platform = attr_opt(e, b"plat");
-                                ts.station_crs = attr_opt(e, b"tpl");
+                                ts.station_crs = tpl.clone();
+                            }
+                            // Always update destination_crs to the most recently seen Location
+                            // `tpl`. After the loop this will be the last (destination) stop.
+                            if tpl.is_some() {
+                                ts.destination_crs = tpl;
                             }
                         }
                     }

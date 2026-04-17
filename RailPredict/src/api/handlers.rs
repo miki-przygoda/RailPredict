@@ -46,6 +46,20 @@ pub async fn departures_handler(
             continue;
         }
 
+        // Phase 1: compute staleness from the most recently updated live field.
+        let most_recent = [
+            status.actual_estimated_departure.last_updated,
+            status.reported_delay_mins.last_updated,
+            status.actual_platform.last_updated,
+            status.is_cancelled.last_updated,
+        ]
+        .into_iter()
+        .max();
+        let last_updated_secs_ago = most_recent.map(|ts| {
+            let delta = Utc::now() - ts;
+            delta.num_seconds().max(0) as u64
+        });
+
         entries.push(DepartureBoardEntry {
             rid: status.id.to_string(),
             scheduled_departure: status.scheduled_departure.value.to_rfc3339(),
@@ -56,6 +70,11 @@ pub async fn departures_handler(
             delay_mins: status.best_delay_mins(),
             platform: status.best_platform().map(str::to_string),
             is_cancelled: status.is_cancelled.value,
+            last_updated_secs_ago,
+            // Phase 4: destination_name resolution requires db access; not wired in
+            // AppState yet. Emit None here.
+            // TODO: wire AppState::db and call db::static_data::get_station for destination_crs
+            destination_name: status.destination_crs.clone(),
         });
     }
 

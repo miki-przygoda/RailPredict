@@ -36,6 +36,16 @@ pub struct DepartureBoardEntry {
     pub delay_mins: Option<i32>,
     pub platform: Option<String>,
     pub is_cancelled: bool,
+    /// Seconds since the most recent Stamped field on the backing TrainStatus was updated.
+    /// `None` means the age could not be determined (e.g. no registry entry).
+    /// Used by the stale-data overlay (Phase 1).
+    #[serde(default)]
+    pub last_updated_secs_ago: Option<u64>,
+    /// Human-readable destination station name, resolved from `destination_crs` via
+    /// the static station lookup table. `None` when the CRS is unavailable or the DB
+    /// is not wired (Phase 4).
+    #[serde(default)]
+    pub destination_name: Option<String>,
 }
 
 /// Streamed over SSE for `GET /trains/{rid}/live`.
@@ -163,6 +173,8 @@ mod tests {
             delay_mins: Some(5),
             platform: None,
             is_cancelled: false,
+            last_updated_secs_ago: None,
+            destination_name: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         let back: DepartureBoardEntry = serde_json::from_str(&json).unwrap();

@@ -7,6 +7,15 @@ _feel native: no blank flashes, honest staleness signals, graceful degradation._
 
 ## Phase 1 — Stale Data Overlay
 
+### Implementation Status
+**Complete** — implemented 17/04/2026.
+- `src/api/types.rs`: added `last_updated_secs_ago: Option<u64>` and `destination_name: Option<String>` to `DepartureBoardEntry` (with `#[serde(default)]` for backwards compat).
+- `src/frontend/search.rs` (`departures_fragment`): computes `last_updated_secs_ago` from the max `last_updated` across `actual_estimated_departure`, `reported_delay_mins`, `actual_platform`, `is_cancelled`.
+- `src/frontend/search.rs` (`departure_board_fragment`): emits `data-stale="true"` attribute on cards older than 120 s.
+- `src/api/handlers.rs` (`departures_handler`): same staleness computation for the JSON API path.
+- `static/style.css`: added `.train-card[data-stale="true"]` grayscale + "stale" pseudo-element styles.
+- Deviation: used inline `chrono::Utc::now()` comparison rather than `Stamped::is_stale()` because we need the raw seconds value for the DTO field, not just a boolean.
+
 ### The problem
 Every `TrainStatus` field is wrapped in `Stamped<T>` which carries a `last_updated`
 timestamp and an `is_stale(max_age)` method. None of this is surfaced in the UI.
@@ -52,6 +61,12 @@ rather than re-implementing the comparison.
 
 ## Phase 2 — Optimistic Departure Board
 
+### Implementation Status
+**Complete** — implemented 17/04/2026.
+- `src/frontend/search.rs` (`search_page`): changed form `hx-trigger="submit"` to `hx-trigger="submit, every 30s"` and added `hx-swap="innerHTML transition:true"`.
+- No session handling required (Option B from spec).
+- No deviations.
+
 ### The problem
 When a user submits the station search form, the page shows nothing until the htmx
 request completes. On slow connections this is a visible blank period.
@@ -76,6 +91,12 @@ Option B is simpler and requires no session handling. Start here.
 ---
 
 ## Phase 3 — SSE "Live Updates Paused" Banner
+
+### Implementation Status
+**Complete** — implemented 17/04/2026.
+- `src/frontend/layout.rs`: updated `#stale-banner` div to include `warning-banner` class and the "⚠ Live updates paused" text with a `#stale-timestamp` span; expanded the inline JS to also add/remove `data-stale` class on `#live-status` on `htmx:sseError` / `htmx:sseOpen`.
+- `static/style.css`: added `.warning-banner` background/color/text-align rules and `#live-status.data-stale` grayscale + amber left-border rules.
+- Deviation: kept the existing `display:none` / `.hidden` toggle mechanism (CSS class) rather than the spec's `style="display:none"` inline toggle, since the existing CSS already defines `#stale-banner.hidden { display: none }`. The JS removes/adds the `.hidden` class rather than setting `style.display` directly.
 
 ### The problem
 When the SSE connection drops (network interruption, STOMP disconnect, circuit breaker
@@ -135,6 +156,18 @@ machinery.
 ---
 
 ## Phase 4 — Destination Station on Departure Board Cards
+
+### Implementation Status
+**Complete (with one known limitation)** — implemented 17/04/2026.
+- `src/types/train_status.rs`: added `pub destination_crs: Option<String>` field after `origin_crs`; initialised to `None` in `TrainStatus::new`.
+- `src/ingestion/parser.rs` (`TsUpdate`): added `destination_crs: Option<String>` field; initialised to `None`; updated the `Location` handler to always overwrite `destination_crs` with the current `tpl` attribute so that after all Location elements are processed, it holds the last (destination) station CRS.
+- `src/ingestion/mod.rs`: captures `ts_destination_crs` before the registry update closure; propagates it to `status.destination_crs` inside the closure; also sets it on new-train registration.
+- `src/api/types.rs`: added `destination_name: Option<String>` to `DepartureBoardEntry`.
+- `src/frontend/search.rs` (`departures_fragment`): maps `status.destination_crs` directly to `destination_name` (CRS as fallback string, not resolved station name).
+- `src/api/handlers.rs` (`departures_handler`): same — emits raw CRS until DB is wired.
+- `static/style.css`: added `.train-destination` style (muted, 0.9rem).
+- `src/frontend/search.rs` (`departure_board_fragment`): renders `span .train-destination { "→ " (dest) }` in the card left column.
+- Known limitation: `AppState` does not expose `db: Db`, so `db::static_data::get_station` cannot be called. `destination_name` is populated with the raw CRS code (e.g. "MAN") until `AppState::db` is wired. Both `departures_fragment` and `departures_handler` have `// TODO: wire AppState::db` comments marking the integration point.
 
 ### The problem
 Each departure card shows the scheduled time, delay badge, and platform — but not where

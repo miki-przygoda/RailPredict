@@ -214,5 +214,40 @@ button[type="submit"]:hover { opacity: 0.9; }
 
 #stale-banner.hidden { display: none; }
 
+/* Phase 3: SSE Live Updates Paused banner */
+.warning-banner {
+    background: var(--amber);
+    color: #000;
+    text-align: center;
+    padding: 0.5rem;
+    font-size: 0.85rem;
+}
+
+#live-status.data-stale {
+    filter: grayscale(40%);
+    border-left: 3px solid var(--amber);
+    padding-left: 0.75rem;
+}
+
+/* Phase 1: Stale data overlay on departure board cards */
+.train-card[data-stale="true"] {
+    filter: grayscale(60%);
+    opacity: 0.75;
+}
+
+.train-card[data-stale="true"]::after {
+    content: "stale";
+    font-size: 0.65rem;
+    color: var(--amber);
+    margin-left: 0.5rem;
+}
+
+/* Phase 4: Destination label on departure board cards */
+.train-destination {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
 /* Not found */
 .not-found { color: var(--text-muted); }
