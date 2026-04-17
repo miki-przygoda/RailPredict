@@ -4,31 +4,32 @@
 //!
 //! ```text
 //! main
+//!  ├── db::connect + load_history
 //!  ├── PollManager::run        — global BinaryHeap poll scheduler
 //!  ├── IngestionPipeline::run  — Darwin STOMP firehose → registry writes
 //!  ├── eviction_task           — 60s tick; calls registry.evict_departed()
+//!  ├── db_flush_task           — 60s tick; flushes delay history to DB
 //!  └── axum server             — HTTP API + SSE
 //! ```
 //!
-//! All tasks share a `CancellationToken`. On `ctrl_c`, the token is cancelled and
-//! each task's `tokio::select!` exits cleanly. Tasks are joined before the process
-//! exits so the runtime flushes any in-flight async work.
-//!
-//! ## State-change channel
-//! A single `broadcast::channel` is written by both `PollManager` (poll ticks) and
-//! `IngestionPipeline` (emergency promotions). The axum SSE handler subscribes to it
-//! via `AppState::state_change_tx.subscribe()` — one subscriber per open SSE connection.
+//! All tasks share a `CancellationToken`. On SIGTERM or Ctrl-C, the token is
+//! cancelled, each task's `tokio::select!` exits cleanly, and a final history
+//! flush runs before the process exits.
 
 use std::sync::Arc;
 
 use chrono::Utc;
+use clap::Parser;
 use tokio::sync::broadcast;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use railpredict::api::{router, AppState};
 use railpredict::cache::TrainRegistry;
+use railpredict::cli::{Cli, Commands, IngestSource};
 use railpredict::config::{Config, LogFormat};
+use railpredict::db;
+use railpredict::ingestion::gtfs;
 use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
 use railpredict::prediction::PredictionEngine;
@@ -65,14 +66,44 @@ async fn main() -> anyhow::Result<()> {
     init_tracing(&config);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "RailPredict starting");
 
+    // --- CLI subcommands ---
+    let cli = Cli::parse();
+    if let Some(command) = cli.command {
+        let db_pool = db::connect(&config.database_url).await?;
+        match command {
+            Commands::IngestStatic { source, url, file } => match source {
+                IngestSource::Gtfs => {
+                    if let Some(path) = file {
+                        let count = gtfs::run_ingest_from_file(&db_pool, &path).await?;
+                        tracing::info!(stations = count, "GTFS ingest from file complete");
+                    } else {
+                        let url = url.ok_or_else(|| {
+                            anyhow::anyhow!("Either --url or --file must be provided for GTFS ingest")
+                        })?;
+                        let count = gtfs::run_ingest(&db_pool, &url).await?;
+                        tracing::info!(stations = count, "GTFS ingest complete");
+                    }
+                }
+                IngestSource::Cif => {
+                    unimplemented!("CIF ingest is not yet implemented");
+                }
+            },
+        }
+        return Ok(());
+    }
+
+    // --- Normal server startup ---
+    let db_pool = db::connect(&config.database_url).await?;
+
+    // Load Tier B history from DB into in-memory store.
+    let history_store = db::history::load_history(&db_pool).await?;
+    let history_store = Arc::new(history_store);
+    let prediction_engine = PredictionEngine::with_store(Arc::clone(&history_store));
+
     let registry = Arc::new(TrainRegistry::new());
-    let prediction_engine = PredictionEngine::new();
 
     // Single broadcast channel shared by PollManager, IngestionPipeline, and SSE handlers.
-    // Buffer of 1024: at peak (~400 msg/s Darwin) this gives ~2.5 seconds headroom before
-    // lagged SSE receivers start dropping events (acceptable — they see a gap in updates).
     let (sc_tx, _initial_rx) = broadcast::channel(1024);
-    // Drop _initial_rx; receivers are created on demand via sc_tx.subscribe().
     drop(_initial_rx);
 
     let token = CancellationToken::new();
@@ -93,14 +124,13 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => {
             tracing::warn!(
                 error = %e,
-                "Darwin credentials not configured — ingestion disabled. \
-                 Set DARWIN_HOST, DARWIN_USERNAME, DARWIN_PASSWORD to enable."
+                "Darwin credentials not configured — ingestion disabled."
             );
-            let pipeline_token = token.clone();
-            let _no_op = tokio::spawn(async move {
-                pipeline_token.cancelled().await;
-            });
-            wait_for_shutdown(token, pm_task, registry, sc_tx, &config).await;
+            wait_for_shutdown(
+                token, pm_task, registry, sc_tx, &config,
+                Arc::clone(&history_store), db_pool,
+            )
+            .await;
             return Ok(());
         }
     };
@@ -144,6 +174,27 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // --- DB flush background task (60s tick) ---
+    let flush_store = Arc::clone(&history_store);
+    let flush_db = db_pool.clone();
+    let flush_token = token.clone();
+    let flush_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            tokio::select! {
+                _ = flush_token.cancelled() => {
+                    tracing::info!("DB flush task shutting down");
+                    break;
+                }
+                _ = interval.tick() => {
+                    if let Err(e) = db::history::flush_history(&flush_db, &flush_store).await {
+                        tracing::error!(error = %e, "DB flush failed");
+                    }
+                }
+            }
+        }
+    });
+
     // --- axum HTTP server ---
     let app_state = AppState {
         registry: Arc::clone(&registry),
@@ -167,15 +218,36 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("HTTP API server stopped");
     });
 
-    // Wait for shutdown signal, then drain all tasks.
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Ctrl-C received — initiating graceful shutdown");
+    // Wait for SIGTERM or Ctrl-C.
+    shutdown_signal().await;
+    tracing::info!("Shutdown signal received — initiating graceful shutdown");
     token.cancel();
 
-    let _ = tokio::join!(pm_task, pipeline_task, eviction_task, api_task);
-    tracing::info!("All tasks stopped. Goodbye.");
+    let _ = tokio::join!(pm_task, pipeline_task, eviction_task, flush_task, api_task);
 
+    // Final flush before exit.
+    if let Err(e) = db::history::flush_history(&db_pool, &history_store).await {
+        tracing::error!(error = %e, "Final DB flush failed");
+    }
+
+    tracing::info!("All tasks stopped. Goodbye.");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async { tokio::signal::ctrl_c().await.ok() };
+
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = sigterm.recv() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    ctrl_c.await;
 }
 
 async fn wait_for_shutdown(
@@ -184,8 +256,9 @@ async fn wait_for_shutdown(
     registry: Arc<TrainRegistry>,
     sc_tx: broadcast::Sender<railpredict::state_machine::poll_manager::StateChangeEvent>,
     config: &Config,
+    history_store: Arc<railpredict::prediction::types::HistoricalStore>,
+    db_pool: db::Db,
 ) {
-    // Start the API server even without Darwin, so health + departure board are available.
     let app_state = AppState { registry, state_change_tx: sc_tx };
     let app = router(app_state);
 
@@ -202,9 +275,14 @@ async fn wait_for_shutdown(
         }
     }
 
-    tokio::signal::ctrl_c().await.ok();
-    tracing::info!("Ctrl-C received — initiating graceful shutdown");
+    shutdown_signal().await;
+    tracing::info!("Shutdown signal received — initiating graceful shutdown");
     token.cancel();
     let _ = pm_task.await;
+
+    if let Err(e) = db::history::flush_history(&db_pool, &history_store).await {
+        tracing::error!(error = %e, "Final DB flush failed");
+    }
+
     tracing::info!("All tasks stopped. Goodbye.");
 }
