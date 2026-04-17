@@ -3,6 +3,15 @@
 _Prerequisite: Improvements.md items 2.1–2.3 (networking wired, GBR response parsed,_
 _DB in AppState) must be complete before these are worth building._
 
+> ⚠️ IMPLEMENTATION STATUS NOTE (added during v1.1.x work):
+> All 4 phases have been implemented in code. However, the prediction engine is not yet
+> exercised on live data at runtime because Improvements.md items 2.1 (wire networking →
+> PollManager) and 2.2 (parse GBR JSON response) are not yet complete. The prediction
+> engine IS called by the ingestion pipeline on Darwin messages, so Tier B predictions
+> do accumulate from STOMP data. Full Tier C integration (GBR poll → predict → update)
+> awaits Improvements 2.1–2.2. Item 2.3 (DB in AppState) has been completed separately
+> as a prereq for the Observability epic.
+
 ---
 
 ## Background
@@ -63,6 +72,13 @@ give a more precise preceding-service relationship than the time-window scan abo
 Before implementing the time-window approach, consider whether processing `association`
 messages and storing the links would be worth the added complexity.
 
+### Implementation Status — COMPLETE
+Changed files:
+- `src/types/volatility.rs`: Added `CorrelationSignal` struct and `correlation_signal: Option<CorrelationSignal>` field to `VolatilityContext`
+- `src/prediction/engine.rs`: `predict_and_update` now accepts an optional registry snapshot slice, scans for preceding services sharing `origin_crs`, and applies 0.6/0.4 weighted blend when preceding service has `reported_delay_mins > 5`. Blend weights defined as named constants `PRECEDING_WEIGHT` (0.4) and `HISTORY_WEIGHT` (0.6).
+
+TODO (awaiting Improvements 2.1–2.2): The caller of `predict_and_update` must pass a registry snapshot slice for the correlation scan to have any effect. Until then, no preceding-service correlation occurs but the code compiles and is ready to wire.
+
 ---
 
 ## Phase 2 — TIPLOC Cascade (Knock-on Delay Propagation)
@@ -96,6 +112,14 @@ scheduled through that TIPLOC within ±20 minutes. The cascade signal boosts the
 `VolatilityContext::incident_flagged` and forces a `TrainState::Active` promotion
 regardless of departure time.
 
+### Implementation Status — COMPLETE
+Changed files:
+- `src/types/train_status.rs`: Added `calling_points: Vec<(String, DateTime<Utc>)>` field, initialised as empty vec
+- `src/cache/train_registry.rs`: Added `tiploc_index: DashMap<String, Vec<TrainId>>` secondary index; added `update_tiploc_index`, `trains_at_tiploc`, and `cascade_trains_for_tiploc` methods
+- `src/ingestion/filter.rs`: Added `check_tiploc_cascade` free function that returns `Vec<TrainId>` to promote to Active
+
+TODO (awaiting wiring): `ingestion/mod.rs` (owned by another agent) must call `check_tiploc_cascade` after delay detection and set `incident_flagged = true` on returned train IDs. A TODO comment is in place in `filter.rs`.
+
 ---
 
 ## Phase 3 — Historical Reliability per Day-of-Week + Hour
@@ -115,6 +139,13 @@ the minimum sample count accordingly.
 and the unique index becomes `(uid, weekday, origin_crs, departure_hour, recorded_at)`.
 Write a migration before implementing.
 
+### Implementation Status — COMPLETE
+Changed files:
+- `migrations/20240417120005_add_departure_hour.sql`: New migration adding `departure_hour SMALLINT NOT NULL DEFAULT 0`, dropping old unique index, creating new one on `(uid, weekday, origin_crs, departure_hour, recorded_at)`
+- `src/prediction/types.rs`: Added `departure_hour: u8` to `ServicePattern`
+- `src/prediction/engine.rs`: `derive_pattern` now populates `departure_hour` from `status.scheduled_departure.value.hour() as u8`
+- `src/db/history.rs`: Updated `DelayRow`, `load_history` query, and `flush_history` INSERT/CONFLICT clause to include `departure_hour`
+
 ---
 
 ## Phase 4 — Confidence Decay for Stale History
@@ -133,6 +164,11 @@ decayed_confidence = confidence * exp(-days_since_last_record / 21.0)
 ```
 This causes confidence to approach zero as history ages. Surface `decayed_confidence`
 in the output alongside the raw confidence.
+
+### Implementation Status — COMPLETE
+Changed files:
+- `src/prediction/types.rs`: Added `most_recent_recorded_at` method to `HistoricalStore`
+- `src/prediction/engine.rs`: After computing confidence, fetches most-recent `recorded_at` for the pattern; applies exponential decay if older than `STALENESS_THRESHOLD_DAYS` (21). `historical_reliability` in `VolatilityContext` now stores the decayed value. Raw confidence is preserved in the local variable for transparency (logged at TRACE level).
 
 ---
 

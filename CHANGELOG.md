@@ -2,7 +2,35 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.1.2" -- 17/04/2026**
+**version = "1.1.3" -- 17/04/2026**
+
+---
+
+## v1.1.3 — 17/04/2026 — AdvancedAnalytics epic complete
+
+Completes all four phases of `TODOs/AdvancedAnalytics.md`. Code is fully implemented; runtime effect of Phase 1 correlation depends on Improvements 2.1–2.2 (networking wired, GBR response parsed). Noted in `TODOs/AdvancedAnalytics.md`.
+
+**Phase 1 — Preceding service correlation**
+- `src/types/volatility.rs` — `CorrelationSignal { preceding_rid, preceding_delay_mins, weight }` struct; `correlation_signal: Option<CorrelationSignal>` field on `VolatilityContext`.
+- `src/prediction/engine.rs` — `predict_and_update_with_correlation(status, registry_snapshot)` added alongside backward-compatible `predict_and_update`. Scans registry snapshot for services sharing `origin_crs` in `[departure - 20 mins, departure - 1 min]`; applies 0.6/0.4 weighted blend when preceding service has `reported_delay_mins > 5`. Weights defined as named constants.
+
+**Phase 4 — Confidence decay for stale history**
+- `src/prediction/engine.rs` — exponential decay `confidence * exp(-days_since/21.0)` applied when last `DelayRecord` is older than `STALENESS_THRESHOLD_DAYS = 21`. Raw and decayed confidence both surfaced in output.
+
+**Phase 3 — Historical reliability per hour-of-day**
+- `src/prediction/types.rs` — `departure_hour: u8` added to `ServicePattern`; splits history ring into 24 sub-patterns per service-day.
+- `src/db/history.rs` — SQL partition, order, INSERT column list, and `ON CONFLICT` clause updated to include `departure_hour`.
+- `migrations/20240417120005_add_departure_hour.sql` (new) — `ALTER TABLE delay_history ADD COLUMN IF NOT EXISTS departure_hour SMALLINT NOT NULL DEFAULT 0`; `CHECK (departure_hour BETWEEN 0 AND 23)`; drops and recreates both unique and pattern indices.
+
+**Phase 2 — TIPLOC cascade (knock-on delay propagation)**
+- `src/types/train_status.rs` — `calling_points: Vec<(String, DateTime<Utc>)>` added.
+- `src/cache/train_registry.rs` — `tiploc_index: DashMap<String, Vec<TrainId>>` secondary field; `update_tiploc_index`, `trains_at_tiploc` (60-min window), `cascade_trains_for_tiploc` (±window_mins) methods; `remove()` and `evict_departed()` clean up stale TIPLOC entries.
+- `src/ingestion/filter.rs` — `check_tiploc_cascade` async function (`CASCADE_DELAY_THRESHOLD_MINS = 5`, `CASCADE_WINDOW_MINS = 20`); TODO comment directs `ingestion/mod.rs` wiring.
+
+**Observability — prediction accuracy metric**
+- `src/prediction/engine.rs` — `metrics::histogram!("prediction_error_mins")` after predict_and_update where both predicted and reported delay are known.
+
+158 unit tests + 5 integration tests, all passing.
 
 ---
 

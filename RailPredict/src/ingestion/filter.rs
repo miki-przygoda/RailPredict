@@ -24,12 +24,22 @@
 //! message with a timestamp ≤ the stored value is silently dropped.
 //! Semantics: per-TrainId (not global) because a late message for train A must not
 //! suppress a timely message for train B.
+//!
+//! ## Phase 2 (AdvancedAnalytics): TIPLOC cascade
+//! `check_tiploc_cascade` is a free function that, given a registry reference, a source
+//! train ID, and its next TIPLOC, returns the list of trains that should be force-promoted
+//! to `TrainState::Active` due to the cascade effect.
+//!
+//! TODO (ingestion/mod.rs, owned by another agent): after calling this function, iterate
+//! the returned `Vec<TrainId>` and set `volatility.incident_flagged = true` on each, then
+//! emit a state-change event to force `TrainState::Active` promotion.
 
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 
+use crate::cache::train_registry::TrainRegistry;
 use crate::types::TrainId;
 
 // ---------------------------------------------------------------------------
@@ -162,6 +172,55 @@ impl Filter {
         }
         crs.is_some_and(|c| self.watched_routes.contains(c))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 (AdvancedAnalytics): TIPLOC cascade
+// ---------------------------------------------------------------------------
+
+/// Minimum delay (minutes) for a delay event to trigger a TIPLOC cascade.
+/// Delays below this threshold are treated as noise and do not propagate.
+const CASCADE_DELAY_THRESHOLD_MINS: i32 = 5;
+
+/// Time window (minutes) around the affected TIPLOC time for cascade propagation.
+/// Trains scheduled ±20 minutes around the delayed train's TIPLOC time are affected.
+const CASCADE_WINDOW_MINS: i64 = 20;
+
+/// Check whether a delay at a TIPLOC should cascade to other trains, and if so
+/// return the list of `TrainId`s that should be force-promoted to `TrainState::Active`.
+///
+/// ## Arguments
+/// - `registry`:     the central train registry (read-only lookup)
+/// - `source_id`:    the delayed train triggering the cascade
+/// - `tiploc`:       the TIPLOC code at which the delay is occurring
+/// - `affected_time`: the scheduled time at the TIPLOC for the source train
+/// - `delay_mins`:   the delay (in minutes) detected for the source train
+///
+/// ## Returns
+/// Empty vec if `delay_mins` is below `CASCADE_DELAY_THRESHOLD_MINS`.
+/// Otherwise, the list of trains (excluding the source) sharing the TIPLOC within ±20 mins.
+///
+/// ## Caller responsibility
+/// After calling this function, the caller (in `ingestion/mod.rs`) must:
+/// 1. Acquire a write lock on each returned train's `TrainStatus`.
+/// 2. Set `volatility.incident_flagged = true`.
+/// 3. Emit a `StateChangeEvent` to force `TrainState::Active` promotion.
+///
+/// TODO (ingestion/mod.rs, owned by another agent): wire this call after delay detection.
+pub async fn check_tiploc_cascade(
+    registry: &TrainRegistry,
+    source_id: &TrainId,
+    tiploc: &str,
+    affected_time: DateTime<Utc>,
+    delay_mins: i32,
+) -> Vec<TrainId> {
+    if delay_mins <= CASCADE_DELAY_THRESHOLD_MINS {
+        return Vec::new();
+    }
+
+    registry
+        .cascade_trains_for_tiploc(source_id, tiploc, affected_time, CASCADE_WINDOW_MINS)
+        .await
 }
 
 #[cfg(test)]
