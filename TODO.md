@@ -30,27 +30,26 @@ The current version and last worked on date should be noted at the top of this f
 
 ### ~~Epic 6 — Runtime Wiring & Observability~~ — COMPLETE (v0.7.0)
 
-### Epic 7 — HTTP API + Uber-Style Frontend (`TODOs/UI.md`)
-Two sub-epics: axum REST/SSE API first, then SvelteKit frontend.
+### Epic 7 — HTTP API + Rust Frontend (`TODOs/UI.md`)
+Two sub-epics: axum REST/SSE API first, then Rust/maud/htmx frontend. No Node, no npm.
 
 **Sub-Epic A — axum API**
 - [ ] `src/api/types.rs` — client DTOs: `TrainSummary`, `DepartureBoardEntry`, `LiveUpdateEvent`
-- [ ] `GET /stations/{crs}/departures` — Tier A, zero live calls
+- [ ] `GET /stations/{crs}/departures` — Tier A, zero live calls; returns JSON or maud HTML fragment
 - [ ] `GET /trains/{rid}` — Tier B from registry, coalesced GBR fallback
-- [ ] `GET /trains/{rid}/live` — SSE stream of `LiveUpdateEvent`, heartbeat every 15s
+- [ ] `GET /trains/{rid}/live` — SSE stream of `LiveUpdateEvent` (maud OOB swap fragments), heartbeat every 15s
 - [ ] CORS + `TraceLayer` middleware
 - [ ] Wire axum into `main.rs` alongside existing tasks
 - [ ] API integration test
 
-**Sub-Epic B — SvelteKit frontend**
-- [ ] Scaffold in `frontend/` — TypeScript, `adapter-static`
-- [ ] Search page — departure board from `GET /stations/{crs}/departures`
-- [ ] Detail page — train summary + SSE live updates
-- [ ] Live route diagram (SVG, updates on SSE events)
-- [ ] Delay badge component (On time / N min / Cancelled)
-- [ ] SSE store factory with reconnection handling
-- [ ] Stale-data banner
-- [ ] `adapter-static` build served by axum `ServeDir` — single binary deploy
+**Sub-Epic B — Rust/maud/htmx frontend**
+- [ ] `src/frontend/` module — `layout.rs`, `search.rs`, `detail.rs`, `components.rs`
+- [ ] `/` Search page — maud full-page render; htmx departure board swap
+- [ ] `/trains/:rid` Detail page — maud render + `hx-ext="sse"` live updates
+- [ ] Live route diagram (maud SVG, position updated by htmx OOB swap on SSE)
+- [ ] Delay badge component — `fn delay_badge(minutes, cancelled) -> Markup`
+- [ ] Stale-data banner — htmx SSE error handler reveals/dismisses
+- [ ] `rust-embed` bundles `static/style.css` into binary at compile time — no filesystem dep
 
 ---
 
