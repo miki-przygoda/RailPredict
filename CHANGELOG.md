@@ -2,7 +2,79 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.0.0" -- 17/04/2026**
+**version = "1.1.0" -- 17/04/2026**
+
+---
+
+## v1.1.0 — 17/04/2026 — Docker & Database epic complete (Phases 4–6)
+
+Completes all six phases of `TODOs/Docker.md`. That file is now destroyed.
+
+**Phase 4 — DB module**
+- `src/db/mod.rs` — `connect(database_url)` creates a `PgPool` (max 10 connections) and runs `sqlx::migrate!` on startup. Exposes `type Db = PgPool`.
+- `src/db/static_data.rs` — `Station`, `TimetableCall`, `Fare` structs with `sqlx::FromRow`; `get_station()`, `departures_from()`, `cheapest_fare()` async query functions.
+- `src/db/history.rs` — `load_history(db)` uses a window function to rebuild `HistoricalStore` from the most recent MAX_SAMPLES rows per pattern on startup; `flush_history(db, store)` batch-inserts all records with `ON CONFLICT DO NOTHING` in 500-row chunks for idempotency.
+- `PredictionEngine::with_store(Arc<HistoricalStore>)` constructor + `arc_store()` accessor added to support startup loading and shared flush.
+- `main.rs` wired: DB connect → load history → `PredictionEngine::with_store` → 60s flush task → final flush on SIGTERM/Ctrl-C via `shutdown_signal()` (listens for both `SIGTERM` and Ctrl-C on Unix).
+
+**Phase 5 — CLI + GTFS ingest**
+- `src/cli.rs` — `Cli` struct (clap derive); `Commands::IngestStatic { source, url, file }` subcommand; `IngestSource` enum (`Gtfs`, `Cif`).
+- `src/ingestion/gtfs.rs` — `GtfsStation` (serde-deserialised from `stops.txt`); `parse_stops(csv_bytes)` pure function (testable without I/O) filters to valid 3-letter uppercase CRS codes; `run_ingest(db, url)` downloads ZIP → extracts `stops.txt` → parses → upserts stations via `QueryBuilder`; `run_ingest_from_file` variant for local archives. CIF is a stub returning `unimplemented!()`.
+- 5 unit tests for `parse_stops` and `is_valid_crs`.
+- `main.rs` parses CLI args first; if a subcommand is present it runs and exits before starting the server.
+
+**Phase 6 — Production hardening**
+- `docker-compose.prod.yml` — added `read_only: true` on the `app` service; all writable state lives in the DB.
+- `src/db/mod.rs` documents pool sizing (max 10 connections) inline.
+- 150 tests total (145 unit + 5 integration), all passing.
+
+---
+
+## v1.0.1 — 17/04/2026 — Docker infrastructure + database foundations (Phases 1–3)
+
+Partial progress on `TODOs/Docker.md` (Phases 1, 2, and 3 complete; Phases 4–6 pending).
+Epic remains open — `TODOs/Docker.md` is not destroyed until all six phases are done.
+
+**Phase 1 — Dockerfile**
+- Multi-stage `Dockerfile` using `cargo-chef`: `planner` → `cacher` → `builder` → `runtime`. Dependency compilation is a cached layer; code-only rebuilds reuse it entirely.
+- `SQLX_OFFLINE=true` set in the builder stage; `.sqlx/` snapshot directory to be committed after first `cargo sqlx prepare` run locally.
+- Runtime stage: `debian:bookworm-slim` with `ca-certificates` + `libssl3`; non-root `railpredict` user; `HEALTHCHECK` wired to `GET /health`.
+- `.dockerignore` excludes `target/`, `data/`, `.env`, `*.md`, `.git/`.
+
+**Phase 2 — Docker Compose**
+- `docker-compose.yml`: `db` (Postgres 16-alpine, named volume, healthcheck), `app` (waits on DB healthcheck, env from `.env`), `ingest` (profile-gated, exits after completion), `pgadmin` (profile-gated dev tool on `localhost:5050`).
+- `docker-compose.prod.yml`: overrides `app` to pull a tagged registry image (`RAILPREDICT_IMAGE`), removes host-side DB port exposure, sets `stop_grace_period: 30s`, forces `LOG_FORMAT=json`.
+- `.env.example` committed with every variable stubbed and commented.
+- `.gitignore` confirmed to exclude `.env`.
+
+**Phase 3 — Migrations**
+- `migrations/` directory at repo root; five SQL files managed by `sqlx-migrate`.
+- `20240417120000_create_stations` — `CHAR(3)` CRS primary key, GIN full-text index on name.
+- `20240417120001_create_services` — UID + days bitmask (`SMALLINT`, 0–127), FKs to stations.
+- `20240417120002_create_timetable_calls` — per (uid, date, location) call; indexed for departure-board and train-detail queries.
+- `20240417120003_create_fares` — price in pence (no float), validity windows, composite PK.
+- `20240417120004_create_delay_history` — Tier B persistence; unique composite index on `(uid, weekday, origin_crs, recorded_at)` prevents duplicate flush writes; no FK to services (intentional).
+
+**Cargo.toml additions**
+- `sqlx = "0.8"` with `runtime-tokio-rustls`, `postgres`, `migrate`, `chrono` features.
+- `clap = "4"` with `derive` feature (for the ingest CLI subcommand in Phase 5).
+- Project compiles cleanly with both new dependencies.
+
+---
+
+## v1.0.0 — 17/04/2026 — Unit test coverage pass
+
+Added tests for all modules that were missing coverage. No logic changes.
+
+- **`api/types.rs`** — 9 new tests: `ApiError` factory methods, HTTP status mapping (`NOT_FOUND`→404, `BAD_REQUEST`→400, `INTERNAL_ERROR`→500), JSON round-trips for `TrainSummary`, `DepartureBoardEntry`, `LiveUpdateEvent`.
+- **`prediction/types.rs`** — 5 new tests: direct `HistoricalStore` coverage (unknown pattern returns `None`, insert/get round-trip, cap enforcement, oldest-eviction correctness, distinct patterns tracked independently).
+- **`state_machine/train_state.rs`** — 9 new tests: boundary values at exactly 120/30/5 mins and one below each, `IncidentDetected` emergency promote for all base states, `Display` for all five variants. Boundary tests pin `now` to avoid sub-millisecond drift.
+- **`ingestion/filter.rs`** — 7 new tests: SF/trainAlert/association/alarm classification, `forget` resets sequence guard, Drop message blocked on watched route, watched-route filter with no CRS.
+- **`types/train_status.rs`** — 3 new tests: `Stamped::is_stale()` both directions, `Stamped::new` timestamp, `best_platform()` with both fields absent.
+- **`ingestion/parser.rs`** — 5 new tests: multiple TS in one Pport, `at` attribute, missing `rid`/`ssd` → error, mixed TS+deactivated in one message.
+- **`cache/train_registry.rs`** — 7 new tests: `update()` returns false for unregistered, `snapshot_all()`, empty snapshot, `warm()` empty iterator, `is_empty()`, eviction using `actual_estimated_departure`.
+- **`types/train_id.rs`** — 7 new tests: headcode format rejections, equality within/across variants, `as_str` for all variants, UID display.
+- 139 unit tests + 5 integration tests, all passing.
 
 ---
 

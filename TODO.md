@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.0.0" -- 17/04/2026**
+**version = "1.1.0" -- 17/04/2026**
 
 ---
 
@@ -22,7 +22,7 @@ The current version and last worked on date should be noted at the top of this f
 
 ## Current Epics
 
-_(none — ready for next feature)_
+_(No active epics. Docker & Database epic complete — see CHANGELOG.md v1.1.0.)_
 
 ---
 
