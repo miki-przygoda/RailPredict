@@ -1,10 +1,33 @@
 [package]
 name = "RailPredict"
-version = "0.2.0"
+version = "0.7.0"
 edition = "2024"
+
+[lib]
+name = "railpredict"
+path = "src/lib.rs"
+
+[[bin]]
+name = "railpredict"
+path = "src/main.rs"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+async-trait = "0.1"
+quick-xml = "0.37"
+dashmap = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dotenvy = "0.15"
+axum = { version = "0.7", features = ["macros"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-stream = "0.3"
+futures-core = "0.3"
+serde_json = "1"
