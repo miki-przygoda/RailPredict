@@ -6,6 +6,7 @@
 pub mod api;
 pub mod cache;
 pub mod config;
+pub mod frontend;
 pub mod ingestion;
 pub mod networking;
 pub mod state_machine;
