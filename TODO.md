@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "0.1.0" -- 17/04/2026**
+**version = "0.2.0" -- 17/04/2026**
 
 ---
 
@@ -22,15 +22,7 @@ The current version and last worked on date should be noted at the top of this f
 
 ## Current Epics
 
-### Epic 1 — Core Data Types (`TODOs/Structs.md`)
-Define the fundamental Rust types the whole system depends on. Nothing else can be built without these.
-
-- [ ] Create `src/types/` module
-- [ ] Implement `TrainID` enum (`RID`, `UID`, `Headcode` variants) with lookup/conversion logic
-- [ ] Implement `TrainStatus` struct (single source of truth; ingestible from REST, STOMP, and prediction engine)
-- [ ] Add `chrono`-typed timestamp fields: `ScheduledDeparture`, `PublicDeparture`, `ActualEstimatedDeparture`
-- [ ] Add `LastUpdated` timestamps per field for stale-data detection
-- [ ] Implement `VolatilityContext` struct (weather metadata, historical reliability coefficient)
+### ~~Epic 1 — Core Data Types~~ — COMPLETE (v0.2.0)
 
 ### Epic 2 — State Machine (`TODOs/StateMachine.md`)
 The polling pulse of the system. Depends on Epic 1 types being in place.

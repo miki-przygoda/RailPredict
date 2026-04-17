@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "0.1.0" -- 17/04/2026**
+**version = "0.2.0" -- 17/04/2026**
 
 ---
 
@@ -49,7 +49,6 @@ RailPredict/                        ← repo root
 ├── TODO.md                         ← current sprint todos; versioning instructions
 ├── CHANGELOG.md                    ← completed epics log; updated on minor version bumps
 ├── TODOs/
-│   ├── Structs.md                  ← data architecture: TrainStatus, TrainID, VolatilityContext
 │   ├── StateMachine.md             ← polling logic: TrainState enum, BinaryHeap manager
 │   ├── Networking.md               ← GBR API layer: coalescing, rate limiting, circuit breaker
 │   └── DataIngestion.md            ← Darwin STOMP firehose: filter, sequencing, XML parsing
