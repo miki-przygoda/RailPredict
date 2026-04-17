@@ -1,3 +1,5 @@
+mod types;
+
 fn main() {
-    println!("Hello, world!");
+    println!("RailPredict v{}", env!("CARGO_PKG_VERSION"));
 }
