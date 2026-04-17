@@ -91,3 +91,98 @@ impl IntoResponse for ApiError {
         (status, Json(self)).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn not_found_sets_correct_code_and_message() {
+        let e = ApiError::not_found("train missing");
+        assert_eq!(e.code, "NOT_FOUND");
+        assert!(e.error.contains("train missing"));
+    }
+
+    #[test]
+    fn bad_request_sets_correct_code() {
+        let e = ApiError::bad_request("invalid RID");
+        assert_eq!(e.code, "BAD_REQUEST");
+        assert!(e.error.contains("invalid RID"));
+    }
+
+    #[test]
+    fn internal_sets_correct_code() {
+        let e = ApiError::internal("registry failure");
+        assert_eq!(e.code, "INTERNAL_ERROR");
+    }
+
+    #[test]
+    fn not_found_maps_to_404() {
+        let resp = ApiError::not_found("x").into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn bad_request_maps_to_400() {
+        let resp = ApiError::bad_request("x").into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn internal_maps_to_500() {
+        let resp = ApiError::internal("x").into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn train_summary_round_trips_through_json() {
+        let s = TrainSummary {
+            rid: "202404170123456".to_string(),
+            origin_crs: Some("LDS".to_string()),
+            scheduled_departure: "2024-04-17T12:00:00Z".to_string(),
+            estimated_departure: None,
+            delay_mins: Some(5),
+            platform: Some("3".to_string()),
+            is_cancelled: false,
+            last_updated: "2024-04-17T12:01:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: TrainSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rid, s.rid);
+        assert_eq!(back.delay_mins, Some(5));
+        assert!(!back.is_cancelled);
+    }
+
+    #[test]
+    fn departure_board_entry_round_trips_through_json() {
+        let entry = DepartureBoardEntry {
+            rid: "202404170123456".to_string(),
+            scheduled_departure: "2024-04-17T12:00:00Z".to_string(),
+            estimated_departure: Some("2024-04-17T12:05:00Z".to_string()),
+            delay_mins: Some(5),
+            platform: None,
+            is_cancelled: false,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: DepartureBoardEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rid, entry.rid);
+        assert_eq!(back.delay_mins, Some(5));
+    }
+
+    #[test]
+    fn live_update_event_round_trips_through_json() {
+        let ev = LiveUpdateEvent {
+            rid: "202404170123456".to_string(),
+            state: "Critical".to_string(),
+            is_cancelled: Some(false),
+            delay_mins: Some(3),
+            platform: Some("4A".to_string()),
+            timestamp: "2024-04-17T12:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: LiveUpdateEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.state, "Critical");
+        assert_eq!(back.delay_mins, Some(3));
+    }
+}

@@ -336,4 +336,94 @@ mod tests {
         let xml = r#"<Pport version="16.0"><uR></uR></Pport>"#;
         assert!(parse_pport(xml).is_err());
     }
+
+    #[test]
+    fn multiple_ts_updates_in_one_pport() {
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR>
+    <TS rid="202404170000001" ssd="2024-04-17" uid="A00001">
+      <Location tpl="LDS" ptd="12:00"/>
+    </TS>
+    <TS rid="202404170000002" ssd="2024-04-17" uid="A00002">
+      <Location tpl="MAN" ptd="13:00"/>
+    </TS>
+  </uR>
+</Pport>"#;
+        let (_, updates) = parse_pport(xml).unwrap();
+        assert_eq!(updates.len(), 2);
+        assert!(matches!(updates[0], ParsedUpdate::TrainStatus(_)));
+        assert!(matches!(updates[1], ParsedUpdate::TrainStatus(_)));
+        if let ParsedUpdate::TrainStatus(ts) = &updates[0] {
+            assert_eq!(ts.rid.as_str(), "202404170000001");
+        }
+        if let ParsedUpdate::TrainStatus(ts) = &updates[1] {
+            assert_eq!(ts.rid.as_str(), "202404170000002");
+        }
+    }
+
+    #[test]
+    fn ts_with_actual_departure_parsed() {
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:10:00Z" version="16.0">
+  <uR>
+    <TS rid="202404170123456" ssd="2024-04-17" uid="C12345">
+      <Location tpl="LEEDS" ptd="12:00" plat="3">
+        <dep at="12:07"/>
+      </Location>
+    </TS>
+  </uR>
+</Pport>"#;
+        let (_, updates) = parse_pport(xml).unwrap();
+        if let ParsedUpdate::TrainStatus(ts) = &updates[0] {
+            assert!(ts.actual_departure.is_some(), "actual_departure should be parsed from 'at'");
+            assert!(ts.estimated_departure.is_none());
+        } else {
+            panic!("expected TrainStatus");
+        }
+    }
+
+    #[test]
+    fn ts_missing_rid_returns_error() {
+        // `rid` is required on a TS element — omitting it should cause a parse error.
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR>
+    <TS ssd="2024-04-17" uid="C12345">
+      <Location tpl="LDS" ptd="12:00"/>
+    </TS>
+  </uR>
+</Pport>"#;
+        assert!(parse_pport(xml).is_err());
+    }
+
+    #[test]
+    fn ts_missing_ssd_returns_error() {
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR>
+    <TS rid="202404170123456" uid="C12345">
+      <Location tpl="LDS" ptd="12:00"/>
+    </TS>
+  </uR>
+</Pport>"#;
+        assert!(parse_pport(xml).is_err());
+    }
+
+    #[test]
+    fn ts_and_deactivated_in_same_pport() {
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR>
+    <TS rid="202404170000001" ssd="2024-04-17" uid="A00001">
+      <Location tpl="LDS" ptd="12:00"/>
+    </TS>
+    <deactivated rid="202404170000002"/>
+  </uR>
+</Pport>"#;
+        let (_, updates) = parse_pport(xml).unwrap();
+        assert_eq!(updates.len(), 2);
+        assert!(matches!(updates[0], ParsedUpdate::TrainStatus(_)));
+        assert!(matches!(updates[1], ParsedUpdate::Deactivated(_)));
+    }
 }

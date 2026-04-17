@@ -140,4 +140,49 @@ mod tests {
         assert_eq!(TrainId::rid("202404170123456").unwrap().to_string(), "RID:202404170123456");
         assert_eq!(TrainId::headcode("1A23").unwrap().to_string(), "HC:1A23");
     }
+
+    #[test]
+    fn uid_display_format() {
+        assert_eq!(TrainId::uid("C12345").unwrap().to_string(), "UID:C12345");
+    }
+
+    #[test]
+    fn headcode_all_digits_rejected() {
+        // "1234" — second char is a digit, not a letter
+        assert!(TrainId::headcode("1234").is_err());
+    }
+
+    #[test]
+    fn headcode_letter_first_rejected() {
+        // "A123" — first char must be a digit
+        assert!(TrainId::headcode("A123").is_err());
+    }
+
+    #[test]
+    fn headcode_letter_in_third_position_rejected() {
+        // "1AB3" — third char must be a digit
+        assert!(TrainId::headcode("1AB3").is_err());
+    }
+
+    #[test]
+    fn same_variant_same_string_are_equal() {
+        let a = TrainId::rid("202404170123456").unwrap();
+        let b = TrainId::rid("202404170123456").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_variants_same_raw_string_are_not_equal() {
+        // Uid and Headcode have different lengths so we need strings that fit each type.
+        let uid = TrainId::uid("C12345").unwrap();
+        let rid = TrainId::rid("202404170123456").unwrap();
+        assert_ne!(uid, rid);
+    }
+
+    #[test]
+    fn as_str_returns_inner_value_for_all_variants() {
+        assert_eq!(TrainId::rid("202404170123456").unwrap().as_str(), "202404170123456");
+        assert_eq!(TrainId::uid("C12345").unwrap().as_str(), "C12345");
+        assert_eq!(TrainId::headcode("1A23").unwrap().as_str(), "1A23");
+    }
 }

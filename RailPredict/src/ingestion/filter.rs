@@ -249,4 +249,63 @@ mod tests {
         assert!(filter.should_parse(xml, Some("LDS")));
         assert!(!filter.should_parse(xml, Some("MAN")));
     }
+
+    // --- Additional message type classification ---
+
+    #[test]
+    fn sf_classified_as_conditional() {
+        let xml = b"<Pport><uR><SF rid=\"123\"/></uR></Pport>";
+        assert_eq!(classify_message(xml), MessageDecision::Conditional);
+    }
+
+    #[test]
+    fn train_alert_classified_as_drop() {
+        let xml = b"<Pport><uR><trainAlert rid=\"123\"/></uR></Pport>";
+        assert_eq!(classify_message(xml), MessageDecision::Drop);
+    }
+
+    #[test]
+    fn association_classified_as_drop() {
+        let xml = b"<Pport><uR><association/></uR></Pport>";
+        assert_eq!(classify_message(xml), MessageDecision::Drop);
+    }
+
+    #[test]
+    fn alarm_classified_as_drop() {
+        let xml = b"<Pport><uR><alarm/></uR></Pport>";
+        assert_eq!(classify_message(xml), MessageDecision::Drop);
+    }
+
+    // --- Sequence guard: forget behaviour ---
+
+    #[test]
+    fn forget_allows_old_timestamp_to_be_accepted_again() {
+        let guard = SequenceGuard::new();
+        let id = TrainId::rid("202404170000001").unwrap();
+        let t = Utc::now();
+        assert!(guard.should_apply(&id, t));
+        // Same timestamp rejected...
+        assert!(!guard.should_apply(&id, t));
+        // ...but after forget the sequence resets.
+        guard.forget(&id);
+        assert!(guard.should_apply(&id, t));
+    }
+
+    // --- Filter::should_parse drops Drop messages regardless of route ---
+
+    #[test]
+    fn drop_message_blocked_even_on_watched_route() {
+        let filter = Filter::new(["LDS".to_string()].into());
+        let xml = b"<Pport><uR><alarm/></uR></Pport>";
+        assert!(!filter.should_parse(xml, Some("LDS")));
+    }
+
+    // --- Filter::route_allowed with no CRS ---
+
+    #[test]
+    fn route_filter_blocks_message_with_no_crs() {
+        let filter = Filter::new(["LDS".to_string()].into());
+        let xml = b"<Pport><uR><TS rid=\"1\"/></uR></Pport>";
+        assert!(!filter.should_parse(xml, None));
+    }
 }
