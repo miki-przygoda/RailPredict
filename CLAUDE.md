@@ -144,6 +144,50 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 ---
 
+## References from HFT-Engine (`data/HFT-Engine/`)
+
+A separate Rust project (gitignored under `data/`) that solved similar concurrency and ingestion problems at nanosecond scale. RailPredict does not need that level of latency, but the structural patterns are proven and directly portable. Do not copy inline assembly, PRFM prefetch hints, or NEON/AVX2 signal logic — those are HFT-specific. Everything below is domain-agnostic Rust.
+
+### High-value direct ports
+
+**1. SPSC lock-free ring buffer — `data/HFT-Engine/src/models.rs`: `RingBuffer` + `TradeLog`**
+The pattern: `UnsafeCell<[T; N]>` for the backing array, `AtomicU64` write cursor, `Ordering::Release` on commit and `Ordering::Acquire` on read. Writer fills all struct fields first, then `fetch_add(1, Release)` to make the entry visible — never the other way around. This maps directly onto the Darwin ingestion pipeline: the STOMP receiver (writer) fills a parsed `TrainUpdate` slot, then commits; the state machine (reader) polls the cursor.
+
+**2. Sequence gap detection + dirty flag — `data/HFT-Engine/src/engine.rs`: `run_ingestor`**
+The ingestor tracks `last_ingest_seq` and on each received packet checks `recv_seq != last_ingest_seq + 1`. On a gap it sets a `dirty: AtomicBool` flag and increments `gap_count`. The consumer (trading strategy) skips processing while dirty and only clears it after `N` consecutive clean sequences. This is **exactly** the Darwin out-of-order / late-arrival problem described in `TODOs/DataIngestion.md`. Port this pattern verbatim into `src/ingestion/filter.rs`.
+
+**3. `LatencyHistogram` — `data/HFT-Engine/src/models.rs`**
+Fixed-bucket histogram covering 0–10,000 µs (one `u64` per bucket), overflow counter for values above the range, and an O(n) `percentile()` walk that requires zero allocation. Single-writer semantics (`UnsafeCell` + no lock). Directly useful for monitoring Darwin XML parse latency and state-machine poll timing. Copy this struct as-is into a `src/diagnostics/` module.
+
+**4. Versioned JSON run log + `unix_to_date_time` — `data/HFT-Engine/src/engine.rs`: `write_log` + `unix_to_date_time`**
+Writes structured logs to `logs/v{version}/{YYYY-MM-DD}/{HH-MM-SS}.json`. Version is read from `Cargo.toml` at compile time via `env!("CARGO_PKG_VERSION")` — stays in sync with the project version automatically. The `unix_to_date_time` function is a stdlib-only Gregorian calendar implementation (no `chrono`) for log path generation. Use this pattern for RailPredict's run and diagnostic logs.
+
+**5. Pre-allocated flat instrument registry — `data/HFT-Engine/src/models.rs`: `InstrumentId` + `InstrumentBuffers`**
+Instead of a `HashMap<InstrumentId, Arc<RingBuffer>>`, a compact `u8`-indexed newtype (`InstrumentId(pub u8)`) is used as an array index into a pre-allocated flat `[RingBuffer; MAX_INSTRUMENTS]`. O(1) lookup with zero heap allocation on the hot path. The equivalent in RailPredict is the `TrainID` → `TrainStatus` registry inside `src/cache/train_registry.rs`. A flat array keyed by a compact train index (populated from a startup lookup table) is faster and simpler than a `dashmap` if the active-train count is bounded. Use `dashmap` for the full registry; use a flat pre-allocated array for the subset of trains in `Active` or `Critical` state where lookup is on the hot polling path.
+
+### Medium-value: adapt with judgement
+
+**6. Spin-based watchdog — `data/HFT-Engine/src/engine.rs`: `run_watchdog`**
+The watchdog checks elapsed time every 2^24 iterations to amortise the timer call cost, avoiding OS sleep/wakeup cycles that could preempt critical threads. RailPredict does not have that thread-preemption concern, but the structural pattern — a dedicated watchdog task monitoring connection health, with configurable idle and no-feed timeout thresholds — maps directly to monitoring the Darwin STOMP connection. Adapt into a `tokio::spawn` task rather than a spin loop (tokio's async sleep is fine for RailPredict's ms-level timing requirements).
+
+**7. Buffer pre-touch with `write_volatile` — `data/HFT-Engine/src/main.rs`**
+On macOS (and Linux with overcommit), `std::mem::zeroed()` on a heap allocation does not commit physical pages — they are zero-fill-on-demand. The first write to each page causes a demand-paging fault. In HFT this is catastrophic (~3–5µs). In RailPredict it matters less, but pre-touching the `TrainStatus` registry at startup (before any polling threads run) gives consistent first-write latency. Do this in `main.rs` before spawning any tokio tasks.
+
+**8. `#[cold]` on rare/error paths — `data/HFT-Engine/src/engine.rs`: `halt_trading`**
+`#[cold]` on a function biases the branch predictor in the caller toward the not-taken (non-error) direction after the first few calls. Apply this to the circuit breaker's `enter_cache_only_mode()` function and to any error handler called from a polling hot path.
+
+**9. Thread priority — `data/HFT-Engine/src/engine.rs`: `set_qos_interactive`**
+Uses `pthread_set_qos_class_self_np(0x21, 0)` on macOS to set `QOS_USER_INTERACTIVE`, biasing the thread toward P-cores. On Linux uses `SCHED_FIFO` via raw syscall. Apply to the Darwin STOMP ingestion thread and the state machine poll manager thread to reduce OS-scheduling jitter on those two latency-sensitive paths.
+
+### What NOT to port
+
+- Inline assembly (`asm!`, NEON, AVX2, PRFM) — RailPredict has no sub-microsecond latency requirement.
+- `mach_absolute_time()` timing discussion — use `chrono` or `tokio::time` normally.
+- The trading signal logic, `fake-exchange`, `market-simulator` — entirely different domain.
+- `collect_memory_stats` (getrusage + sysctl) — not needed unless you add a diagnostics endpoint later.
+
+---
+
 ## Self-Check Notes
 
 When opening a file or module that has not been recently active, ask:
