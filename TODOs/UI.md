@@ -1,7 +1,14 @@
-# TODOs/UI.md – HTTP API Layer & Uber-Style Frontend
+# TODOs/UI.md – HTTP API Layer & Rust Frontend
 
 Two sub-epics that must be built in sequence: the axum API server first (it defines
-the contract), then the SvelteKit frontend that consumes it.
+the contract), then the Rust-rendered frontend that consumes it.
+
+**Frontend stack decision:** pure Rust. No Node, no npm, no bundler.
+- `maud` for server-side HTML templating (compile-time checked macros)
+- `htmx` (single CDN script tag, no build step) for partial-page updates over SSE and AJAX
+- Axum serves both the API and the HTML pages from the same binary
+- CSS via a single hand-written stylesheet (no Tailwind / PostCSS toolchain)
+- Result: one `cargo build` produces a fully self-contained binary
 
 ---
 
@@ -12,13 +19,13 @@ the contract), then the SvelteKit frontend that consumes it.
 1. **SSE over WebSocket**
    The data flow is server-push only — the client never sends runtime updates back.
    Server-Sent Events are simpler (plain HTTP, no upgrade handshake, automatic
-   reconnect built into the browser `EventSource` API). Reserve WebSocket for a
+   reconnect built into `htmx`'s `hx-ext="sse"`). Reserve WebSocket for a
    future bidirectional feature (e.g. seat reservation).
 
 2. **API contract before implementation**
    Define request/response types as Rust structs with `serde::Serialize` before writing
-   any handler. These structs are the contract the frontend will code against. Changing
-   them later is a two-repo change.
+   any handler. These structs are the contract the frontend templates will render against.
+   Changing them later is a two-location change (handler + template).
 
 3. **The three-tier rule at the API boundary**
    - `GET /trains/{rid}` must serve from the registry (Tier B/C) without hitting GBR
@@ -29,9 +36,11 @@ the contract), then the SvelteKit frontend that consumes it.
    - `GET /trains/{rid}/live` (SSE) subscribes the caller to state-change events for
      one RID. It reads from the `state_change_tx` broadcast — it does not poll.
 
-4. **CORS**
-   The SvelteKit dev server runs on a different port. Configure `tower-http`'s `CorsLayer`
-   from the start — retrofitting CORS after the frontend is built is always painful.
+4. **Dual response format**
+   Every data endpoint returns either JSON (`Accept: application/json`) or an HTML
+   fragment (`Accept: text/html`). The HTML path returns a `maud` fragment for htmx
+   to swap in; the JSON path is for direct API consumers and tests. A small
+   `accept_header` extractor decides which branch to take.
 
 ---
 
@@ -39,27 +48,26 @@ the contract), then the SvelteKit frontend that consumes it.
 
 - [ ] **Cargo.toml: add API dependencies** — `axum` (with `macros` feature), `tower`,
   `tower-http` (with `cors` and `trace` features), `tokio-stream` (for SSE body
-  streaming). Check version compatibility with the existing `tower` pulled in transitively.
+  streaming), `maud` (with `axum` feature). Check version compatibility with the
+  existing `tower` pulled in transitively.
 
 - [ ] **Write the API contract as a markdown table before coding** — for every endpoint,
   document: HTTP method, path, path/query params, success response shape (field names
   and types), error response shape, which data tier it serves from, and whether it is
-  synchronous or streaming. This table becomes the reference the frontend team works
-  from. Store it as a comment block at the top of `src/api/mod.rs`.
+  synchronous or streaming. Store it as a comment block at the top of `src/api/mod.rs`.
 
-- [ ] **Decide the SSE event format** — the browser `EventSource` API receives
-  `data: ...\n\n` lines. Decide whether the event body is a JSON-serialised
-  `StateChangeEvent` or a simplified client-facing DTO. The latter is better: the
-  internal `StateChangeEvent` carries internal state (e.g. `TrainState` enum variants)
-  that should not leak to the frontend as a stable contract.
+- [ ] **Decide the SSE event format** — htmx's `hx-ext="sse"` expects named events with
+  an `id:` line for reconnect. Decide whether the event body is raw HTML (an htmx OOB
+  swap fragment) or JSON parsed by a small inline `<script>`. Raw HTML fragments are
+  simpler and keep all rendering in Rust/maud.
 
 - [ ] **Design error response shape** — a consistent `{ "error": "...", "code": "..." }`
-  JSON envelope for all 4xx/5xx responses. Define this as a type that implements
-  `axum::response::IntoResponse` before writing any handler — otherwise each handler
-  invents its own error format.
+  JSON envelope for all 4xx/5xx responses, plus a matching maud error fragment for
+  htmx consumers. Define as a type implementing `axum::response::IntoResponse`.
 
-- [ ] **Create the module skeleton** — `src/api/mod.rs`, `src/api/handlers.rs`,
-  `src/api/sse.rs`, `src/api/types.rs`. Compile on stubs before adding logic.
+- [ ] **Confirm module skeleton compiles** — `src/api/mod.rs`, `src/api/handlers.rs`,
+  `src/api/sse.rs`, `src/api/types.rs` already scaffolded; ensure they compile on stubs
+  before adding logic.
 
 ---
 
@@ -72,109 +80,116 @@ the contract), then the SvelteKit frontend that consumes it.
 - [ ] **`GET /stations/{crs}/departures`** — Tier A: query registry for all trains
   departing from the given CRS within a configurable window; return as
   `Vec<DepartureBoardEntry>` sorted by scheduled departure. No live GBR call.
+  HTML path returns a maud `departure-board` fragment for htmx swap.
 
 - [ ] **`GET /trains/{rid}`** — Tier B: return the current `TrainSummary` from the
   registry. If the RID is unknown, trigger a coalesced GBR fetch and wait. Return 404
   only if GBR also returns not found.
 
 - [ ] **`GET /trains/{rid}/live` (SSE)** — Tier C: subscribe to `state_change_tx` events
-  for this RID and stream them as `LiveUpdateEvent` JSON. Heartbeat every 15s to keep
-  the connection alive through proxies. Close the stream when the train reaches
-  `Terminal` state.
+  for this RID and stream them as `LiveUpdateEvent` SSE. Each event body is a maud HTML
+  fragment for htmx OOB swap. Heartbeat every 15s. Close stream on `Terminal` state.
 
-- [ ] **CORS + tracing middleware** — `CorsLayer` (allow frontend origin), `TraceLayer`
-  (log method, path, status, latency for every request).
+- [ ] **CORS + tracing middleware** — `CorsLayer`, `TraceLayer` (method, path, status, latency).
 
 - [ ] **Wire axum into `main.rs`** — pass `Arc<TrainRegistry>`, coalescer, and
-  `state_change_tx` receiver handle to the router as `axum::Extension` state; spawn
-  the server as a task alongside the poll manager and ingestion pipeline.
+  `state_change_tx` receiver handle as `axum::Extension` state; spawn server task
+  alongside poll manager and ingestion pipeline.
 
-- [ ] **API integration test** — spin up the full axum server in a `#[tokio::test]`,
-  POST a mock Darwin message to force a registry update, then `GET /trains/{rid}` and
-  assert the response reflects it.
+- [ ] **API integration test** — spin up full axum server in `#[tokio::test]`, POST a
+  mock Darwin message to force a registry update, then `GET /trains/{rid}` and assert
+  the JSON response reflects it.
 
 ---
 
-## Sub-Epic B — SvelteKit Frontend
+## Sub-Epic B — Rust/maud/htmx Frontend
 
 ### Key considerations:
 
-1. **Uber-style progressive disclosure**
-   The UI has three phases, each triggering at most one tier of data:
-   - **Search** — type origin/destination, see a departure board instantly (Tier A cached).
-   - **Detail** — tap a train, see predicted delay and platform (Tier B local compute),
-     then SSE connection opens and live updates stream in.
-   - **Checkout** — initiate booking; single Tier C call to lock the ticket.
+1. **Uber-style progressive disclosure — same UX, different stack**
+   - **Search** — type origin/destination, departure board renders instantly (Tier A, server-rendered maud fragment, htmx swap).
+   - **Detail** — click a train, maud renders the detail page; htmx SSE connection opens automatically via `hx-ext="sse"` and swaps in live updates.
+   - **Checkout** — "Book" button triggers a single Tier C call; htmx posts and swaps the confirmation fragment in-place.
 
-2. **Map vs. list**
-   Uber's signature is the map. For rail, the equivalent is a **live route diagram**:
-   a stylised line showing the train's current position between stations, updating as
-   SSE events arrive. This is the single highest-impact visual element. Use a `canvas`
-   or SVG — do not embed a full tile map (unnecessary weight for a fixed rail route).
+2. **maud for all HTML**
+   All HTML is generated by `maud` macros in `src/frontend/`. No template files, no
+   runtime parsing — templates are checked at compile time. Each page and fragment is
+   a Rust function returning `maud::Markup`. Layout chrome lives in a shared
+   `src/frontend/layout.rs` base template.
 
-3. **Dark-first design**
-   Uber's palette: near-black background (`#1a1a1a`), white primary text, electric
-   accent (propose `#00c853` — a rail-green that reads as "on time"). Delay states use
-   amber and red. Platform number gets large typographic treatment (Uber-style "your
-   car is X" moment).
+3. **htmx for interactivity**
+   - `hx-get` + `hx-target` for departure board search (replaces the results div).
+   - `hx-ext="sse"` + `sse-connect` on the detail page to subscribe to the live endpoint.
+   - `hx-swap="outerHTML"` OOB swaps for the delay badge and position indicator.
+   - No JavaScript written by hand except a single `<script>` for the SVG route diagram
+     position interpolation (≤50 lines).
 
-4. **Offline / stale state**
-   When the SSE connection drops, the UI must not silently show stale data. Display a
-   "Live updates paused" banner and a timestamp of the last known update. The browser
-   `EventSource` reconnects automatically; dismiss the banner when it does.
+4. **Dark-first design — same palette**
+   Near-black background (`#1a1a1a`), white primary text, rail-green accent (`#00c853`)
+   for on-time state. Amber and red for delay states. Platform number gets large
+   typographic treatment. Single `static/style.css` file served by axum `ServeDir`.
+
+5. **Single binary deploy**
+   `static/` (CSS + htmx CDN-cached script) is embedded at compile time via
+   `include_str!` or `rust-embed`. No `ServeDir` dependency on the filesystem at
+   runtime — the binary is fully self-contained.
+
+6. **Stale-data / offline state**
+   When the SSE connection drops, htmx fires `htmx:sseError`. A small inline handler
+   swaps in a "Live updates paused — last updated HH:MM:SS" banner. Dismissed
+   automatically when the connection restores.
 
 ---
 
 ### Before Starting: Pre-work Subtasks (Sub-Epic B)
 
-- [ ] **Agree the API contract with Sub-Epic A first** — do not start frontend work
-  until `src/api/types.rs` is finalised. The DTO shapes are the shared contract.
+- [ ] **Agree the API contract with Sub-Epic A first** — do not start frontend work until
+  `src/api/types.rs` is finalised. The DTO shapes drive what maud templates render.
 
-- [ ] **Design mockups for the three phases before coding** — sketch the Search page,
-  Detail page, and Checkout trigger in a tool like Figma or even ASCII art. The
-  progressive-disclosure flow must be agreed before component structure is chosen.
-  One wrong assumption here refactors three components.
+- [ ] **Sketch the three page states** — ASCII-art or commented maud stubs for Search,
+  Detail, and Checkout layouts. Agree the progressive-disclosure flow before writing
+  any template logic.
 
-- [ ] **Decide state management approach** — SvelteKit's built-in stores are sufficient
-  for this app. Do not introduce a Redux-style library. The SSE stream maps cleanly to
-  a Svelte `writable` store: the SSE `onmessage` handler calls `store.set(event)` and
-  every component that cares subscribes reactively.
+- [ ] **Add maud + rust-embed to Cargo.toml** — `maud` (axum feature), `rust-embed`
+  (for embedding `static/`). Confirm they compile alongside existing axum version.
 
-- [ ] **Decide the build integration** — SvelteKit can be served as a static export
-  (`adapter-static`) or as a Node SSR server (`adapter-node`). For this project,
-  `adapter-static` output served by the axum binary itself (via `tower_http::ServeDir`)
-  is the cleanest single-binary deployment. Decide before scaffolding.
+- [ ] **Decide routing split** — API routes under `/api/v1/`, page routes at `/` and
+  `/trains/:rid`. Both served from the same axum `Router`. Page routes return full
+  `maud::Markup` documents; API routes return JSON or HTML fragments depending on
+  `Accept` header.
 
 ---
 
 ### Implementation Tasks (Sub-Epic B)
 
-- [ ] **Scaffold SvelteKit project** in `frontend/` at repo root (separate from the Rust
-  crate). TypeScript, `adapter-static`, ESLint + Prettier.
+- [ ] **`src/frontend/` module** — `mod.rs`, `layout.rs` (base chrome: nav, stale banner
+  slot), `search.rs` (search page + departure board fragment), `detail.rs` (detail page
+  + live update fragments), `components.rs` (delay badge, platform chip, route diagram
+  shell).
 
-- [ ] **`/` — Search page** — origin/destination autocomplete from a static CRS list;
-  submit triggers `GET /stations/{crs}/departures`; renders departure board cards.
-  Instant feel: show the static timetable immediately, overlay live status as it loads.
+- [ ] **`/` — Search page** — maud full-page render; origin CRS `<input>` with
+  `hx-get="/api/v1/stations/{crs}/departures"` and `hx-target="#results"`; static
+  timetable renders immediately, live status overlaid as it loads.
 
-- [ ] **`/trains/[rid]` — Detail page** — train summary card (origin → destination,
-  scheduled time, predicted delay, platform); opens SSE connection on mount, closes on
-  unmount; live route diagram (SVG) showing position between stops; "Book" CTA.
+- [ ] **`/trains/:rid` — Detail page** — maud full-page render; train summary card
+  (origin → destination, scheduled time, predicted delay, platform);
+  `hx-ext="sse" sse-connect="/api/v1/trains/{rid}/live"` on the live section;
+  SVG route diagram with station list and current position marker.
 
-- [ ] **Live route diagram component** — SVG component that accepts a list of stations
-  and a current position indicator; updates position smoothly as SSE events arrive.
-  Stateless and reusable — takes props, emits nothing.
+- [ ] **Live route diagram** — SVG rendered by maud with station nodes at fixed positions;
+  current position marker updated by htmx OOB swap on each SSE event.
+  Small inline `<script>` interpolates marker position smoothly between swaps (≤50 lines).
 
-- [ ] **Delay badge component** — reusable chip: green "On time", amber "N min delay",
-  red "Cancelled". Colour and label driven purely by props. Used on both the departure
-  board and the detail page.
+- [ ] **Delay badge component** — maud function `fn delay_badge(minutes: Option<i32>, cancelled: bool) -> Markup`; green / amber / red driven by value. Used in both search results and detail page.
 
-- [ ] **SSE store** — a Svelte store factory `createLiveTrainStore(rid)` that opens an
-  `EventSource`, populates the store on each event, and cleans up on destroy. Handles
-  reconnection banner state.
+- [ ] **Stale-data banner** — maud fragment; hidden by default; revealed by inline htmx
+  SSE error handler; shows last-updated timestamp; auto-dismissed on reconnect.
 
-- [ ] **Stale-data banner** — shown when SSE `onerror` fires; dismissed on reconnect.
-  Displays "Last updated HH:MM:SS" timestamp.
+- [ ] **`static/style.css`** — single hand-written stylesheet; dark palette; no preprocessor.
+  Embedded at compile time via `rust-embed` so the binary has no filesystem dependency.
 
-- [ ] **`adapter-static` build + axum `ServeDir`** — `cargo build` produces a single
-  binary that serves both the API and the compiled frontend from `frontend/build/`.
-  Document the build order in `README.md`.
+- [ ] **Route wiring in `src/api/mod.rs`** — add page routes alongside API routes in the
+  same axum `Router`; serve embedded static assets via a `rust-embed` handler.
+
+- [ ] **End-to-end test** — `#[tokio::test]` spins up the full server, GETs `/`, asserts
+  the HTML response contains expected landmarks (search input, results target div).
