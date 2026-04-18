@@ -4,35 +4,51 @@ _A full audit of the codebase as of v1.1.0. Organized by priority, not by module
 
 ---
 
-## Status — Breakdown into Agent Epics (v1.1.3)
+## Status — Breakdown into Agent Epics (v1.4.0)
 
 This file has been broken down into focused agent-sized epic files. Each item below is
 now tracked in its respective epic file. Do not start work directly from this file —
 use the epic files instead.
 
-| Epic file | Items covered |
-|---|---|
-| `TODOs/ProductionHardening.md` | 1.1, 1.2, 1.4, 1.5, 3.1, 3.2, 3.3 |
-| `TODOs/TierCWiring.md` | 2.1, 2.2, 2.6, 8.1, 4.5 |
-| `TODOs/TierADataLayer.md` | 2.3 (remaining), 2.4, 2.5, 6.1, 6.2 |
-| `TODOs/CI_DevEx.md` | 1.3, 4.1, 4.2, 4.3, 4.4 |
-| `TODOs/TechnicalDebt.md` | 7.1, 7.3, 9.1, 9.2, 9.3, 9.4, 9.5, 4.5 |
-| `TODOs/ProductFeatures.md` | 5.1, 5.3, 5.4, 5.5, 8.2 |
+| Epic file | Items covered | Status |
+|---|---|---|
+| `TODOs/ProductionHardening.md` | 1.1, 1.2, 1.4, 1.5, 3.1, 3.2, 3.3 | **COMPLETE — v1.2.0** (kept for reference) |
+| `TODOs/CI_DevEx.md` | 1.3, 4.1, 4.2, 4.3, 4.4 | **COMPLETE — v1.3.0** (kept for reference) |
+| `TODOs/TierADataLayer.md` | 2.3 (remaining), 2.4, 2.5, 6.1, 6.2 | Pending — next epic |
+| `TODOs/TierCWiring.md` | 2.1, 2.2, 2.6, 8.1, 4.5 | Pending |
+| `TODOs/ProductFeatures.md` | 5.1, 5.3, 5.4, 5.5, 8.2 | Pending |
 
 ### Already completed (do not re-implement)
+- **1.1** (STOMP TLS) — completed in ProductionHardening v1.2.0.
+- **1.2** (STOMP auto-reconnect) — completed in ProductionHardening v1.2.0.
+- **1.3** (`.sqlx/` snapshot + CI sqlx-check) — CI step wired in v1.3.0; snapshot generation is a pending user action.
+- **1.4** (CORS tightening) — completed in ProductionHardening v1.2.0.
+- **1.5** (HTTP rate limiting) — completed in ProductionHardening v1.2.0.
 - **2.3** (DB in AppState) — completed as Observability prereq in v1.1.2. Remaining
   work (merge DB + registry in handlers) is in `TODOs/TierADataLayer.md`.
 - **2.7** — same as 2.3, duplicate entry.
+- **3.1** (CRS validation) — completed in ProductionHardening v1.2.0.
+- **3.2** (health endpoint DB probe) — completed in ProductionHardening v1.2.0.
+- **3.3** (SECURITY.md) — completed in ProductionHardening v1.2.0.
+- **4.1** (CI pipeline) — completed in CI_DevEx v1.3.0.
+- **4.2** (cargo-deny) — completed in CI_DevEx v1.3.0.
+- **4.3** (DB integration tests) — completed in CI_DevEx v1.3.0.
+- **4.4** (README tech stack) — completed in CI_DevEx v1.3.0.
 - **5.2** (destination on departure cards) — completed in FrontEndHardening v1.1.1.
 - **6.3** (HTMX SSE error banner) — completed in FrontEndHardening v1.1.1.
+- **7.1** (departure board sequential lock acquisitions) — completed in TechnicalDebt v1.4.0.
 - **7.2** (Prometheus /metrics endpoint) — completed in Observability v1.1.2.
+- **7.3** (DB pool hardcoded at 10) — completed in TechnicalDebt v1.4.0.
+- **9.1** (`is_cancelled` → `Stamped<Option<bool>>`) — completed in TechnicalDebt v1.4.0.
+- **9.2** (`best_delay_mins`/`best_platform` undocumented) — completed in TechnicalDebt v1.4.0.
+- **9.3** (STOMP byte-by-byte read) — completed in TechnicalDebt v1.4.0.
+- **9.4** (departure sort by string) — completed in TechnicalDebt v1.4.0.
+- **9.5** (CIF `unimplemented!()` panic) — completed in TechnicalDebt v1.4.0.
 
 ### Suggested epic execution order
-1. `ProductionHardening.md` + `CI_DevEx.md` (can run in parallel — no file conflicts)
-2. `TechnicalDebt.md` (mostly independent, small fixes)
-3. `TierADataLayer.md` (completes the data pipeline; enables features)
-4. `TierCWiring.md` (the big architecture epic — wires live GBR calls)
-5. `ProductFeatures.md` (builds on everything above)
+1. `TierADataLayer.md` (completes the data pipeline; enables product features)
+2. `TierCWiring.md` (the big architecture epic — wires live GBR calls; also unblocks 4.5)
+3. `ProductFeatures.md` (builds on everything above)
 
 ---
 
@@ -40,7 +56,7 @@ use the epic files instead.
 
 These will cause silent failures or security holes the moment the app is exposed publicly.
 
-### 1.1 STOMP uses plain TCP — Darwin requires TLS
+### 1.1 STOMP uses plain TCP — Darwin requires TLS ✓ COMPLETED v1.2.0
 `LiveStompClient::subscribe` calls `TcpStream::connect`. The real Darwin Push Port broker
 requires a TLS connection (port 61613 with STARTTLS or port 61614 direct TLS).
 Connecting over plain TCP will be silently refused.
@@ -48,28 +64,28 @@ Connecting over plain TCP will be silently refused.
 CONNECT frame is sent. Add `DARWIN_TLS=true` env var (default on) with an escape hatch
 for local mock brokers.
 
-### 1.2 No STOMP auto-reconnect
+### 1.2 No STOMP auto-reconnect ✓ COMPLETED v1.2.0
 `IngestionPipeline::run` exits as soon as the STOMP stream closes. Darwin disconnects
 clients roughly every 30 minutes (ActiveMQ session timeout). After that, the pipeline
 stops permanently and the in-memory registry freezes. Nothing in `main.rs` restarts it.
 **Fix:** wrap the `pipeline.run()` call in a retry loop with exponential backoff (start 2s,
 cap 120s). The `SequenceGuard` already handles duplicate/replayed messages on reconnect.
 
-### 1.3 `.sqlx/` offline snapshot not committed — Docker build fails
+### 1.3 `.sqlx/` offline snapshot not committed — Docker build fails ⚠ CI WIRED v1.3.0 — USER ACTION STILL REQUIRED
 `Dockerfile` sets `SQLX_OFFLINE=true` in the builder stage, but no `.sqlx/` directory
 exists in the repo. `cargo build --release` will fail at the macro expansion stage because
 sqlx cannot verify queries at compile time without either a live DB or the snapshot.
 **Fix:** run `cargo sqlx prepare` locally against a dev DB, commit the generated
 `.sqlx/` directory, add a CI step that runs `cargo sqlx prepare --check` to catch drift.
 
-### 1.4 CORS is permanently permissive
+### 1.4 CORS is permanently permissive ✓ COMPLETED v1.2.0
 `CorsLayer::permissive()` allows any origin, any method, any header. The comment says
 "Tighten for production" but there is no production config for it.
 **Fix:** add `CORS_ALLOWED_ORIGINS` env var (comma-separated). In `router()`, use
 `CorsLayer::new().allow_origin(...)` with the parsed origins. Default to `permissive()`
 only if the var is unset and `LOG_LEVEL=debug` (i.e. dev mode).
 
-### 1.5 No HTTP API rate limiting
+### 1.5 No HTTP API rate limiting ✓ COMPLETED v1.2.0
 The public HTTP endpoints have no request throttling. A single client can exhaust the
 server by hammering `/stations/{crs}/departures` (which acquires a read lock on every
 registry entry).
@@ -157,18 +173,18 @@ constructed.
 
 ## 3. Security Hardening
 
-### 3.1 Validate CRS code format in all handlers
+### 3.1 Validate CRS code format in all handlers ✓ COMPLETED v1.2.0
 `/stations/{crs}/departures` accepts any string and uppercases it. A 500-character CRS
 would pass through to the DB query. Add a CRS format check (exactly 3 ASCII letters)
 at the handler boundary before any DB or registry access.
 
-### 3.2 Health endpoint should probe DB connectivity
+### 3.2 Health endpoint should probe DB connectivity ✓ COMPLETED v1.2.0
 `GET /health` always returns 200. An operator restarting a crashed DB would see a
 "healthy" service silently serving stale data.
 **Fix:** include a lightweight `SELECT 1` ping in the health handler (with a 1s timeout)
 and return 503 if it fails.
 
-### 3.3 Secrets in environment — document rotation procedure
+### 3.3 Secrets in environment — document rotation procedure ✓ COMPLETED v1.2.0
 `.env.example` lists `GBR_API_KEY`, `DARWIN_PASSWORD`, `DB_PASSWORD`. There is no
 documented procedure for rotating these in production (re-deploy with new env, vs
 live reload). Add a `SECURITY.md` or a section in README covering this.
@@ -177,7 +193,7 @@ live reload). Add a `SECURITY.md` or a section in README covering this.
 
 ## 4. Developer Experience & CI
 
-### 4.1 No CI pipeline
+### 4.1 No CI pipeline ✓ COMPLETED v1.3.0
 There is no `.github/workflows/` directory. Nothing automatically runs `cargo test`,
 `cargo clippy`, or `cargo sqlx prepare --check` on push.
 **Must add:** a GitHub Actions workflow that runs on every push to main and on PRs:
@@ -186,13 +202,13 @@ There is no `.github/workflows/` directory. Nothing automatically runs `cargo te
 - `cargo sqlx prepare --check` (needs a Postgres service container)
 - `cargo build --release` (catches proc-macro failures that unit tests miss)
 
-### 4.2 No `cargo-deny` or dependency audit
+### 4.2 No `cargo-deny` or dependency audit ✓ COMPLETED v1.3.0
 No `deny.toml` and no audit step. The dependency tree includes network-facing crates
 (`reqwest`, `rustls`, `sqlx`). A supply chain advisory on any of them won't be caught.
 **Fix:** add `cargo deny check` to CI. Commit a permissive `deny.toml` to start,
 tighten over time.
 
-### 4.3 No integration test against a real database
+### 4.3 No integration test against a real database ✓ COMPLETED v1.3.0
 All tests run against in-memory state or mocks. `src/db/` functions are tested only
 at compile time. A `docker-compose.yml` service for tests exists (`db` service) but
 no test harness uses it.
@@ -200,7 +216,7 @@ no test harness uses it.
 spins up a schema-migrated test database per test function) to cover `load_history`,
 `flush_history`, `get_station`, `departures_from`, `cheapest_fare`.
 
-### 4.4 README tech stack table is out of date
+### 4.4 README tech stack table is out of date ✓ COMPLETED v1.3.0
 README lists `moka` (not in Cargo.toml) and `polars` (not in Cargo.toml) as
 dependencies. The actual cache is `dashmap`. This will confuse anyone reading the
 project for the first time.
@@ -223,7 +239,7 @@ shows all departures from a single origin. A journey search would filter
 `timetable_calls` for services that call both origin and destination in order, sorted
 by departure time.
 
-### 5.2 Destination station shown on departure board
+### 5.2 Destination station shown on departure board ✓ COMPLETED v1.1.1
 Each card on the departure board shows the RID and platform but not the destination
 station. Users need to know where the train is going.
 **Fix:** populate `destination_crs` on `TrainStatus` from the final call in the Darwin
@@ -275,7 +291,7 @@ each future departure, setting the state via `TrainState::from_departure`. Regis
 each with `PollManager` at the appropriate interval. This closes the gap between Tier A
 (timetable data) and the live state machine without waiting for Darwin to mention the train.
 
-### 6.3 HTMX SSE client has no error handling — freezes silently on disconnect
+### 6.3 HTMX SSE client has no error handling — freezes silently on disconnect ✓ COMPLETED v1.1.1
 `detail.rs` handles `RecvError::Lagged` and `RecvError::Closed` on the server side, but
 the client HTML has no `htmx:sseError` event listener. When the SSE connection drops
 (network interruption, server restart, circuit breaker entering Cache Only mode), the
@@ -292,7 +308,7 @@ an honest signal when they are seeing stale data, consistent with the Circuit Br
 
 ## 7. Performance & Observability
 
-### 7.1 Departure board handler holds many read locks sequentially
+### 7.1 Departure board handler holds many read locks sequentially ✓ COMPLETED v1.4.0
 `departures_handler` and `departures_fragment` both iterate `snapshot_all()` and call
 `arc.read().await` inside a loop. With 500 active trains, this is 500 sequential async
 lock acquisitions per page load. `snapshot_all` returns `Arc<RwLock<TrainStatus>>` clones
@@ -301,13 +317,13 @@ lock acquisitions per page load. `snapshot_all` returns `Arc<RwLock<TrainStatus>
 acquires each lock and copies the needed fields in one pass, returning plain structs.
 Handlers get a `Vec<DepartureBoardEntry>` directly without touching `AppState` guts.
 
-### 7.2 No Prometheus metrics endpoint
+### 7.2 No Prometheus metrics endpoint ✓ COMPLETED v1.1.2
 `tracing` is wired but there is no `/metrics` endpoint. Latency histograms per route,
 registry size, flush counts, STOMP reconnect counts, circuit breaker state — none are
 observable without reading logs.
 **Fix:** add `prometheus` + `axum-prometheus` crate; expose `GET /metrics`.
 
-### 7.3 DB pool is hardcoded at 10 — no tuning path
+### 7.3 DB pool is hardcoded at 10 — no tuning path ✓ COMPLETED v1.4.0
 `PgPoolOptions::new().max_connections(10)` is a guess. The correct value depends on the
 Postgres `max_connections` setting and the number of concurrent flush + query tasks.
 **Fix:** read `DB_MAX_CONNECTIONS` env var (default 10); document the calculation in
@@ -357,7 +373,7 @@ before a production deployment covering the full national timetable.
 
 ## 9. Technical Debt
 
-### 9.1 `Stamped<bool>` for `is_cancelled` should be `Stamped<Option<bool>>`
+### 9.1 `Stamped<bool>` for `is_cancelled` should be `Stamped<Option<bool>>` ✓ COMPLETED v1.4.0
 `is_cancelled` defaults to `Stamped::new(false)`, meaning a train that has never
 received a Darwin TS message is represented as "definitely not cancelled" rather than
 "cancellation status unknown". If a handler serves this train before any Darwin data
@@ -365,18 +381,18 @@ arrives, it silently asserts the train is running.
 **Fix:** change to `Stamped<Option<bool>>` and update all callers to treat `None` as
 "unknown".
 
-### 9.2 `best_delay_mins` and `best_platform` are not documented
+### 9.2 `best_delay_mins` and `best_platform` are not documented ✓ COMPLETED v1.4.0
 These helper methods on `TrainStatus` make a policy choice (predicted vs reported for
 delay; actual vs scheduled for platform) that every UI caller relies on. The choice
 should be explicit and tested.
 
-### 9.3 STOMP frame body is read byte-by-byte
+### 9.3 STOMP frame body is read byte-by-byte ✓ COMPLETED v1.4.0
 `read_frame` reads the NULL-terminated body one byte at a time in a loop. At Darwin's
 peak of ~400 msg/s with typical message sizes of 2–10 KB, this is up to 4 million
 single-byte async reads per second. Use `read_until(0, &mut body)` from `AsyncBufReadExt`
 instead — one syscall per message body.
 
-### 9.4 `departures_handler` sorts by stringified RFC3339 timestamp
+### 9.4 `departures_handler` sorts by stringified RFC3339 timestamp ✓ COMPLETED v1.4.0
 `entries.sort_by_key(|e| e.scheduled_departure.clone())` sorts by the string
 representation of the timestamp. RFC3339 strings sort correctly only if all are in the
 same timezone offset. Since all times are UTC (ending in `Z`), this is safe today, but
@@ -384,7 +400,7 @@ it's a hidden invariant.
 **Fix:** sort by the parsed `chrono::DateTime<Utc>` value in `scheduled_departure.value`
 before converting to string, or define an explicit sort key on `DepartureBoardEntry`.
 
-### 9.5 `IngestSource::Cif` panics with `unimplemented!()`
+### 9.5 `IngestSource::Cif` panics with `unimplemented!()` ✓ COMPLETED v1.4.0
 If a user runs `railpredict ingest-static --source cif`, the process panics.
 **Fix:** return a proper `anyhow::bail!("CIF ingest is not yet implemented")` error
 so the process exits cleanly with an error message rather than a panic backtrace.
