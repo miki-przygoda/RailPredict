@@ -270,8 +270,6 @@ async fn read_frame<R>(reader: &mut BufReader<R>) -> Result<StompFrame, StompErr
 where
     R: AsyncRead + Unpin,
 {
-    use tokio::io::AsyncReadExt;
-
     let mut command = String::new();
     // Skip blank lines (heart-beat frames are just "\n").
     while command.trim().is_empty() {
@@ -296,17 +294,16 @@ where
     }
 
     // Read body up to the NULL terminator.
+    // `read_until` issues a single syscall per message body rather than one per byte,
+    // which is critical at Darwin's peak throughput (~400 msg/s, 2–10 KB each).
     let mut body = Vec::new();
-    loop {
-        let mut byte = [0u8; 1];
-        let n = reader.read(&mut byte).await?;
-        if n == 0 {
-            return Err(StompError::Disconnected);
-        }
-        if byte[0] == 0 {
-            break;
-        }
-        body.push(byte[0]);
+    let n = reader.read_until(0, &mut body).await?;
+    if n == 0 {
+        return Err(StompError::Disconnected);
+    }
+    // `read_until` includes the delimiter; strip the trailing NULL byte if present.
+    if body.last() == Some(&0) {
+        body.pop();
     }
 
     Ok(StompFrame { command: command.trim().to_string(), headers, body })
