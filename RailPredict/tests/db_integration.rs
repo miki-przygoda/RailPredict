@@ -28,10 +28,8 @@
 //!
 //! # Compilation note
 //!
-//! These tests import from `railpredict::db` and `railpredict::prediction::types`.
-//! If any types used here are not `pub`, the compiler will report an error.
-//! All types accessed (`HistoricalStore`, `ServicePattern`, `DelayRecord`) are `pub`
-//! in `src/prediction/types.rs`.
+//! Seed queries use the runtime `sqlx::query` (not `sqlx::query!`) so no database
+//! connection is required at compile time and no `.sqlx/` offline snapshot is needed.
 
 use std::sync::Arc;
 
@@ -44,7 +42,6 @@ use railpredict::prediction::types::{DelayRecord, HistoricalStore, ServicePatter
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a `ServicePattern` for use in tests.
 fn make_pattern(uid: &str) -> ServicePattern {
     ServicePattern {
         uid: uid.to_string(),
@@ -66,8 +63,6 @@ async fn load_history_returns_empty_for_fresh_db(pool: sqlx::PgPool) {
         .await
         .expect("load_history must not fail on a fresh database");
 
-    // HistoricalStore does not expose `is_empty()`. Use `all_records()` instead
-    // (returns Vec — empty vec means no records loaded).
     let records = store.all_records();
     assert!(
         records.is_empty(),
@@ -85,16 +80,14 @@ async fn load_history_returns_empty_for_fresh_db(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn flush_then_load_roundtrips(pool: sqlx::PgPool) {
-    // Two stations must exist before we can insert delay_history rows that
-    // reference them via origin_crs. Insert them first.
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2), ($3, $4)
          ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
-        "MAN",
-        "Manchester Piccadilly",
     )
+    .bind("LDS")
+    .bind("Leeds")
+    .bind("MAN")
+    .bind("Manchester Piccadilly")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
@@ -109,8 +102,6 @@ async fn flush_then_load_roundtrips(pool: sqlx::PgPool) {
         departure_hour: 17,
     };
 
-    // Use slightly different timestamps to avoid the unique constraint on
-    // (uid, weekday, origin_crs, departure_hour, recorded_at).
     let base_time = Utc::now();
     let t1 = base_time - chrono::Duration::seconds(2);
     let t2 = base_time - chrono::Duration::seconds(1);
@@ -124,18 +115,15 @@ async fn flush_then_load_roundtrips(pool: sqlx::PgPool) {
         .await
         .expect("flush_history must not fail");
 
-    // Reload from the database.
     let loaded = db::history::load_history(&pool)
         .await
         .expect("load_history must not fail after flush");
 
-    // p1 should have 2 samples.
     let samples_p1 = loaded.get_samples(&p1).expect("p1 should have samples after reload");
     assert_eq!(samples_p1.len(), 2, "p1 must have 2 samples after roundtrip");
     assert!(samples_p1.contains(&5), "p1 samples must contain delay_mins=5");
     assert!(samples_p1.contains(&10), "p1 samples must contain delay_mins=10");
 
-    // p2 should have 1 sample.
     let samples_p2 = loaded.get_samples(&p2).expect("p2 should have samples after reload");
     assert_eq!(samples_p2.len(), 1, "p2 must have 1 sample after roundtrip");
     assert_eq!(samples_p2[0], 0, "p2 sample must have delay_mins=0");
@@ -149,11 +137,11 @@ async fn flush_then_load_roundtrips(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn flush_history_is_idempotent(pool: sqlx::PgPool) {
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2) ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
     )
+    .bind("LDS")
+    .bind("Leeds")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
@@ -191,16 +179,16 @@ async fn get_station_returns_none_for_unknown_crs(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn get_station_returns_inserted_station(pool: sqlx::PgPool) {
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name, nlc, lat, lon, is_active)
          VALUES ($1, $2, $3, $4, $5, $6)",
-        "KGX",
-        "London Kings Cross",
-        "5592",
-        51.5308_f64,
-        -0.1238_f64,
-        true,
     )
+    .bind("KGX")
+    .bind("London Kings Cross")
+    .bind("5592")
+    .bind(51.5308_f64)
+    .bind(-0.1238_f64)
+    .bind(true)
     .execute(&pool)
     .await
     .expect("station insert must succeed");
@@ -215,7 +203,6 @@ async fn get_station_returns_inserted_station(pool: sqlx::PgPool) {
     assert_eq!(station.nlc.as_deref().map(str::trim), Some("5592"), "NLC must match");
     assert!(station.is_active, "Station must be active");
 
-    // Coordinates are stored as f64; allow for minor floating-point tolerance.
     let lat = station.lat.expect("lat must be present");
     let lon = station.lon.expect("lon must be present");
     assert!((lat - 51.5308).abs() < 1e-4, "lat must be approximately correct");
@@ -227,11 +214,11 @@ async fn get_station_returns_inserted_station(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn departures_from_returns_empty_when_no_calls(pool: sqlx::PgPool) {
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2) ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
     )
+    .bind("LDS")
+    .bind("Leeds")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
@@ -253,28 +240,26 @@ async fn departures_from_returns_empty_when_no_calls(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn departures_from_returns_todays_calls(pool: sqlx::PgPool) {
-    // Stations required by FK constraints.
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2), ($3, $4)
          ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
-        "MAN",
-        "Manchester Piccadilly",
     )
+    .bind("LDS")
+    .bind("Leeds")
+    .bind("MAN")
+    .bind("Manchester Piccadilly")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
 
-    // Service required by FK in timetable_calls.
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO services (uid, origin_crs, destination_crs)
          VALUES ($1, $2, $3)
          ON CONFLICT (uid) DO NOTHING",
-        "C12345",
-        "LDS",
-        "MAN",
     )
+    .bind("C12345")
+    .bind("LDS")
+    .bind("MAN")
     .execute(&pool)
     .await
     .expect("service seed must succeed");
@@ -283,23 +268,22 @@ async fn departures_from_returns_todays_calls(pool: sqlx::PgPool) {
     let dep_0900 = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
     let dep_0930 = NaiveTime::from_hms_opt(9, 30, 0).unwrap();
 
-    // Two calls from Leeds on the same date.
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO timetable_calls
              (uid, operating_date, location_crs, call_order, scheduled_departure, public_departure, platform)
          VALUES ($1, $2, $3, $4, $5, $6, $7),
                 ($1, $2, $3, $8, $9, $9, $10)",
-        "C12345",        // uid
-        operating_date,  // operating_date
-        "LDS",           // location_crs
-        0i16,            // call_order (first call)
-        dep_0900,        // scheduled_departure
-        dep_0900,        // public_departure
-        "1",             // platform
-        1i16,            // call_order (second call)
-        dep_0930,        // scheduled_departure / public_departure
-        "2A",            // platform
     )
+    .bind("C12345")       // $1
+    .bind(operating_date) // $2
+    .bind("LDS")          // $3
+    .bind(0i16)           // $4 — first call_order
+    .bind(dep_0900)       // $5 — scheduled_departure
+    .bind(dep_0900)       // $6 — public_departure
+    .bind("1")            // $7 — platform
+    .bind(1i16)           // $8 — second call_order
+    .bind(dep_0930)       // $9 — scheduled_departure + public_departure (reused)
+    .bind("2A")           // $10 — platform
     .execute(&pool)
     .await
     .expect("timetable_calls insert must succeed");
@@ -310,7 +294,6 @@ async fn departures_from_returns_todays_calls(pool: sqlx::PgPool) {
 
     assert_eq!(calls.len(), 2, "Expected exactly 2 calls, got {}", calls.len());
 
-    // Verify ordering: 09:00 first, 09:30 second.
     let first = &calls[0];
     let second = &calls[1];
     assert_eq!(first.scheduled_departure, Some(dep_0900), "First call must depart at 09:00");
@@ -325,25 +308,25 @@ async fn departures_from_returns_todays_calls(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn departures_from_excludes_other_dates(pool: sqlx::PgPool) {
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2), ($3, $4)
          ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
-        "MAN",
-        "Manchester Piccadilly",
     )
+    .bind("LDS")
+    .bind("Leeds")
+    .bind("MAN")
+    .bind("Manchester Piccadilly")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
 
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO services (uid, origin_crs, destination_crs)
          VALUES ($1, $2, $3) ON CONFLICT (uid) DO NOTHING",
-        "C12345",
-        "LDS",
-        "MAN",
     )
+    .bind("C12345")
+    .bind("LDS")
+    .bind("MAN")
     .execute(&pool)
     .await
     .expect("service seed must succeed");
@@ -352,16 +335,16 @@ async fn departures_from_excludes_other_dates(pool: sqlx::PgPool) {
     let other_date = NaiveDate::from_ymd_opt(2024, 4, 18).unwrap();
     let dep_time = NaiveTime::from_hms_opt(10, 0, 0).unwrap();
 
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO timetable_calls
              (uid, operating_date, location_crs, call_order, scheduled_departure)
          VALUES ($1, $2, $3, $4, $5)",
-        "C12345",
-        other_date, // inserted for a DIFFERENT date
-        "LDS",
-        0i16,
-        dep_time,
     )
+    .bind("C12345")
+    .bind(other_date)
+    .bind("LDS")
+    .bind(0i16)
+    .bind(dep_time)
     .execute(&pool)
     .await
     .expect("timetable_calls insert must succeed");
@@ -382,14 +365,14 @@ async fn departures_from_excludes_other_dates(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn cheapest_fare_returns_none_when_no_fares(pool: sqlx::PgPool) {
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2), ($3, $4)
          ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
-        "MAN",
-        "Manchester Piccadilly",
     )
+    .bind("LDS")
+    .bind("Leeds")
+    .bind("MAN")
+    .bind("Manchester Piccadilly")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
@@ -411,14 +394,14 @@ async fn cheapest_fare_returns_none_when_no_fares(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn cheapest_fare_returns_cheapest_valid_fare(pool: sqlx::PgPool) {
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2), ($3, $4)
          ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
-        "MAN",
-        "Manchester Piccadilly",
     )
+    .bind("LDS")
+    .bind("Leeds")
+    .bind("MAN")
+    .bind("Manchester Piccadilly")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
@@ -426,29 +409,27 @@ async fn cheapest_fare_returns_cheapest_valid_fare(pool: sqlx::PgPool) {
     let today = NaiveDate::from_ymd_opt(2024, 4, 17).unwrap();
     let past = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
     let future = NaiveDate::from_ymd_opt(2030, 12, 31).unwrap();
+    let expired = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
 
-    // Insert fares:
-    //  - 1000p (valid) — the cheapest valid fare
-    //  - 2500p (valid) — more expensive valid fare
-    //  - 500p  (expired, valid_to in the past) — must be excluded
-    sqlx::query!(
+    // Three fares: 1000p (valid), 2500p (valid), 500p (expired — must be excluded).
+    sqlx::query(
         "INSERT INTO fares (origin_crs, destination_crs, fare_class, price_pence, valid_from, valid_to)
          VALUES ($1, $2, $3, $4, $5, $6),
                 ($1, $2, $7, $8, $5, $6),
                 ($1, $2, $9, $10, $11, $12)",
-        "LDS",              // origin_crs
-        "MAN",              // destination_crs
-        "SDS",              // fare_class (cheap valid)
-        1000i32,            // price_pence
-        past,               // valid_from
-        future,             // valid_to
-        "SOS",              // fare_class (expensive valid)
-        2500i32,            // price_pence
-        "FOS",              // fare_class (expired)
-        500i32,             // price_pence (cheapest but expired)
-        past,               // valid_from
-        NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(), // valid_to in the past
     )
+    .bind("LDS")     // $1
+    .bind("MAN")     // $2
+    .bind("SDS")     // $3 — cheap valid
+    .bind(1000i32)   // $4
+    .bind(past)      // $5
+    .bind(future)    // $6
+    .bind("SOS")     // $7 — expensive valid
+    .bind(2500i32)   // $8
+    .bind("FOS")     // $9 — expired
+    .bind(500i32)    // $10
+    .bind(past)      // $11
+    .bind(expired)   // $12
     .execute(&pool)
     .await
     .expect("fare insert must succeed");
@@ -458,11 +439,7 @@ async fn cheapest_fare_returns_cheapest_valid_fare(pool: sqlx::PgPool) {
         .expect("cheapest_fare must not fail")
         .expect("at least one valid fare must be found");
 
-    assert_eq!(
-        fare.price_pence, 1000,
-        "cheapest valid fare must be 1000p, got {}p",
-        fare.price_pence
-    );
+    assert_eq!(fare.price_pence, 1000, "cheapest valid fare must be 1000p, got {}p", fare.price_pence);
     assert_eq!(fare.fare_class, "SDS", "cheapest fare must have class 'SDS'");
     assert_eq!(fare.origin_crs.trim(), "LDS");
     assert_eq!(fare.destination_crs.trim(), "MAN");
@@ -473,14 +450,14 @@ async fn cheapest_fare_returns_cheapest_valid_fare(pool: sqlx::PgPool) {
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn cheapest_fare_excludes_future_fares(pool: sqlx::PgPool) {
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO stations (crs, name) VALUES ($1, $2), ($3, $4)
          ON CONFLICT (crs) DO NOTHING",
-        "LDS",
-        "Leeds",
-        "MAN",
-        "Manchester Piccadilly",
     )
+    .bind("LDS")
+    .bind("Leeds")
+    .bind("MAN")
+    .bind("Manchester Piccadilly")
     .execute(&pool)
     .await
     .expect("station seed must succeed");
@@ -488,15 +465,15 @@ async fn cheapest_fare_excludes_future_fares(pool: sqlx::PgPool) {
     let today = NaiveDate::from_ymd_opt(2024, 4, 17).unwrap();
     let future_valid_from = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
 
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO fares (origin_crs, destination_crs, fare_class, price_pence, valid_from)
          VALUES ($1, $2, $3, $4, $5)",
-        "LDS",
-        "MAN",
-        "SDS",
-        999i32,
-        future_valid_from, // not yet valid on `today`
     )
+    .bind("LDS")
+    .bind("MAN")
+    .bind("SDS")
+    .bind(999i32)
+    .bind(future_valid_from)
     .execute(&pool)
     .await
     .expect("fare insert must succeed");
