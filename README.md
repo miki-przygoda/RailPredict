@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.3.0" -- 18/04/2026**
+**version = "1.4.0" -- 18/04/2026**
 
 ---
 
@@ -99,7 +99,7 @@ All foundation layers are complete and production-hardened. The system builds, t
 | CI pipeline | **Done** | GitHub Actions: deny + clippy + test + release build |
 | Tier A data layer (GTFS timetable sync) | **Pending** | `TODOs/TierADataLayer.md` |
 | Tier C wiring (live GBR API calls) | **Pending** | `TODOs/TierCWiring.md` |
-| Technical debt cleanup | **Pending** | `TODOs/TechnicalDebt.md` |
+| Technical debt cleanup | **Done** | 9.1–9.5, 7.1, 7.3 complete; 4.5 deferred pending Tier C |
 | Product features | **Pending** | `TODOs/ProductFeatures.md` |
 
 **One user action required before CI passes fully:** generate the `.sqlx/` offline snapshot — see `TODOs/CI_DevEx.md`.

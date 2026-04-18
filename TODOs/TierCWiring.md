@@ -9,8 +9,9 @@ _This is the highest-impact single epic in the backlog. AdvancedAnalytics Phase 
 (preceding-service correlation) and state-machine natural transitions (2.6) both become
 fully effective once this is complete._
 
-_Prereqs: None. But complete this before TechnicalDebt item 4.5 (remove dead_code
-suppression) and AdvancedAnalytics Phase 1 reaching its full runtime potential._
+_Prereqs: None. But item 4.5 (remove `#[allow(dead_code)]` suppressors, tracked below)
+must be done last — only after 2.1–2.3 are complete. AdvancedAnalytics Phase 1
+(preceding-service correlation) also reaches its full runtime potential once this is done._
 
 ---
 

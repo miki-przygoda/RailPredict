@@ -2,7 +2,40 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.3.0" -- 18/04/2026**
+**version = "1.4.0" -- 18/04/2026**
+
+---
+
+## v1.4.0 — 18/04/2026 — Technical Debt epic complete
+
+Completes all actionable items of `TODOs/TechnicalDebt.md` (items 9.1–9.5, 7.1, 7.3). Item 4.5 (`#[allow(dead_code)]` removal) remains pending TierCWiring completion per its stated prereq.
+
+**9.1 — `is_cancelled: Stamped<Option<bool>>`**
+- `src/types/train_status.rs` — field changed from `Stamped<bool>` to `Stamped<Option<bool>>`; initialised as `None` (unknown) rather than `false` (falsely confirmed running).
+- All callers updated: `api/handlers.rs`, `api/sse.rs`, `api/types.rs`, `frontend/detail.rs`, `frontend/search.rs`, `cache/train_registry.rs`, `ingestion/mod.rs`.
+
+**9.2 — Doc comments on `best_delay_mins` / `best_platform`**
+- `src/types/train_status.rs` — one-line doc comment above each method making the priority policy explicit.
+
+**9.3 — STOMP body read replaced with `read_until`**
+- `src/ingestion/stomp_client.rs` — byte-by-byte loop replaced with `AsyncBufReadExt::read_until(0, &mut body)`; single buffered syscall per message body at Darwin peak throughput.
+
+**9.4 — Departure sort uses `DateTime<Utc>` not string**
+- `src/api/handlers.rs` — `sort_by_key` now parses the RFC3339 string to `chrono::DateTime<Utc>` for ordering, eliminating the hidden UTC-only invariant.
+
+**9.5 — CIF ingest exits cleanly instead of panicking**
+- `src/main.rs` — `unimplemented!()` replaced with `anyhow::bail!`; clean non-zero exit with human-readable message.
+
+**7.1 — `departure_snapshot` on `TrainRegistry`**
+- `src/cache/train_registry.rs` — new `departure_snapshot(crs)` async method iterates the DashMap once, acquires read locks, filters, builds and returns `Vec<DepartureBoardEntry>` sorted by `DateTime<Utc>`.
+- `src/api/handlers.rs` + `src/frontend/search.rs` — handlers simplified to a single registry call; 500 sequential lock acquisitions per page load eliminated.
+
+**7.3 — DB pool size from env var**
+- `src/db/mod.rs` — `connect()` now takes `max_connections: u32` parameter; hardcoded `10` removed.
+- `src/main.rs` — `config.db_max_connections` passed through to both connect call sites.
+- `.env.example` — `DB_MAX_CONNECTIONS=10` with sizing guidance comment.
+
+160 tests, all passing.
 
 ---
 
