@@ -2,7 +2,28 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.2.0" -- 17/04/2026**
+**version = "1.3.0" -- 17/04/2026**
+
+---
+
+## v1.3.0 — 17/04/2026 — CI & Developer Experience epic complete
+
+Completes all five items of `TODOs/CI_DevEx.md` (excluding item 1.3 `.sqlx/` snapshot, which requires a user action against a live Postgres DB — see `TODOs/CI_DevEx.md` for instructions).
+
+**4.4 — README tech stack table fix**
+- Replaced `moka` with `dashmap`, removed `polars`, added `metrics` + `metrics-exporter-prometheus`, `tower_governor`. All rows now reflect actual `Cargo.toml` dependencies.
+
+**4.1 — CI pipeline**
+- `.github/workflows/ci.yml` (new) — push/PR triggers, `postgres:16-alpine` service with health check, steps: cargo-deny → rust toolchain (stable + clippy) → rust-cache → sqlx offline check → clippy -D warnings → cargo test → cargo build --release.
+
+**4.2 — cargo-deny**
+- `deny.toml` (new) — `version = 2`, advisories deny vulnerabilities/yanked, warn on unmaintained; license allow-list; `multiple-versions = "warn"`. Step wired into `ci.yml`.
+
+**4.3 — DB integration tests**
+- `RailPredict/tests/db_integration.rs` (new) — 11 `#[sqlx::test(migrations = "../migrations")]` functions covering `load_history`, `flush_history` (roundtrip + idempotent), `get_station` (missing + present), `departures_from` (empty / today / cross-date), `cheapest_fare` (empty / valid / future-validity).
+
+**1.3 — `.sqlx/` offline snapshot — PENDING USER ACTION**
+- The CI sqlx-check step will fail until the snapshot is committed. See `TODOs/CI_DevEx.md` for the one-time local generation command.
 
 ---
 
