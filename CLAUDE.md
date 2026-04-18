@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.3.0" -- 17/04/2026**
+**version = "1.3.0" -- 18/04/2026**
 
 ---
 
@@ -45,48 +45,76 @@ This is strict — follow it exactly:
 ```
 RailPredict/                        ← repo root
 ├── CLAUDE.md                       ← this file; Claude session seed + working reference
-├── README.md                       ← project vision at idea level; human-readable overview
-├── TODO.md                         ← current sprint todos; versioning instructions
+├── README.md                       ← project vision + current status table
+├── TODO.md                         ← active sprint tracker + remaining epics
 ├── CHANGELOG.md                    ← completed epics log; updated on minor version bumps
+├── SECURITY.md                     ← secrets rotation procedure + security posture
+├── deny.toml                       ← cargo-deny advisory/license config
+├── prometheus.yml                  ← Prometheus scrape config (used by docker-compose monitoring profile)
+├── migrations/                     ← sqlx SQL migrations (run at startup via sqlx::migrate!)
+├── .github/workflows/ci.yml        ← GitHub Actions CI (deny → clippy → test → release build)
 ├── TODOs/
-│   ├── StateMachine.md             ← polling logic: TrainState enum, BinaryHeap manager
-│   ├── Networking.md               ← GBR API layer: coalescing, rate limiting, circuit breaker
-│   └── DataIngestion.md            ← Darwin STOMP firehose: filter, sequencing, XML parsing
+│   ├── Improvements.md             ← full item index + cross-reference; source of all epics
+│   ├── TechnicalDebt.md            ← next up: dead code, TODO comments, module hygiene
+│   ├── TierADataLayer.md           ← GTFS/CIF timetable sync, fare refresh
+│   ├── TierCWiring.md              ← live GBR API calls, seat availability, ticket lock
+│   ├── ProductFeatures.md          ← user-facing features (journey planner, alerts, etc.)
+│   ├── ProductionHardening.md      ← COMPLETE (v1.2.0) — kept for reference
+│   └── CI_DevEx.md                 ← COMPLETE (v1.3.0); item 1.3 (.sqlx/) still needs user action
 └── RailPredict/                    ← Rust crate root
     ├── Cargo.toml                  ← crate manifest; version must match project version
     ├── Cargo.lock                  ← committed; this is a binary application not a library
+    ├── tests/
+    │   ├── integration.rs          ← end-to-end wiring tests (real pipeline, in-memory)
+    │   └── db_integration.rs       ← sqlx::test DB integration tests (11 functions)
     └── src/
-        └── main.rs                 ← entry point; currently a stub (Hello, world!)
-```
-
-As `src/` grows, this map should be updated to reflect new modules. Expected near-term additions:
-
-```
-src/
-├── main.rs                         ← tokio runtime init, top-level wiring
-├── types/
-│   ├── mod.rs
-│   ├── train_id.rs                 ← TrainID enum (RID / UID / Headcode)
-│   ├── train_status.rs             ← TrainStatus struct (single source of truth)
-│   └── volatility.rs               ← VolatilityContext struct
-├── state_machine/
-│   ├── mod.rs
-│   ├── train_state.rs              ← TrainState enum + transition logic
-│   └── poll_manager.rs             ← global BinaryHeap-based polling loop
-├── networking/
-│   ├── mod.rs
-│   ├── gbr_client.rs               ← reqwest wrapper for GBR REST API
-│   ├── coalescer.rs                ← request collapser (oneshot fan-out)
-│   ├── rate_limiter.rs             ← token bucket or leaky bucket impl
-│   └── circuit_breaker.rs          ← 503 detection + cool-down mode
-├── ingestion/
-│   ├── mod.rs
-│   ├── stomp_client.rs             ← Darwin STOMP firehose connection
-│   ├── filter.rs                   ← region/route filter; drop irrelevant messages early
-│   └── parser.rs                   ← serde-xml-rs Darwin XML → internal types
-└── cache/
-    ├── mod.rs
-    └── train_registry.rs           ← moka or dashmap-backed in-memory store
+        ├── main.rs                 ← tokio runtime init, CLI dispatch, top-level wiring
+        ├── lib.rs                  ← re-exports all modules as public library surface
+        ├── config.rs               ← Config::from_env(); all env vars documented here
+        ├── cli.rs                  ← clap CLI: `ingest-static` subcommand
+        ├── types/
+        │   ├── mod.rs
+        │   ├── train_id.rs         ← TrainId enum (Rid / Uid / Headcode) with validated constructors
+        │   ├── train_status.rs     ← TrainStatus (single source of truth); Stamped<T> per-field timestamps
+        │   └── volatility.rs       ← VolatilityContext; CorrelationSignal for Tier B
+        ├── state_machine/
+        │   ├── mod.rs
+        │   ├── train_state.rs      ← TrainState enum + transition logic + emergency_promote
+        │   └── poll_manager.rs     ← BinaryHeap-based global poll loop; mpsc STATE_CHANGE_BUFFER=256
+        ├── networking/
+        │   ├── mod.rs
+        │   ├── gbr_client.rs       ← reqwest GBR REST wrapper; gbr_api_latency_ms histogram
+        │   ├── coalescer.rs        ← oneshot fan-out; one HTTP call for N concurrent callers
+        │   ├── rate_limiter.rs     ← token bucket; MAX_REQUESTS_PER_SECOND=10, BURST_CAPACITY=20
+        │   └── circuit_breaker.rs  ← Closed/Open/HalfOpen; FAILURE_THRESHOLD=3, COOL_DOWN_SECS=30
+        ├── ingestion/
+        │   ├── mod.rs              ← IngestionPipeline; PipelineContext (Arc-shared, survives reconnect)
+        │   ├── stomp_client.rs     ← Darwin STOMP over TLS (tokio-rustls); BoxReader abstraction
+        │   ├── filter.rs           ← message taxonomy; SequenceGuard; check_tiploc_cascade
+        │   ├── parser.rs           ← quick-xml event parser; TS + deactivated messages
+        │   └── gtfs.rs             ← GTFS stops.txt → stations upsert; CIF stub
+        ├── cache/
+        │   ├── mod.rs
+        │   └── train_registry.rs   ← DashMap registry; tiploc_index; eviction; cascade helpers
+        ├── prediction/
+        │   ├── mod.rs
+        │   ├── engine.rs           ← PredictionEngine; trimmed-mean; correlation; confidence decay
+        │   └── types.rs            ← ServicePattern (uid+weekday+origin+hour); HistoricalStore; DelayRecord
+        ├── db/
+        │   ├── mod.rs              ← connect(); type Db = PgPool; runs migrations at startup
+        │   ├── static_data.rs      ← get_station, departures_from, cheapest_fare
+        │   └── history.rs          ← load_history (window fn); flush_history (500-row chunks, idempotent)
+        ├── api/
+        │   ├── mod.rs              ← axum Router; AppState; CorsLayer; GovernorLayer; infra_router
+        │   ├── handlers.rs         ← departures_handler, train_handler, health_handler; validate_crs
+        │   ├── sse.rs              ← /trains/:rid/live SSE stream; 15s KeepAlive
+        │   └── types.rs            ← ApiError; DTOs: TrainSummary, DepartureBoardEntry, HealthResponse
+        └── frontend/
+            ├── mod.rs
+            ├── layout.rs           ← base chrome; SSE error/reconnect banner JS
+            ├── components.rs       ← delay_badge, platform_chip
+            ├── search.rs           ← departure board; stale overlay; 30s auto-refresh
+            └── detail.rs           ← train detail page; htmx SSE live section
 ```
 
 ---
@@ -120,26 +148,37 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 ## Key Patterns (Per Domain)
 
-### Structs (`TODOs/Structs.md`)
-- `TrainID` is an enum wrapping `RID`, `UID`, and `Headcode` — all lookups go through it
-- `TrainStatus` is the single source of truth; it must accept updates from REST polling, STOMP firehose, and the prediction engine
-- Use `chrono` for all timestamps; always distinguish `ScheduledDeparture`, `PublicDeparture`, `ActualEstimatedDeparture`
-- Every field on `TrainStatus` should carry a `LastUpdated` timestamp for stale-data detection
+### Types (`src/types/`)
+- `TrainId` is an enum wrapping `Rid`, `Uid`, and `Headcode` — all lookups go through it; never pass raw strings for train identifiers across module boundaries
+- `TrainStatus` is the single source of truth; `Stamped<T>` gives every field its own `last_updated` timestamp for stale-data detection
+- Use `chrono` for all timestamps; always distinguish `scheduled_departure`, `public_departure`, `actual_estimated_departure`
 
-### State Machine (`TODOs/StateMachine.md`)
-- `enum TrainState { Dormant, Monitored, Active, Critical }`
-- Do **not** give each train its own `tokio::spawn` polling task — use a single global manager with a `BinaryHeap` ordered by next-poll time
-- State changes are broadcast via `mpsc` to a notification service; the API/UI layer subscribes — never locks the registry to check for changes
+### State Machine (`src/state_machine/`)
+- `enum TrainState { Dormant, Monitored, Active, Critical, Terminal }`
+- Single global `PollManager` with a `BinaryHeap` ordered by next-poll time — never one `tokio::spawn` per train
+- State changes broadcast via bounded `mpsc` (`STATE_CHANGE_BUFFER=256`); the API/UI layer subscribes — never locks the registry to check for changes
 
-### Networking (`TODOs/Networking.md`)
-- Request coalescing: if a request for a given `TrainID` is already in-flight, register a `tokio::sync::oneshot` sender and wait; the first responder fans the result out to all waiters
-- Rate limiter sits in front of all outbound GBR calls; it queues requests if the threshold is exceeded
-- Circuit breaker: on a 503 from GBR, enter "Cache Only" mode and stop sending requests for a configurable cool-down window
+### Networking (`src/networking/`)
+- Request coalescing (`coalescer.rs`): if a request for a `TrainId` is already in-flight, register a `oneshot` sender and wait; first responder fans the result to all waiters
+- Rate limiter (`rate_limiter.rs`) sits in front of all outbound GBR calls; token bucket, `MAX_REQUESTS_PER_SECOND=10`, `BURST_CAPACITY=20`
+- Circuit breaker (`circuit_breaker.rs`): on a 503 from GBR, enter "Cache Only" mode; `FAILURE_THRESHOLD=3`, `COOL_DOWN_SECS=30`; `#[cold]` on `record_failure`
 
-### Data Ingestion (`TODOs/DataIngestion.md`)
-- Apply region/route filter **as the first step** in the ingestion pipeline — drop irrelevant messages before any parsing
-- Always check `sequence_id` or `timestamp` before writing to `TrainStatus`; never overwrite a newer update with a late-arriving older one
-- Use `serde-xml-rs` (or equivalent) for Darwin XML; parsing speed is critical to the "instant" feel
+### Data Ingestion (`src/ingestion/`)
+- Apply region/route filter as **step one** in the pipeline — drop irrelevant messages before any parsing
+- `SequenceGuard` in `filter.rs` prevents stale overwrites and handles STOMP reconnect replays; never overwrite a newer update with a late-arriving older one
+- `PipelineContext` holds `Arc`-backed shared state (registry, broadcast tx, prediction engine, filter) so shared state survives STOMP reconnects; only the STOMP client is replaced
+- `check_tiploc_cascade` in `filter.rs` detects knock-on delays via the TIPLOC index in `train_registry.rs` — wire into `ingestion/mod.rs` when Tier C is active
+
+### Prediction Engine (`src/prediction/`)
+- `ServicePattern` is keyed on `(uid, weekday, origin_crs, departure_hour)` — stable recurring-service identity, not the daily-changing RID
+- `HistoricalStore` is hard-capped at `MAX_SAMPLES=90` per pattern; trimmed-mean drops top/bottom 10%; no prediction emitted with fewer than 3 samples
+- `predict_and_update_with_correlation` blends in preceding-service delay (0.6/0.4 weight) when a service shares `origin_crs` in a ±20-min window
+- Confidence decay: `confidence * exp(-days_since / 21.0)` applied when last `DelayRecord` is older than 21 days
+
+### Database (`src/db/`)
+- `load_history` uses a window function to reconstruct `HistoricalStore` from the most-recent `MAX_SAMPLES` rows per pattern — avoids full table scan
+- `flush_history` inserts in 500-row chunks with `ON CONFLICT DO NOTHING` — idempotent; safe to call repeatedly
+- `departures_from` is the hot path for the departure board; indexed on `(location_crs, operating_date, scheduled_departure)`
 
 ---
 
