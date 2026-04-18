@@ -67,7 +67,7 @@ async fn enrich(
             (
                 s.best_delay_mins(),
                 s.best_platform().map(str::to_string),
-                Some(s.is_cancelled.value),
+                s.is_cancelled.value,
             )
         }
         None => (None, None, None),

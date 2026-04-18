@@ -85,7 +85,7 @@ pub struct TrainStatus {
 
     // --- Cancellation ---
 
-    pub is_cancelled: Stamped<bool>,
+    pub is_cancelled: Stamped<Option<bool>>,
     pub cancellation_reason: Stamped<Option<String>>,
 
     // --- Origin station ---
@@ -140,7 +140,7 @@ impl TrainStatus {
             predicted_delay_mins: Stamped::new(None),
             scheduled_platform: Stamped::new(None),
             actual_platform: Stamped::new(None),
-            is_cancelled: Stamped::new(false),
+            is_cancelled: Stamped::new(None),
             cancellation_reason: Stamped::new(None),
             origin_crs: None,
             destination_crs: None,
@@ -151,11 +151,13 @@ impl TrainStatus {
         }
     }
 
+    // Returns reported delay if known, otherwise the Tier B prediction.
     /// The best available delay estimate: live reported first, prediction as fallback.
     pub fn best_delay_mins(&self) -> Option<i32> {
         self.reported_delay_mins.value.or(self.predicted_delay_mins.value)
     }
 
+    // Returns confirmed platform if known, otherwise the scheduled platform.
     /// The best available platform: confirmed/actual first, scheduled as fallback.
     pub fn best_platform(&self) -> Option<&str> {
         self.actual_platform
@@ -215,7 +217,7 @@ mod tests {
 
     #[test]
     fn new_status_is_not_cancelled() {
-        assert!(!make_status().is_cancelled.value);
+        assert_eq!(make_status().is_cancelled.value, None);
     }
 
     #[test]

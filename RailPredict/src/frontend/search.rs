@@ -46,56 +46,7 @@ pub async fn departures_fragment(
     State(state): State<AppState>,
 ) -> Markup {
     let crs_upper = q.crs.trim().to_uppercase();
-    let arcs = state.registry.snapshot_all();
-    let mut entries: Vec<DepartureBoardEntry> = Vec::new();
-
-    for arc in arcs {
-        let status = arc.read().await;
-        if status.origin_crs.as_deref().map(str::to_uppercase).as_deref() != Some(crs_upper.as_str())
-        {
-            continue;
-        }
-
-        // Phase 1: compute how many seconds ago the most recently updated Stamped field was
-        // written. We take the maximum (most recent) last_updated across the fields that change
-        // from live sources so the staleness indicator reflects whether *any* live data arrived.
-        let most_recent = [
-            status.actual_estimated_departure.last_updated,
-            status.reported_delay_mins.last_updated,
-            status.actual_platform.last_updated,
-            status.is_cancelled.last_updated,
-        ]
-        .into_iter()
-        .max();
-        let last_updated_secs_ago = most_recent.map(|ts| {
-            let delta = chrono::Utc::now() - ts;
-            delta.num_seconds().max(0) as u64
-        });
-
-        // Phase 4: destination station name from destination_crs on TrainStatus.
-        // AppState does not yet expose db — add a TODO note and leave None for now.
-        // TODO: wire AppState::db and call db::static_data::get_station to resolve destination_crs
-        let destination_name: Option<String> = status
-            .destination_crs
-            .as_deref()
-            .map(|crs| crs.to_string()); // fallback: render CRS directly until DB is wired
-
-        entries.push(DepartureBoardEntry {
-            rid: status.id.to_string(),
-            scheduled_departure: status.scheduled_departure.value.to_rfc3339(),
-            estimated_departure: status
-                .actual_estimated_departure
-                .value
-                .map(|dt| dt.to_rfc3339()),
-            delay_mins: status.best_delay_mins(),
-            platform: status.best_platform().map(str::to_string),
-            is_cancelled: status.is_cancelled.value,
-            last_updated_secs_ago,
-            destination_name,
-        });
-    }
-    entries.sort_by_key(|e| e.scheduled_departure.clone());
-
+    let entries = state.registry.departure_snapshot(&crs_upper).await;
     departure_board_fragment(&crs_upper, &entries)
 }
 
@@ -117,7 +68,7 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
                             span .train-time {
                                 (entry.scheduled_departure.get(11..16).unwrap_or("--:--"))
                             }
-                            (delay_badge(entry.delay_mins, entry.is_cancelled))
+                            (delay_badge(entry.delay_mins, entry.is_cancelled.unwrap_or(false)))
                             // Phase 4: destination station name.
                             @if let Some(dest) = &entry.destination_name {
                                 span .train-destination { "→ " (dest) }
