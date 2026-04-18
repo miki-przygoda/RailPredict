@@ -48,6 +48,10 @@ jobs:
         with:
           components: clippy
 
+      - name: Install cargo-sqlx
+        run: cargo install sqlx-cli --no-default-features --features postgres
+        working-directory: RailPredict
+
       - name: Restore build cache
         uses: Swatinem/rust-cache@v2
         with:
