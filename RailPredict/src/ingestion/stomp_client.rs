@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
@@ -199,19 +199,41 @@ impl StompClient for LiveStompClient {
             };
 
         // Send CONNECT frame.
+        // Include accept-version and host headers required by STOMP 1.1/1.2.
         let connect = format!(
-            "CONNECT\nlogin:{}\npasscode:{}\nheart-beat:0,0\n\n\0",
-            self.config.username, self.config.password
+            "CONNECT\naccept-version:1.0,1.1,1.2\nhost:{}\nlogin:{}\npasscode:{}\nheart-beat:0,0\n\n\0",
+            self.config.host, self.config.username, self.config.password
         );
         writer.write_all(connect.as_bytes()).await?;
 
         // Read CONNECTED frame.
         let frame = read_frame(&mut reader).await?;
         if frame.command != "CONNECTED" {
-            return Err(StompError::UnexpectedCommand(frame.command, "CONNECTED".into()));
+            let message = frame
+                .headers
+                .iter()
+                .find(|(k, _)| k == "message")
+                .map(|(_, v)| v.as_str())
+                .unwrap_or("(no message header)");
+            let body = String::from_utf8_lossy(&frame.body);
+            tracing::error!(
+                command = %frame.command,
+                broker_message = %message,
+                broker_body = %body,
+                "STOMP broker rejected connection"
+            );
+            return Err(StompError::ConnectionRejected(format!(
+                "{message}; body: {body}"
+            )));
         }
+        tracing::info!(
+            version = frame.headers.iter().find(|(k,_)| k=="version").map(|(_,v)| v.as_str()).unwrap_or("?"),
+            session = frame.headers.iter().find(|(k,_)| k=="session").map(|(_,v)| v.as_str()).unwrap_or("?"),
+            "Darwin STOMP connected"
+        );
 
         // Send SUBSCRIBE frame.
+        tracing::info!(destination = %self.config.destination, "Subscribing to Darwin topic");
         let subscribe = format!(
             "SUBSCRIBE\ndestination:{}\nid:sub-0\nack:auto\n\n\0",
             self.config.destination
@@ -219,7 +241,10 @@ impl StompClient for LiveStompClient {
         writer.write_all(subscribe.as_bytes()).await?;
 
         // Stream MESSAGE frames to the caller.
+        // `writer` is moved in to keep the write half of the connection open;
+        // dropping it would send a TCP FIN and the broker would close the session.
         tokio::spawn(async move {
+            let _writer = writer;
             loop {
                 match read_frame(&mut reader).await {
                     Ok(frame) if frame.command == "MESSAGE" => {
@@ -293,18 +318,32 @@ where
         }
     }
 
-    // Read body up to the NULL terminator.
-    // `read_until` issues a single syscall per message body rather than one per byte,
-    // which is critical at Darwin's peak throughput (~400 msg/s, 2–10 KB each).
-    let mut body = Vec::new();
-    let n = reader.read_until(0, &mut body).await?;
-    if n == 0 {
-        return Err(StompError::Disconnected);
-    }
-    // `read_until` includes the delimiter; strip the trailing NULL byte if present.
-    if body.last() == Some(&0) {
-        body.pop();
-    }
+    // Read body. Darwin sends gzip-compressed binary payloads that can contain
+    // internal \0 bytes, so we must use content-length rather than null-scanning.
+    let content_length = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse::<usize>().ok());
+
+    let body = if let Some(len) = content_length {
+        let mut body = vec![0u8; len];
+        reader.read_exact(&mut body).await?;
+        // Consume the trailing NULL frame terminator.
+        let mut null = [0u8; 1];
+        reader.read_exact(&mut null).await?;
+        body
+    } else {
+        // Fallback for frames without content-length (e.g. CONNECTED, HEARTBEAT).
+        let mut body = Vec::new();
+        let n = reader.read_until(0, &mut body).await?;
+        if n == 0 {
+            return Err(StompError::Disconnected);
+        }
+        if body.last() == Some(&0) {
+            body.pop();
+        }
+        body
+    };
 
     Ok(StompFrame { command: command.trim().to_string(), headers, body })
 }
