@@ -11,6 +11,7 @@
 //! - `detail`  — `GET /ui/trains/:rid/live`    → SSE stream of HTML OOB swap fragments
 
 pub mod components;
+pub mod dashboard;
 pub mod detail;
 pub mod layout;
 pub mod search;

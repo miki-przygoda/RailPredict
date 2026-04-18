@@ -60,6 +60,10 @@ fn init_tracing(config: &Config) {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("Failed to install rustls ring crypto provider"))?;
+
     dotenvy::dotenv().ok();
 
     let config = Config::from_env().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -286,10 +290,13 @@ async fn main() -> anyhow::Result<()> {
 
     let api_token = token.clone();
     let api_task = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move { api_token.cancelled().await })
-            .await
-            .ok();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move { api_token.cancelled().await })
+        .await
+        .ok();
         tracing::info!("HTTP API server stopped");
     });
 
@@ -352,8 +359,11 @@ async fn wait_for_shutdown(
         tracing::info!(addr = %addr, "HTTP API listening (ingestion disabled)");
         let api_token = token.clone();
         tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move { api_token.cancelled().await })
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move { api_token.cancelled().await })
                 .await
                 .ok();
         });
