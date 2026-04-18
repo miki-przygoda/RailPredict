@@ -57,15 +57,29 @@ use stomp_client::{StompClient, StompError, StompFrame};
 const INGESTION_BUFFER: usize = 512;
 
 // ---------------------------------------------------------------------------
+// Pipeline shared context — cloned cheaply for reconnect attempts
+// ---------------------------------------------------------------------------
+
+/// Non-stomp parts of the pipeline, kept behind `Arc` so they can be shared
+/// across reconnect attempts without cloning the filter sequence state.
+///
+/// `Filter` internally uses `DashMap` which handles concurrent access without
+/// a Mutex, so we use `Arc<Filter>` directly.
+#[derive(Clone)]
+pub struct PipelineContext {
+    pub filter: Arc<Filter>,
+    pub registry: Arc<TrainRegistry>,
+    pub state_change_tx: broadcast::Sender<StateChangeEvent>,
+    pub prediction_engine: PredictionEngine,
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
 
 pub struct IngestionPipeline {
     stomp: Box<dyn StompClient>,
-    filter: Filter,
-    registry: Arc<TrainRegistry>,
-    state_change_tx: broadcast::Sender<StateChangeEvent>,
-    prediction_engine: PredictionEngine,
+    ctx: PipelineContext,
 }
 
 impl IngestionPipeline {
@@ -76,13 +90,13 @@ impl IngestionPipeline {
         state_change_tx: broadcast::Sender<StateChangeEvent>,
         prediction_engine: PredictionEngine,
     ) -> Self {
-        Self {
-            stomp,
-            filter: Filter::new(watched_routes),
+        let ctx = PipelineContext {
+            filter: Arc::new(Filter::new(watched_routes)),
             registry,
             state_change_tx,
             prediction_engine,
-        }
+        };
+        Self { stomp, ctx }
     }
 
     pub fn passthrough(
@@ -93,14 +107,27 @@ impl IngestionPipeline {
         Self::new(stomp, HashSet::new(), registry, state_change_tx, PredictionEngine::new())
     }
 
+    /// Clone the shared pipeline context (filter state, registry, broadcast channel).
+    /// The caller uses this to rebuild the pipeline with a fresh STOMP client after
+    /// a reconnect — all sequence guard state and registry entries are preserved.
+    pub fn context(&self) -> PipelineContext {
+        self.ctx.clone()
+    }
+
+    /// Build a pipeline from a pre-existing context and a new STOMP client.
+    /// Used by the reconnect retry loop in `main.rs`.
+    pub fn from_context(ctx: PipelineContext, stomp: Box<dyn StompClient>) -> Self {
+        Self { stomp, ctx }
+    }
+
     /// Start the pipeline. Runs until the STOMP connection closes or all senders are dropped.
-    pub async fn run(mut self) {
+    ///
+    /// Returns `Ok(())` on a clean shutdown (channel closed without error).
+    /// Returns `Err(e)` if the STOMP connection fails — the caller can retry.
+    pub async fn run(mut self) -> anyhow::Result<()> {
         let (frame_tx, mut frame_rx) = mpsc::channel::<Result<StompFrame, StompError>>(INGESTION_BUFFER);
 
-        if let Err(e) = self.stomp.subscribe(frame_tx).await {
-            tracing::error!(error = %e, "STOMP subscribe failed");
-            return;
-        }
+        self.stomp.subscribe(frame_tx).await.map_err(|e| anyhow::anyhow!("{e}"))?;
 
         tracing::info!("Darwin ingestion pipeline running");
 
@@ -109,12 +136,13 @@ impl IngestionPipeline {
                 Ok(frame) => self.process_frame(frame).await,
                 Err(e) => {
                     tracing::error!(error = %e, "STOMP connection error — pipeline stopping");
-                    break;
+                    return Err(anyhow::anyhow!("{e}"));
                 }
             }
         }
 
         tracing::info!("Darwin ingestion pipeline stopped");
+        Ok(())
     }
 
     async fn process_frame(&self, frame: StompFrame) {
@@ -130,7 +158,7 @@ impl IngestionPipeline {
         // Gate 1: taxonomy + route filter (no XML parse).
         // We don't have a CRS at this point (pre-parse); pass None to rely on taxonomy only.
         // A more sophisticated implementation would do a fast scan for the `tpl` attribute.
-        if !self.filter.should_parse(xml_bytes, None) {
+        if !self.ctx.filter.should_parse(xml_bytes, None) {
             // Phase 2: count messages dropped at the taxonomy/route filter stage.
             metrics::counter!("darwin_messages_dropped_total", "reason" => "taxonomy").increment(1);
             return;
@@ -167,7 +195,7 @@ impl IngestionPipeline {
             match update {
                 ParsedUpdate::TrainStatus(ts_update) => {
                     // Gate 2: sequence guard.
-                    if !self.filter.should_apply(&ts_update.rid, msg_ts) {
+                    if !self.ctx.filter.should_apply(&ts_update.rid, msg_ts) {
                         tracing::trace!(rid = %ts_update.rid, "Dropping stale TS message");
                         // Phase 2: count messages dropped by the sequence guard.
                         metrics::counter!("darwin_messages_dropped_total", "reason" => "stale").increment(1);
@@ -180,7 +208,7 @@ impl IngestionPipeline {
 
                     // Ensure the train is registered before applying the update.
                     // We do this first so the subsequent update() call always succeeds.
-                    if self.registry.get(&rid).is_none() {
+                    if self.ctx.registry.get(&rid).is_none() {
                         if let (Some(sched), Some(publ)) =
                             (ts_update.scheduled_departure, ts_update.scheduled_departure)
                         {
@@ -189,7 +217,7 @@ impl IngestionPipeline {
                             new_status.origin_crs = ts_update.station_crs.clone();
                             new_status.destination_crs = ts_update.destination_crs.clone();
                             new_status.uid = ts_update.uid.clone();
-                            self.registry.upsert(rid.clone(), new_status);
+                            self.ctx.registry.upsert(rid.clone(), new_status);
                         }
                     }
 
@@ -198,10 +226,10 @@ impl IngestionPipeline {
                     let platform = ts_update.platform.clone();
                     let ts_uid = ts_update.uid.clone();
                     let ts_destination_crs = ts_update.destination_crs.clone();
-                    let engine = self.prediction_engine.clone();
+                    let engine = self.ctx.prediction_engine.clone();
 
                     // Apply live fields to registry (works whether just registered or pre-existing).
-                    self.registry
+                    self.ctx.registry
                         .update(&rid, |status| {
                             if let Some(dep) = estimated_dep {
                                 status.actual_estimated_departure = Stamped::new(Some(dep));
@@ -247,12 +275,12 @@ impl IngestionPipeline {
                             new_state: TrainState::Critical,
                             reason: PromotionReason::IncidentDetected,
                         };
-                        let _ = self.state_change_tx.send(event);
+                        let _ = self.ctx.state_change_tx.send(event);
                     }
                 }
 
                 ParsedUpdate::Deactivated(deact) => {
-                    if !self.filter.should_apply(&deact.rid, msg_ts) {
+                    if !self.ctx.filter.should_apply(&deact.rid, msg_ts) {
                         tracing::trace!(rid = %deact.rid, "Dropping stale deactivated message");
                         continue;
                     }
@@ -261,8 +289,8 @@ impl IngestionPipeline {
                     tracing::info!(rid = %rid, "Train deactivated — removing from registry");
 
                     // Remove from registry and forget sequence state.
-                    self.registry.remove(&rid);
-                    self.filter.forget(&rid);
+                    self.ctx.registry.remove(&rid);
+                    self.ctx.filter.forget(&rid);
 
                     let event = StateChangeEvent {
                         train_id: rid,
@@ -270,7 +298,7 @@ impl IngestionPipeline {
                         new_state: TrainState::Terminal,
                         reason: PromotionReason::TimeBased,
                     };
-                    let _ = self.state_change_tx.send(event);
+                    let _ = self.ctx.state_change_tx.send(event);
                 }
             }
         }
@@ -328,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn ts_message_registers_train() {
         let (pipeline, _, registry) = make_pipeline(vec![TS_XML.to_string()]);
-        pipeline.run().await;
+        let _ = pipeline.run().await;
         let id = TrainId::rid("202404170123456").unwrap();
         assert!(registry.get(&id).is_some());
     }
@@ -340,7 +368,7 @@ mod tests {
             TS_XML.to_string(),
             DEACTIVATED_XML.to_string(),
         ]);
-        pipeline.run().await;
+        let _ = pipeline.run().await;
         let id = TrainId::rid("202404170123456").unwrap();
         assert!(registry.get(&id).is_none());
     }
@@ -351,7 +379,7 @@ mod tests {
             TS_XML.to_string(),
             DEACTIVATED_XML.to_string(),
         ]);
-        pipeline.run().await;
+        let _ = pipeline.run().await;
 
         let mut saw_terminal = false;
         while let Ok(event) = sc_rx.try_recv() {
@@ -365,7 +393,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_train_emits_critical_event() {
         let (pipeline, mut sc_rx, _) = make_pipeline(vec![CANCELLED_XML.to_string()]);
-        pipeline.run().await;
+        let _ = pipeline.run().await;
 
         let mut saw_critical = false;
         while let Ok(event) = sc_rx.try_recv() {
@@ -394,7 +422,7 @@ mod tests {
             TS_XML.to_string(),   // T=12:00 — platform "3"
             stale_xml.to_string(), // T=11:59 — platform "STALE" — should be dropped
         ]);
-        pipeline.run().await;
+        let _ = pipeline.run().await;
 
         let id = TrainId::rid("202404170123456").unwrap();
         if let Some(entry) = registry.get(&id) {

@@ -65,6 +65,9 @@ pub struct LiveUpdateEvent {
 pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
+    /// Present only on degraded status — describes the failing component.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<&'static str>,
 }
 
 // ---------------------------------------------------------------------------

@@ -2,9 +2,12 @@
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
     Json,
 };
 use chrono::Utc;
+use tokio::time::Duration;
 
 use crate::types::TrainId;
 
@@ -14,14 +17,61 @@ use super::{
 };
 
 // ---------------------------------------------------------------------------
+// CRS validation helper
+// ---------------------------------------------------------------------------
+
+/// Validate a CRS code: exactly 3 ASCII alphabetic characters (A–Z, case-insensitive).
+/// Returns `Err(ApiError::bad_request(...))` if the input is invalid.
+fn validate_crs(crs: &str) -> Result<(), ApiError> {
+    if crs.len() == 3 && crs.chars().all(|c| c.is_ascii_alphabetic()) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request("CRS must be exactly 3 ASCII letters"))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
 
-pub async fn health_handler() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
-    })
+/// `GET /health`
+///
+/// Probes DB liveness with a 1-second timeout.
+/// Returns 200 `{ "status": "ok" }` when healthy.
+/// Returns 503 `{ "status": "degraded", "detail": "db unreachable" }` when the DB
+/// cannot be reached within 1 second.
+pub async fn health_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let db_ok = tokio::time::timeout(
+        Duration::from_secs(1),
+        sqlx::query("SELECT 1").execute(&state.db),
+    )
+    .await
+    .map(|result| result.is_ok())
+    .unwrap_or(false);
+
+    if db_ok {
+        (
+            StatusCode::OK,
+            Json(HealthResponse {
+                status: "ok",
+                version: env!("CARGO_PKG_VERSION"),
+                detail: None,
+            }),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthResponse {
+                status: "degraded",
+                version: env!("CARGO_PKG_VERSION"),
+                detail: Some("db unreachable"),
+            }),
+        )
+            .into_response()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -35,6 +85,7 @@ pub async fn departures_handler(
     Path(crs): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DepartureBoardEntry>>, ApiError> {
+    validate_crs(&crs)?;
     let crs_upper = crs.to_uppercase();
     let arcs = state.registry.snapshot_all();
 
@@ -124,9 +175,3 @@ pub async fn train_handler(
     }))
 }
 
-// ---------------------------------------------------------------------------
-// Unused import suppression
-// ---------------------------------------------------------------------------
-
-#[allow(unused_imports)]
-use Utc as _;

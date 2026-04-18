@@ -2,7 +2,41 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.1.3" -- 17/04/2026**
+**version = "1.2.0" -- 17/04/2026**
+
+---
+
+## v1.2.0 — 17/04/2026 — ProductionHardening epic complete
+
+Completes all seven items of `TODOs/ProductionHardening.md`. The system is now safe to expose publicly: TLS is enforced on the Darwin connection, the ingestion pipeline auto-reconnects, public API endpoints are rate-limited and CRS-validated, the health check probes the DB, CORS is configurable, and secrets rotation is documented.
+
+**1.2 — STOMP auto-reconnect**
+- `src/ingestion/mod.rs` — `IngestionPipeline::run` returns `anyhow::Result<()>`; `PipelineContext` struct holds `Arc`-backed shared state (registry, broadcast tx, prediction engine, filter) so it survives reconnects.
+- `src/main.rs` — Exponential backoff retry loop (2s → 120s cap) with `CancellationToken` select; WARN log per reconnect attempt including attempt count and retry delay.
+
+**1.1 — STOMP TLS**
+- `Cargo.toml` — `tokio-rustls = "0.26"`, `rustls = "0.23"`, `rustls-native-certs = "0.8"`.
+- `src/ingestion/stomp_client.rs` — `StompConfig.tls: bool` from `DARWIN_TLS` env var (default `true`); `BoxReader` abstraction over plain/TLS streams; system CA certs via `rustls-native-certs`.
+- `.env.example` — `DARWIN_TLS=true`.
+
+**3.1 — CRS validation**
+- `src/api/handlers.rs` — `fn validate_crs(crs: &str) -> Result<(), ApiError>`; exactly 3 ASCII letters; applied at entry of `departures_handler`.
+
+**3.2 — Health endpoint DB probe**
+- `src/api/handlers.rs` — `health_handler` runs `SELECT 1` with 1s timeout; returns 503 + `{"status":"degraded","detail":"db unreachable"}` on failure.
+- `src/api/types.rs` — `HealthResponse` gains `detail: Option<&'static str>`.
+
+**1.4 — CORS tightening**
+- `src/config.rs` — `cors_allowed_origins: Option<Vec<String>>` from `CORS_ALLOWED_ORIGINS`; required in non-debug mode.
+- `src/api/mod.rs` — `CorsLayer` built from allow-list; falls back to `permissive()` only in dev mode.
+
+**1.5 — HTTP rate limiting**
+- `Cargo.toml` — `tower_governor = { version = "0.4", features = ["axum"] }`.
+- `src/api/mod.rs` — Public routes get `GovernorLayer`; `/health` and `/metrics` excluded via separate `infra_router`.
+- `src/config.rs` — `http_rate_limit_per_sec: u64` from `HTTP_RATE_LIMIT_PER_SEC` (default 60; `0` disables).
+
+**3.3 — SECURITY.md**
+- `SECURITY.md` (new) — Rotation steps, verification, cadence for `GBR_API_KEY`, `DARWIN_PASSWORD`, `DB_PASSWORD`. CORS, rate limiting, TLS, and `.env` gitignore notes.
 
 ---
 

@@ -4,7 +4,7 @@
 //!
 //! | Method | Path                               | Tier | Returns                     | Notes                             |
 //! |--------|------------------------------------|------|-----------------------------|-----------------------------------|
-//! | GET    | /health                            | —    | `HealthResponse`            | Always 200                        |
+//! | GET    | /health                            | —    | `HealthResponse`            | 200 ok / 503 degraded             |
 //! | GET    | /stations/{crs}/departures         | A    | `Vec<DepartureBoardEntry>`  | Registry only, no GBR call        |
 //! | GET    | /trains/{rid}                      | B    | `TrainSummary`              | Registry; 404 if unknown          |
 //! | GET    | /trains/{rid}/live                 | C    | SSE `LiveUpdateEvent` JSON  | Heartbeat 15s; closes on Terminal |
@@ -15,8 +15,9 @@
 //! | GET    | /static/{path}                     | —    | Embedded static asset       | rust-embed, no filesystem dep     |
 //!
 //! ## Middleware
-//! - `CorsLayer`: permissive during development. Tighten for production.
+//! - `CorsLayer`: permissive in debug mode; restricted to `CORS_ALLOWED_ORIGINS` in production.
 //! - `TraceLayer`: logs method, path, status, latency for every request.
+//! - `GovernorLayer`: per-IP rate limiting (default 60 req/s); excludes /health and /metrics.
 //!
 //! ## Error shape
 //! All JSON 4xx/5xx responses use `{ "error": "...", "code": "..." }` — see `types::ApiError`.
@@ -29,7 +30,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::get,
     Router,
@@ -37,6 +38,7 @@ use axum::{
 use metrics_exporter_prometheus::PrometheusHandle;
 use rust_embed::RustEmbed;
 use tokio::sync::broadcast;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
@@ -84,6 +86,11 @@ pub struct AppState {
     pub db: Db,
     /// Prometheus scrape handle — rendered by GET /metrics.
     pub prometheus: Arc<PrometheusHandle>,
+    /// Allowed CORS origins from `CORS_ALLOWED_ORIGINS` env var.
+    /// `None` means permissive (development / debug mode only).
+    pub cors_allowed_origins: Option<Vec<String>>,
+    /// Max requests per second per IP (0 = disabled).
+    pub http_rate_limit_per_sec: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,13 +123,49 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 pub fn router(state: AppState) -> Router {
-    // /metrics is registered on a sub-router WITHOUT the CORS layer so that
-    // Prometheus can scrape it without preflight issues.
-    let metrics_router = Router::new()
+    // Build the CORS layer from config.
+    // Permissive only in dev mode (cors_allowed_origins is None, meaning LOG_LEVEL=debug).
+    // In production, origins are restricted to the configured allow-list.
+    let cors_layer = match &state.cors_allowed_origins {
+        None => {
+            // Dev/debug mode — permissive.
+            CorsLayer::permissive()
+        }
+        Some(origins) => {
+            let allow_list: Vec<HeaderValue> = origins
+                .iter()
+                .filter_map(|o| o.parse().ok())
+                .collect();
+            CorsLayer::new()
+                .allow_origin(allow_list)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+        }
+    };
+
+    // Build the per-IP rate-limit layer for the public API sub-router.
+    // /health and /metrics are excluded (they live on separate sub-routers).
+    let rate_limit_per_sec = state.http_rate_limit_per_sec;
+
+    // /metrics and /health are registered on a separate sub-router WITHOUT CORS or
+    // rate limiting so that Prometheus can scrape without preflight issues and
+    // health checks are never throttled.
+    let infra_router = Router::new()
         .route("/metrics", get(metrics_handler))
+        .route("/health", get(handlers::health_handler))
         .with_state(state.clone());
 
-    Router::new()
+    // Public API sub-router — rate-limited.
+    let api_router = build_api_router(state, rate_limit_per_sec, cors_layer);
+
+    api_router.merge(infra_router)
+}
+
+fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLayer) -> Router {
+    let base = Router::new()
         // Embedded static assets (CSS baked in at compile time)
         .route("/static/:path", get(static_handler))
         // Page routes — full server-rendered HTML pages
@@ -132,12 +175,26 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/stations/departures", get(search::departures_fragment))
         .route("/ui/trains/:rid/live", get(detail::ui_live_handler))
         // JSON API routes
-        .route("/health", get(handlers::health_handler))
         .route("/stations/:crs/departures", get(handlers::departures_handler))
         .route("/trains/:rid", get(handlers::train_handler))
         .route("/trains/:rid/live", get(sse::live_handler))
         .with_state(state)
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
-        .merge(metrics_router)
+        .layer(cors_layer)
+        .layer(TraceLayer::new_for_http());
+
+    if rate_limit_per_sec == 0 {
+        // Rate limiting disabled.
+        base
+    } else {
+        let governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(rate_limit_per_sec)
+                .burst_size(rate_limit_per_sec as u32)
+                .finish()
+                .expect("GovernorConfig is valid"),
+        );
+        base.layer(GovernorLayer {
+            config: governor_conf,
+        })
+    }
 }

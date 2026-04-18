@@ -4,7 +4,8 @@
 //! No external STOMP crate is used. `stomp-rs` is unmaintained; `async-stomp` had
 //! breaking API churn at time of writing. The STOMP protocol is simple enough
 //! (text-framed over TCP) that a thin hand-rolled implementation over
-//! `tokio::net::TcpStream` is more reliable than pinning to a dormant crate.
+//! `tokio::net::TcpStream` (or its TLS-wrapped equivalent) is more reliable than
+//! pinning to a dormant crate.
 //!
 //! ## STOMP frame format
 //! ```text
@@ -22,21 +23,40 @@
 //!   - `DARWIN_USERNAME`    — ActiveMQ username
 //!   - `DARWIN_PASSWORD`    — ActiveMQ password
 //!   - `DARWIN_DESTINATION` — STOMP topic (default `/topic/darwin.pushport-v16`)
+//!   - `DARWIN_TLS`         — `true`/`false` (default: `true`); set to `false` for local
+//!                            mock brokers that do not support TLS
+//!
+//! ## TLS
+//! When `DARWIN_TLS=true` (the default), the `TcpStream` is wrapped with `tokio-rustls`
+//! using system CA certificates loaded by `rustls-native-certs`. The STOMP framing layer
+//! works unchanged on top of the TLS stream via a type-erased `AsyncRead + AsyncWrite` box.
 //!
 //! ## Reconnection
 //! The `LiveStompClient::subscribe` method is a stream; the caller (ingestion pipeline)
 //! is responsible for re-calling it on disconnect. The sequence guard in `filter.rs`
 //! handles the message replay that Darwin issues on reconnect.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls;
 
 #[allow(dead_code)]
 const DEFAULT_DARWIN_PORT: u16 = 61613;
 const DEFAULT_DESTINATION: &str = "/topic/darwin.pushport-v16";
+
+// ---------------------------------------------------------------------------
+// Type alias for the boxed read half used by the STOMP framing layer.
+// Both the plain TcpStream read half and TLS read half implement
+// AsyncRead + Unpin + Send, unified behind this alias.
+// ---------------------------------------------------------------------------
+
+type BoxReader = Box<dyn AsyncRead + Unpin + Send>;
 
 /// A single STOMP frame received from the broker.
 #[derive(Debug, Clone)]
@@ -71,6 +91,8 @@ pub enum StompError {
     MissingEnvVar(String),
     #[error("Connection closed by broker")]
     Disconnected,
+    #[error("TLS error: {0}")]
+    Tls(String),
 }
 
 /// Configuration for a Darwin STOMP connection.
@@ -82,10 +104,18 @@ pub struct StompConfig {
     pub username: String,
     pub password: String,
     pub destination: String,
+    /// When `true`, wrap the TCP stream in TLS using system CA certificates.
+    /// Set `DARWIN_TLS=false` for local mock brokers without TLS.
+    /// Defaults to `true`.
+    pub tls: bool,
 }
 
 impl StompConfig {
     pub fn from_env() -> Result<Self, StompError> {
+        let tls = std::env::var("DARWIN_TLS")
+            .map(|v| v.to_lowercase() != "false" && v != "0")
+            .unwrap_or(true);
+
         Ok(Self {
             host: env_var("DARWIN_HOST")?,
             port: std::env::var("DARWIN_PORT")
@@ -96,6 +126,7 @@ impl StompConfig {
             password: env_var("DARWIN_PASSWORD")?,
             destination: std::env::var("DARWIN_DESTINATION")
                 .unwrap_or_else(|_| DEFAULT_DESTINATION.to_string()),
+            tls,
         })
     }
 }
@@ -146,9 +177,26 @@ impl StompClient for LiveStompClient {
         tx: mpsc::Sender<Result<StompFrame, StompError>>,
     ) -> Result<(), StompError> {
         let addr = format!("{}:{}", self.config.host, self.config.port);
-        let stream = TcpStream::connect(&addr).await?;
-        let (reader, mut writer) = stream.into_split();
-        let mut reader = BufReader::new(reader);
+        let tcp = TcpStream::connect(&addr).await?;
+
+        // Wrap in TLS if configured (the default for the real Darwin broker).
+        let (mut reader, mut writer): (BufReader<BoxReader>, Box<dyn AsyncWrite + Unpin + Send>) =
+            if self.config.tls {
+                let tls_config = build_tls_config()?;
+                let connector = TlsConnector::from(tls_config);
+                let server_name =
+                    rustls::pki_types::ServerName::try_from(self.config.host.clone())
+                        .map_err(|e| StompError::Tls(format!("invalid server name: {e}")))?;
+                let tls_stream = connector
+                    .connect(server_name, tcp)
+                    .await
+                    .map_err(|e| StompError::Tls(e.to_string()))?;
+                let (r, w) = tokio::io::split(tls_stream);
+                (BufReader::new(Box::new(r) as BoxReader), Box::new(w))
+            } else {
+                let (r, w) = tcp.into_split();
+                (BufReader::new(Box::new(r) as BoxReader), Box::new(w))
+            };
 
         // Send CONNECT frame.
         let connect = format!(
@@ -192,11 +240,38 @@ impl StompClient for LiveStompClient {
     }
 }
 
-/// Read one STOMP frame from a buffered reader.
-#[allow(dead_code)]
-async fn read_frame(
-    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
-) -> Result<StompFrame, StompError> {
+/// Build a `rustls::ClientConfig` using the system's native CA certificate store.
+fn build_tls_config() -> Result<Arc<rustls::ClientConfig>, StompError> {
+    let mut root_store = rustls::RootCertStore::empty();
+
+    let certs = rustls_native_certs::load_native_certs();
+    // Log any individual cert load errors but do not abort — partial stores are usable.
+    for err in &certs.errors {
+        tracing::warn!(error = %err, "Failed to load a native CA certificate");
+    }
+    for cert in certs.certs {
+        root_store
+            .add(cert)
+            .map_err(|e| StompError::Tls(format!("cert add error: {e}")))?;
+    }
+
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    Ok(Arc::new(config))
+}
+
+/// Read one STOMP frame from any buffered async reader.
+///
+/// Generic over the reader type so it works with both the plain-TCP and TLS-wrapped
+/// variants without code duplication.
+async fn read_frame<R>(reader: &mut BufReader<R>) -> Result<StompFrame, StompError>
+where
+    R: AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
     let mut command = String::new();
     // Skip blank lines (heart-beat frames are just "\n").
     while command.trim().is_empty() {
@@ -224,10 +299,7 @@ async fn read_frame(
     let mut body = Vec::new();
     loop {
         let mut byte = [0u8; 1];
-        let n = {
-            use tokio::io::AsyncReadExt;
-            reader.read(&mut byte).await?
-        };
+        let n = reader.read(&mut byte).await?;
         if n == 0 {
             return Err(StompError::Disconnected);
         }
