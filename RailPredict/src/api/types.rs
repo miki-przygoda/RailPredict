@@ -21,7 +21,7 @@ pub struct TrainSummary {
     pub estimated_departure: Option<String>,
     pub delay_mins: Option<i32>,
     pub platform: Option<String>,
-    pub is_cancelled: bool,
+    pub is_cancelled: Option<bool>,
     /// ISO 8601 timestamp of the last registry update.
     pub last_updated: String,
 }
@@ -35,7 +35,7 @@ pub struct DepartureBoardEntry {
     pub estimated_departure: Option<String>,
     pub delay_mins: Option<i32>,
     pub platform: Option<String>,
-    pub is_cancelled: bool,
+    pub is_cancelled: Option<bool>,
     /// Seconds since the most recent Stamped field on the backing TrainStatus was updated.
     /// `None` means the age could not be determined (e.g. no registry entry).
     /// Used by the stale-data overlay (Phase 1).
@@ -157,14 +157,14 @@ mod tests {
             estimated_departure: None,
             delay_mins: Some(5),
             platform: Some("3".to_string()),
-            is_cancelled: false,
+            is_cancelled: Some(false),
             last_updated: "2024-04-17T12:01:00Z".to_string(),
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: TrainSummary = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rid, s.rid);
         assert_eq!(back.delay_mins, Some(5));
-        assert!(!back.is_cancelled);
+        assert_eq!(back.is_cancelled, Some(false));
     }
 
     #[test]
@@ -175,7 +175,7 @@ mod tests {
             estimated_departure: Some("2024-04-17T12:05:00Z".to_string()),
             delay_mins: Some(5),
             platform: None,
-            is_cancelled: false,
+            is_cancelled: Some(false),
             last_updated_secs_ago: None,
             destination_name: None,
         };

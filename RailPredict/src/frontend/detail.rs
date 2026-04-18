@@ -31,7 +31,7 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                 s.scheduled_departure.value.to_rfc3339(),
                 s.best_delay_mins(),
                 s.best_platform().map(str::to_string),
-                s.is_cancelled.value,
+                s.is_cancelled.value.unwrap_or(false),
             ))
         }
         None => None,
@@ -113,7 +113,7 @@ async fn enrich_to_html(
     let (delay_mins, platform, is_cancelled) = match registry.get(&event.train_id) {
         Some(arc) => {
             let s = arc.read().await;
-            (s.best_delay_mins(), s.best_platform().map(str::to_string), s.is_cancelled.value)
+            (s.best_delay_mins(), s.best_platform().map(str::to_string), s.is_cancelled.value.unwrap_or(false))
         }
         None => (None, None, false),
     };

@@ -250,7 +250,7 @@ impl IngestionPipeline {
                             if ts_destination_crs.is_some() {
                                 status.destination_crs = ts_destination_crs;
                             }
-                            status.is_cancelled = Stamped::new(is_cancelled);
+                            status.is_cancelled = Stamped::new(Some(is_cancelled));
                             status.last_update_source = UpdateSource::StompFirehose;
 
                             // Feed confirmed delay into historical store, then refresh prediction.

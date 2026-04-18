@@ -97,6 +97,59 @@ impl TrainRegistry {
         self.trains.iter().map(|r| Arc::clone(r.value())).collect()
     }
 
+    /// Build a pre-filtered departure board snapshot for the given CRS code.
+    ///
+    /// Iterates the registry once, filters to trains whose `origin_crs` matches `crs`
+    /// (case-insensitive), and returns a sorted `Vec<DepartureBoardEntry>` without the
+    /// caller needing to acquire per-train locks.
+    pub async fn departure_snapshot(&self, crs: &str) -> Vec<crate::api::types::DepartureBoardEntry> {
+        use chrono::Utc;
+
+        let crs_upper = crs.to_uppercase();
+        let mut entries: Vec<crate::api::types::DepartureBoardEntry> = Vec::new();
+
+        for entry in self.trains.iter() {
+            let status = entry.value().read().await;
+            if status.origin_crs.as_deref().map(str::to_uppercase).as_deref() != Some(&crs_upper) {
+                continue;
+            }
+
+            let most_recent = [
+                status.actual_estimated_departure.last_updated,
+                status.reported_delay_mins.last_updated,
+                status.actual_platform.last_updated,
+                status.is_cancelled.last_updated,
+            ]
+            .into_iter()
+            .max();
+            let last_updated_secs_ago = most_recent.map(|ts| {
+                let delta = Utc::now() - ts;
+                delta.num_seconds().max(0) as u64
+            });
+
+            entries.push(crate::api::types::DepartureBoardEntry {
+                rid: status.id.to_string(),
+                scheduled_departure: status.scheduled_departure.value.to_rfc3339(),
+                estimated_departure: status
+                    .actual_estimated_departure
+                    .value
+                    .map(|dt| dt.to_rfc3339()),
+                delay_mins: status.best_delay_mins(),
+                platform: status.best_platform().map(str::to_string),
+                is_cancelled: status.is_cancelled.value,
+                last_updated_secs_ago,
+                destination_name: status.destination_crs.clone(),
+            });
+        }
+
+        entries.sort_by_key(|e| {
+            e.scheduled_departure
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap_or_default()
+        });
+        entries
+    }
+
     pub fn len(&self) -> usize {
         self.trains.len()
     }
@@ -287,13 +340,13 @@ mod tests {
 
         let changed = reg
             .update(&id, |s| {
-                s.is_cancelled = crate::types::train_status::Stamped::new(true);
+                s.is_cancelled = crate::types::train_status::Stamped::new(Some(true));
             })
             .await;
 
         assert!(changed);
         let entry = reg.get(&id).unwrap();
-        assert!(entry.read().await.is_cancelled.value);
+        assert_eq!(entry.read().await.is_cancelled.value, Some(true));
     }
 
     #[tokio::test]
