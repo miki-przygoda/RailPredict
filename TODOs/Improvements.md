@@ -10,13 +10,14 @@ This file has been broken down into focused agent-sized epic files. Each item be
 now tracked in its respective epic file. Do not start work directly from this file —
 use the epic files instead.
 
-| Epic file | Items covered | Status |
-|---|---|---|
-| `TODOs/ProductionHardening.md` | 1.1, 1.2, 1.4, 1.5, 3.1, 3.2, 3.3 | **COMPLETE — v1.2.0** (kept for reference) |
-| `TODOs/CI_DevEx.md` | 1.3, 4.1, 4.2, 4.3, 4.4 | **COMPLETE — v1.3.0** (kept for reference) |
-| `TODOs/TierADataLayer.md` | 2.3 (remaining), 2.4, 2.5, 6.1, 6.2 | Pending — next epic |
-| `TODOs/TierCWiring.md` | 2.1, 2.2, 2.6, 8.1, 4.5 | Pending |
-| `TODOs/ProductFeatures.md` | 5.1, 5.3, 5.4, 5.5, 8.2 | Pending |
+| Epic file                      | Items covered                       | Status                                     |
+|--------------------------------|-------------------------------------|--------------------------------------------|
+| `TODOs/ProductionHardening.md` | 1.1, 1.2, 1.4, 1.5, 3.1, 3.2, 3.3   | **COMPLETE — v1.2.0** (kept for reference) |
+| `TODOs/CI_DevEx.md`            | 1.3, 4.1, 4.2, 4.3, 4.4             | **COMPLETE — v1.3.0** (kept for reference) |
+| `TODOs/TierADataLayer.md`      | 2.3 (remaining), 2.4, 2.5, 6.1, 6.2 | Pending — next epic                        |
+| `TODOs/TierCWiring.md`         | 2.1, 2.2, 2.6, 8.1, 4.5             | Pending                                    |
+| `TODOs/ProductFeatures.md`     | 5.1, 5.3, 5.4, 5.5, 8.2             | Pending                                    |
+| Docker infra + Darwin wiring   | Dockerfile, DNS, STOMP, gzip        | **COMPLETE — v1.4.1–v1.4.3**              |
 
 ### Already completed (do not re-implement)
 - **1.1** (STOMP TLS) — completed in ProductionHardening v1.2.0.
