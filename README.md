@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.3.0" -- 17/04/2026**
+**version = "1.3.0" -- 18/04/2026**
 
 ---
 
@@ -73,9 +73,36 @@ If GBR starts returning errors (overloaded, rate-limited), the system automatica
 | HTML templating        | `maud`                                                                 |
 | Static assets          | `rust-embed`                                                           |
 | Observability          | `tracing` + `tracing-subscriber` + `metrics` + `metrics-exporter-prometheus` |
-| Rate limiting          | `tower_governor` (pending — tracked in ProductionHardening epic)       |
+| Rate limiting          | `tower_governor` 0.4 (60 req/s per IP, `/health`+`/metrics` excluded) |
+| TLS                    | `tokio-rustls` + `rustls-native-certs` (Darwin STOMP connection)       |
 | CLI                    | `clap` 4 (derive)                                                      |
 | Error handling         | `thiserror` (domain errors) + `anyhow` (app-level)                     |
+
+---
+
+## Current Status (v1.3.0)
+
+All foundation layers are complete and production-hardened. The system builds, tests pass, and is ready for deployment against real Darwin credentials.
+
+| Layer | Status | Notes |
+|:------|:-------|:------|
+| Core types (`TrainId`, `TrainStatus`, `Stamped<T>`) | **Done** | |
+| State machine + poll manager | **Done** | |
+| Networking (coalescer, rate limiter, circuit breaker) | **Done** | |
+| Darwin ingestion (STOMP + filter + parser) | **Done** | TLS on by default (`DARWIN_TLS=true`) |
+| In-memory cache (`TrainRegistry`) | **Done** | |
+| Prediction engine (Tier B) | **Done** | Correlation, confidence decay, per-hour history |
+| Database layer (Postgres + sqlx) | **Done** | Migrations, history flush, static data queries |
+| HTTP API + SSE | **Done** | CRS validation, rate limiting, CORS tightening |
+| Frontend (maud + htmx) | **Done** | Stale overlay, destination cards, 30s auto-refresh |
+| Observability | **Done** | Prometheus `/metrics`, Grafana in docker-compose |
+| CI pipeline | **Done** | GitHub Actions: deny + clippy + test + release build |
+| Tier A data layer (GTFS timetable sync) | **Pending** | `TODOs/TierADataLayer.md` |
+| Tier C wiring (live GBR API calls) | **Pending** | `TODOs/TierCWiring.md` |
+| Technical debt cleanup | **Pending** | `TODOs/TechnicalDebt.md` |
+| Product features | **Pending** | `TODOs/ProductFeatures.md` |
+
+**One user action required before CI passes fully:** generate the `.sqlx/` offline snapshot — see `TODOs/CI_DevEx.md`.
 
 ---
 
