@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     // --- CLI subcommands ---
     let cli = Cli::parse();
     if let Some(command) = cli.command {
-        let db_pool = db::connect(&config.database_url).await?;
+        let db_pool = db::connect(&config.database_url, config.db_max_connections).await?;
         match command {
             Commands::IngestStatic { source, url, file } => match source {
                 IngestSource::Gtfs => {
@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 IngestSource::Cif => {
-                    unimplemented!("CIF ingest is not yet implemented");
+                    anyhow::bail!("CIF ingest is not yet implemented");
                 }
             },
         }
@@ -102,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Prometheus metrics recorder installed — GET /metrics enabled");
 
     // --- Normal server startup ---
-    let db_pool = db::connect(&config.database_url).await?;
+    let db_pool = db::connect(&config.database_url, config.db_max_connections).await?;
 
     // Load Tier B history from DB into in-memory store.
     let history_store = db::history::load_history(&db_pool).await?;
