@@ -4,6 +4,38 @@ _A full audit of the codebase as of v1.1.0. Organized by priority, not by module
 
 ---
 
+## Status — Breakdown into Agent Epics (v1.1.3)
+
+This file has been broken down into focused agent-sized epic files. Each item below is
+now tracked in its respective epic file. Do not start work directly from this file —
+use the epic files instead.
+
+| Epic file | Items covered |
+|---|---|
+| `TODOs/ProductionHardening.md` | 1.1, 1.2, 1.4, 1.5, 3.1, 3.2, 3.3 |
+| `TODOs/TierCWiring.md` | 2.1, 2.2, 2.6, 8.1, 4.5 |
+| `TODOs/TierADataLayer.md` | 2.3 (remaining), 2.4, 2.5, 6.1, 6.2 |
+| `TODOs/CI_DevEx.md` | 1.3, 4.1, 4.2, 4.3, 4.4 |
+| `TODOs/TechnicalDebt.md` | 7.1, 7.3, 9.1, 9.2, 9.3, 9.4, 9.5, 4.5 |
+| `TODOs/ProductFeatures.md` | 5.1, 5.3, 5.4, 5.5, 8.2 |
+
+### Already completed (do not re-implement)
+- **2.3** (DB in AppState) — completed as Observability prereq in v1.1.2. Remaining
+  work (merge DB + registry in handlers) is in `TODOs/TierADataLayer.md`.
+- **2.7** — same as 2.3, duplicate entry.
+- **5.2** (destination on departure cards) — completed in FrontEndHardening v1.1.1.
+- **6.3** (HTMX SSE error banner) — completed in FrontEndHardening v1.1.1.
+- **7.2** (Prometheus /metrics endpoint) — completed in Observability v1.1.2.
+
+### Suggested epic execution order
+1. `ProductionHardening.md` + `CI_DevEx.md` (can run in parallel — no file conflicts)
+2. `TechnicalDebt.md` (mostly independent, small fixes)
+3. `TierADataLayer.md` (completes the data pipeline; enables features)
+4. `TierCWiring.md` (the big architecture epic — wires live GBR calls)
+5. `ProductFeatures.md` (builds on everything above)
+
+---
+
 ## 1. Production Blockers — Fix Before Any Live Deployment
 
 These will cause silent failures or security holes the moment the app is exposed publicly.

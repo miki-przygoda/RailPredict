@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.1.3" -- 17/04/2026**
+**version = "1.2.0" -- 17/04/2026**
 
 ---
 
@@ -59,16 +59,23 @@ If GBR starts returning errors (overloaded, rate-limited), the system automatica
 
 ## Tech Stack
 
-| Concern                | Tool                                                   |
-|:-----------------------|:-------------------------------------------------------|
-| Async runtime          | `tokio`                                                |
-| HTTP client (GBR REST) | `reqwest`                                              |
-| Darwin firehose        | STOMP client                                           |
-| In-memory cache        | `moka` (concurrent) or `dashmap`                       |
-| Historical analysis    | `polars`                                               |
-| Time handling          | `chrono`                                               |
-| XML parsing (Darwin)   | `serde-xml-rs`                                         |
-| Error handling         | `thiserror` (domain errors) + `anyhow` (app-level)     |
+| Concern                | Tool                                                                   |
+|:-----------------------|:-----------------------------------------------------------------------|
+| Async runtime          | `tokio`                                                                |
+| HTTP client (GBR REST) | `reqwest` (rustls-tls, no native-tls)                                  |
+| Darwin firehose        | STOMP client (`tokio`-based)                                           |
+| In-memory cache        | `dashmap` (concurrent)                                                 |
+| Time handling          | `chrono`                                                               |
+| XML parsing (Darwin)   | `quick-xml`                                                            |
+| Serialisation          | `serde` + `serde_json`                                                 |
+| Database               | `sqlx` 0.8 (Postgres, async, compile-time checked queries)             |
+| HTTP framework         | `axum` 0.7                                                             |
+| HTML templating        | `maud`                                                                 |
+| Static assets          | `rust-embed`                                                           |
+| Observability          | `tracing` + `tracing-subscriber` + `metrics` + `metrics-exporter-prometheus` |
+| Rate limiting          | `tower_governor` (pending — tracked in ProductionHardening epic)       |
+| CLI                    | `clap` 4 (derive)                                                      |
+| Error handling         | `thiserror` (domain errors) + `anyhow` (app-level)                     |
 
 ---
 

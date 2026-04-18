@@ -91,7 +91,7 @@ async fn smoke_three_ts_then_deactivated() {
     ];
 
     let (pipeline, mut sc_rx, registry) = build_pipeline(payloads);
-    pipeline.run().await;
+    let _ = pipeline.run().await;
 
     let id = TrainId::rid(RID).unwrap();
 
@@ -127,7 +127,7 @@ async fn three_ascending_ts_registry_holds_latest() {
     ];
 
     let (pipeline, _, registry) = build_pipeline(payloads);
-    pipeline.run().await;
+    let _ = pipeline.run().await;
 
     let id = TrainId::rid(RID).unwrap();
     let entry = registry.get(&id).expect("Train should be in registry");
@@ -155,7 +155,7 @@ async fn stale_reconnect_replay_dropped() {
     ];
 
     let (pipeline, _, registry) = build_pipeline(payloads);
-    pipeline.run().await;
+    let _ = pipeline.run().await;
 
     let id = TrainId::rid(RID).unwrap();
     let entry = registry.get(&id).expect("Train should still be in registry");
@@ -222,7 +222,7 @@ async fn cancelled_train_emits_critical_state_change() {
     ];
 
     let (pipeline, mut sc_rx, _) = build_pipeline(payloads);
-    pipeline.run().await;
+    let _ = pipeline.run().await;
 
     let mut saw_critical = false;
     while let Ok(event) = sc_rx.try_recv() {

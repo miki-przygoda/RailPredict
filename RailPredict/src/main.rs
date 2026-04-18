@@ -128,7 +128,8 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // --- Ingestion pipeline ---
-    let stomp = match LiveStompClient::from_env() {
+    // Build the initial STOMP client to verify credentials are present before spawning.
+    let initial_stomp = match LiveStompClient::from_env() {
         Ok(client) => Box::new(client),
         Err(e) => {
             tracing::warn!(
@@ -144,8 +145,8 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let pipeline = IngestionPipeline::new(
-        stomp,
+    let initial_pipeline = IngestionPipeline::new(
+        initial_stomp,
         config.watched_routes.clone(),
         Arc::clone(&registry),
         sc_tx.clone(),
@@ -154,9 +155,67 @@ async fn main() -> anyhow::Result<()> {
 
     let pipeline_token = token.clone();
     let pipeline_task = tokio::spawn(async move {
-        tokio::select! {
-            _ = pipeline_token.cancelled() => tracing::info!("Ingestion pipeline shutting down"),
-            _ = pipeline.run() => tracing::warn!("Ingestion pipeline exited early"),
+        // Exponential-backoff reconnect loop.
+        // Darwin disconnects clients roughly every 30 minutes; the sequence guard in
+        // filter.rs handles replayed messages on reconnect — no duplicate-suppression
+        // changes needed here.
+        let mut delay = Duration::from_secs(2);
+        let mut attempt: u32 = 0;
+
+        // Extract the shared context before the first run so we can rebuild after
+        // `run()` consumes the pipeline.
+        let pipeline_ctx = initial_pipeline.context();
+        let mut pipeline = initial_pipeline;
+
+        loop {
+            tokio::select! {
+                _ = pipeline_token.cancelled() => {
+                    tracing::info!("Ingestion pipeline shutting down");
+                    break;
+                }
+                result = pipeline.run() => {
+                    match result {
+                        Ok(()) => {
+                            // Clean shutdown (channel drained without error).
+                            tracing::info!("Ingestion pipeline exited cleanly");
+                            break;
+                        }
+                        Err(e) => {
+                            attempt += 1;
+                            tracing::warn!(
+                                error = %e,
+                                attempt,
+                                retry_secs = delay.as_secs(),
+                                "STOMP stream closed, reconnecting"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Wait for the backoff delay or cancellation — whichever comes first.
+            tokio::select! {
+                _ = pipeline_token.cancelled() => {
+                    tracing::info!("Ingestion pipeline shutting down during backoff");
+                    break;
+                }
+                _ = tokio::time::sleep(delay) => {}
+            }
+            delay = (delay * 2).min(Duration::from_secs(120));
+
+            // Rebuild the STOMP client for the next attempt, reusing the same context.
+            match LiveStompClient::from_env() {
+                Ok(new_stomp) => {
+                    pipeline = IngestionPipeline::from_context(
+                        pipeline_ctx.clone(),
+                        Box::new(new_stomp),
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Cannot rebuild STOMP client — giving up reconnect");
+                    break;
+                }
+            }
         }
     });
 
@@ -213,6 +272,8 @@ async fn main() -> anyhow::Result<()> {
         state_change_tx: sc_tx,
         db: db_pool.clone(),
         prometheus: Arc::clone(&prometheus_handle),
+        cors_allowed_origins: config.cors_allowed_origins.clone(),
+        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
     };
     let app = router(app_state);
     let bind_addr: std::net::SocketAddr = config
@@ -279,6 +340,8 @@ async fn wait_for_shutdown(
         state_change_tx: sc_tx,
         db: db_pool.clone(),
         prometheus: prometheus_handle,
+        cors_allowed_origins: config.cors_allowed_origins.clone(),
+        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
     };
     let app = router(app_state);
 
