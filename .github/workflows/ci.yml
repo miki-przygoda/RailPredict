@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    name: Build, Lint, Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: railpredict
+          POSTGRES_PASSWORD: railpredict
+          POSTGRES_DB: railpredict
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # cargo-deny runs independently — no Rust toolchain needed.
+      # Install it before the toolchain setup so both can run in parallel conceptually,
+      # but sequentially here for simplicity.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Dependency audit (cargo deny)
+        run: cargo deny check
+        working-directory: RailPredict
+
+      - name: Install Rust toolchain (stable + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Restore build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: RailPredict
+
+      # NOTE: This step will fail until the user runs `cargo sqlx prepare` locally
+      # with a live database and commits the resulting `.sqlx/` directory.
+      #
+      # To generate the snapshot:
+      #   docker compose up -d db
+      #   cd RailPredict
+      #   DATABASE_URL=postgresql://railpredict:railpredict@localhost:5432/railpredict \
+      #     cargo sqlx prepare
+      #   git add .sqlx/
+      #   git commit -m "chore: add sqlx offline snapshot"
+      #
+      # See TODOs/CI_DevEx.md item 1.3 for full instructions.
+      - name: sqlx offline check
+        run: cargo sqlx prepare --check
+        working-directory: RailPredict
+        env:
+          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+        working-directory: RailPredict
+
+      - name: Tests
+        run: cargo test
+        working-directory: RailPredict
+        env:
+          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
+
+      - name: Release build
+        run: cargo build --release
+        working-directory: RailPredict
+        env:
+          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
