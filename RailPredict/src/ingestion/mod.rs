@@ -208,17 +208,16 @@ impl IngestionPipeline {
 
                     // Ensure the train is registered before applying the update.
                     // We do this first so the subsequent update() call always succeeds.
-                    if self.ctx.registry.get(&rid).is_none() {
-                        if let (Some(sched), Some(publ)) =
+                    if self.ctx.registry.get(&rid).is_none()
+                        && let (Some(sched), Some(publ)) =
                             (ts_update.scheduled_departure, ts_update.scheduled_departure)
-                        {
-                            tracing::debug!(rid = %rid, "Registering new train from TS message");
-                            let mut new_status = crate::types::TrainStatus::new(rid.clone(), sched, publ);
-                            new_status.origin_crs = ts_update.station_crs.clone();
-                            new_status.destination_crs = ts_update.destination_crs.clone();
-                            new_status.uid = ts_update.uid.clone();
-                            self.ctx.registry.upsert(rid.clone(), new_status);
-                        }
+                    {
+                        tracing::debug!(rid = %rid, "Registering new train from TS message");
+                        let mut new_status = crate::types::TrainStatus::new(rid.clone(), sched, publ);
+                        new_status.origin_crs = ts_update.station_crs.clone();
+                        new_status.destination_crs = ts_update.destination_crs.clone();
+                        new_status.uid = ts_update.uid.clone();
+                        self.ctx.registry.upsert(rid.clone(), new_status);
                     }
 
                     // Capture values needed inside the closure before borrowing self.

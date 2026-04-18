@@ -54,11 +54,6 @@ fn make_pattern(uid: &str) -> ServicePattern {
     }
 }
 
-/// Build a `DelayRecord` with a specific delay and a current timestamp.
-fn make_record(delay_mins: i32) -> DelayRecord {
-    DelayRecord { delay_mins, recorded_at: Utc::now() }
-}
-
 // ---------------------------------------------------------------------------
 // Test 1: load_history on a fresh (empty) database
 //

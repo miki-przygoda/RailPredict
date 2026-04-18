@@ -108,7 +108,7 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
                 h2 { "Departures from " (crs) }
                 @for entry in entries {
                     // Phase 1: mark cards whose data is older than 120 seconds as stale.
-                    @let stale = entry.last_updated_secs_ago.map_or(false, |s| s > 120);
+                    @let stale = entry.last_updated_secs_ago.is_some_and(|s| s > 120);
                     a .train-card
                       data-stale=[if stale { Some("true") } else { None::<&str> }]
                       href={ "/trains/" (entry.rid) "/view" }

@@ -188,10 +188,10 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
             }
 
             Ok(Event::End(ref e)) => {
-                if e.local_name().as_ref() == b"TS" {
-                    if let Some(ts) = current_ts.take() {
-                        updates.push(ParsedUpdate::TrainStatus(ts));
-                    }
+                if e.local_name().as_ref() == b"TS"
+                    && let Some(ts) = current_ts.take()
+                {
+                    updates.push(ParsedUpdate::TrainStatus(ts));
                 }
             }
 

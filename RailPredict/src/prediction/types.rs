@@ -49,6 +49,12 @@ pub struct HistoricalStore {
     inner: DashMap<ServicePattern, VecDeque<DelayRecord>>,
 }
 
+impl Default for HistoricalStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HistoricalStore {
     pub fn new() -> Self {
         Self { inner: DashMap::new() }

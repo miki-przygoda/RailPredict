@@ -93,6 +93,12 @@ pub struct PredictionEngine {
     store: Arc<HistoricalStore>,
 }
 
+impl Default for PredictionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PredictionEngine {
     pub fn new() -> Self {
         Self { store: Arc::new(HistoricalStore::new()) }
@@ -257,7 +263,7 @@ fn apply_preceding_correlation(
             continue;
         }
         // Keep the one with the latest departure (closest predecessor).
-        if best.map_or(true, |(prev, _)| dep > prev.scheduled_departure.value) {
+        if best.is_none_or(|(prev, _)| dep > prev.scheduled_departure.value) {
             best = Some((candidate, delay));
         }
     }
