@@ -16,11 +16,13 @@ pub type Db = sqlx::PgPool;
 
 /// Create a connection pool and run all pending migrations.
 ///
-/// Capped at 10 connections — sufficient for the single-process deployment model.
+/// `max_connections` is sourced from the `DB_MAX_CONNECTIONS` env var (default 5)
+/// via `Config::db_max_connections`, allowing the pool size to be tuned per deployment
+/// without recompiling.
 /// Migrations live in `../migrations/` relative to the crate root at compile time.
-pub async fn connect(database_url: &str) -> anyhow::Result<Db> {
+pub async fn connect(database_url: &str, max_connections: u32) -> anyhow::Result<Db> {
     let pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(max_connections)
         .connect(database_url)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to connect to database: {e}"))?;
