@@ -8,7 +8,8 @@
 //! | GET    | /stations/{crs}/departures         | A    | `Vec<DepartureBoardEntry>`  | Registry only, no GBR call        |
 //! | GET    | /trains/{rid}                      | B    | `TrainSummary`              | Registry; 404 if unknown          |
 //! | GET    | /trains/{rid}/live                 | C    | SSE `LiveUpdateEvent` JSON  | Heartbeat 15s; closes on Terminal |
-//! | GET    | /                                  | —    | HTML search page            | maud server-rendered              |
+//! | GET    | /                                  | —    | HTML dashboard              | system status + navigation; no rate limit |
+//! | GET    | /search                            | —    | HTML search page            | maud server-rendered              |
 //! | GET    | /trains/{rid}/view                 | B/C  | HTML detail page            | maud + htmx SSE                   |
 //! | GET    | /ui/stations/departures?crs=XXX    | A    | HTML fragment               | htmx swap target                  |
 //! | GET    | /ui/trains/{rid}/live              | C    | SSE HTML fragments          | htmx `sse-swap="update"`          |
@@ -17,7 +18,7 @@
 //! ## Middleware
 //! - `CorsLayer`: permissive in debug mode; restricted to `CORS_ALLOWED_ORIGINS` in production.
 //! - `TraceLayer`: logs method, path, status, latency for every request.
-//! - `GovernorLayer`: per-IP rate limiting (default 60 req/s); excludes /health and /metrics.
+//! - `GovernorLayer`: per-IP rate limiting (default 60 req/s); excludes /, /health, /metrics.
 //!
 //! ## Error shape
 //! All JSON 4xx/5xx responses use `{ "error": "...", "code": "..." }` — see `types::ApiError`.
@@ -44,7 +45,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::TrainRegistry,
     db::Db,
-    frontend::{detail, search},
+    frontend::{dashboard, detail, search},
     state_machine::poll_manager::StateChangeEvent,
 };
 
@@ -150,10 +151,11 @@ pub fn router(state: AppState) -> Router {
     // /health and /metrics are excluded (they live on separate sub-routers).
     let rate_limit_per_sec = state.http_rate_limit_per_sec;
 
-    // /metrics and /health are registered on a separate sub-router WITHOUT CORS or
-    // rate limiting so that Prometheus can scrape without preflight issues and
-    // health checks are never throttled.
+    // / (dashboard), /metrics, and /health are on a separate sub-router with NO rate
+    // limiting. Prometheus scrapes /metrics without preflight, health checks must never
+    // be throttled, and the dashboard is a lightweight status page that should always load.
     let infra_router = Router::new()
+        .route("/", get(dashboard::dashboard_page))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(handlers::health_handler))
         .with_state(state.clone());
@@ -169,7 +171,7 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         // Embedded static assets (CSS baked in at compile time)
         .route("/static/:path", get(static_handler))
         // Page routes — full server-rendered HTML pages
-        .route("/", get(search::search_page))
+        .route("/search", get(search::search_page))
         .route("/trains/:rid/view", get(detail::detail_page))
         // UI fragment routes — consumed by htmx partial swaps
         .route("/ui/stations/departures", get(search::departures_fragment))

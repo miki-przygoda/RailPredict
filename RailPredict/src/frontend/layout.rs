@@ -17,6 +17,7 @@ pub fn base(title: &str, content: Markup) -> Markup {
             body {
                 nav {
                     a href="/" { "RailPredict" }
+                    a href="/search" { "Departures" }
                 }
                 main {
                     (content)
