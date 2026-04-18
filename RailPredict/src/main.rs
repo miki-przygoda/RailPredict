@@ -325,6 +325,7 @@ async fn shutdown_signal() {
     ctrl_c.await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_shutdown(
     token: CancellationToken,
     pm_task: tokio::task::JoinHandle<()>,
@@ -345,17 +346,17 @@ async fn wait_for_shutdown(
     };
     let app = router(app_state);
 
-    if let Ok(addr) = config.api_bind_addr.parse::<std::net::SocketAddr>() {
-        if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-            tracing::info!(addr = %addr, "HTTP API listening (ingestion disabled)");
-            let api_token = token.clone();
-            tokio::spawn(async move {
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(async move { api_token.cancelled().await })
-                    .await
-                    .ok();
-            });
-        }
+    if let Ok(addr) = config.api_bind_addr.parse::<std::net::SocketAddr>()
+        && let Ok(listener) = tokio::net::TcpListener::bind(addr).await
+    {
+        tracing::info!(addr = %addr, "HTTP API listening (ingestion disabled)");
+        let api_token = token.clone();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move { api_token.cancelled().await })
+                .await
+                .ok();
+        });
     }
 
     shutdown_signal().await;

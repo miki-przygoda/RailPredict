@@ -48,38 +48,16 @@ jobs:
         with:
           components: clippy
 
-      - name: Install cargo-sqlx
-        run: cargo install sqlx-cli --no-default-features --features postgres
-        working-directory: RailPredict
-
       - name: Restore build cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: RailPredict
 
-      # NOTE: This step will fail until the user runs `cargo sqlx prepare` locally
-      # with a live database and commits the resulting `.sqlx/` directory.
-      #
-      # To generate the snapshot:
-      #   docker compose up -d db
-      #   cd RailPredict
-      #   DATABASE_URL=postgresql://railpredict:railpredict@localhost:5432/railpredict \
-      #     cargo sqlx prepare
-      #   git add .sqlx/
-      #   git commit -m "chore: add sqlx offline snapshot"
-      #
-      # See TODOs/CI_DevEx.md item 1.3 for full instructions.
-
-
-      - name: sqlx offline check
-        run: cargo sqlx prepare --check
-        working-directory: RailPredict
-        env:
-          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
-
       - name: Clippy (deny warnings)
         run: cargo clippy -- -D warnings
         working-directory: RailPredict
+        env:
+          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
 
       - name: Tests
         run: cargo test

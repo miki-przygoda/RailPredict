@@ -24,7 +24,7 @@
 //!   - `DARWIN_PASSWORD`    — ActiveMQ password
 //!   - `DARWIN_DESTINATION` — STOMP topic (default `/topic/darwin.pushport-v16`)
 //!   - `DARWIN_TLS`         — `true`/`false` (default: `true`); set to `false` for local
-//!                            mock brokers that do not support TLS
+//!     mock brokers that do not support TLS
 //!
 //! ## TLS
 //! When `DARWIN_TLS=true` (the default), the `TcpStream` is wrapped with `tokio-rustls`
