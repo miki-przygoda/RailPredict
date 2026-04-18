@@ -2,7 +2,57 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.4.0" -- 18/04/2026**
+**version = "1.4.3" -- 18/04/2026**
+
+---
+
+## v1.4.3 — 18/04/2026 — Darwin Push Port full end-to-end wiring
+
+All fixes required to receive and parse live UK train data from the Darwin Push Port STOMP broker.
+
+**rustls crypto provider**
+- `src/main.rs` — `rustls::crypto::ring::default_provider().install_default()` called at process start; required by rustls 0.23 when multiple provider features are in the dependency tree (reqwest + sqlx both pull in rustls).
+- `RailPredict/Cargo.toml` — `rustls` dependency given `features = ["ring"]` for deterministic provider selection.
+
+**STOMP protocol compliance**
+- `src/ingestion/stomp_client.rs` — CONNECT frame extended with `accept-version:1.0,1.1,1.2` and `host:` headers required by STOMP 1.2 (ActiveMQ rejects STOMP 1.0 CONNECT frames from credentialed clients).
+- `src/ingestion/stomp_client.rs` — `writer` moved into the spawned reader task so the TCP write-half stays open; dropping `writer` at `subscribe()` return sent a TCP FIN that Darwin's ActiveMQ interpreted as a disconnect.
+- `src/ingestion/stomp_client.rs` — body reading switched from `read_until(0, ...)` to exact-length `read_exact` using the `content-length` header; Darwin gzip payloads contain internal `\0` bytes that truncated `read_until` mid-body.
+- `src/ingestion/stomp_client.rs` — STOMP ERROR frame now logged with `broker_message` and `broker_body` fields for actionable debugging.
+- `.env` — `DARWIN_TLS=false` set; Darwin Push Port serves plain STOMP on port 61613 (no TLS wrapper).
+
+**Gzip decompression**
+- `RailPredict/Cargo.toml` — `flate2 = "1"` added.
+- `src/ingestion/mod.rs` — `decompress_if_gzip()` helper detects `\x1f\x8b` magic bytes and decompresses with `GzDecoder` before any filter or parser step; Darwin Push Port v16 messages are always gzip-compressed.
+
+176 tests (160 unit + 11 DB + 5 integration), all passing.
+
+---
+
+## v1.4.2 — 18/04/2026 — System dashboard and rate limiter fix
+
+**System dashboard at /**
+- `src/frontend/dashboard.rs` (new) — maud-rendered dashboard page showing DB status, Darwin feed status, active train count, station count, delay record count, navigation cards to Departures/Health/Metrics, and API reference table.
+- `src/frontend/mod.rs` — `pub mod dashboard` added.
+- `src/frontend/layout.rs` — "Departures" nav link added pointing to `/search`.
+- `src/api/mod.rs` — `/` route moved to `infra_router` (no rate limiting); `/search` added to `build_api_router` as the new departures page route.
+- `static/style.css` — dashboard CSS: `.dashboard`, `.status-grid`, `.status-card`, `.status-ok/.status-error`, `.nav-grid`, `.nav-card`, `.api-table`.
+
+**Rate limiter ConnectInfo fix**
+- `src/main.rs` — both `axum::serve(listener, app)` calls changed to `axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())`; `tower_governor`'s `PeerIpKeyExtractor` requires `ConnectInfo<SocketAddr>` to be present in the request extensions — without this every request fails with "Unable To Extract Key!".
+
+---
+
+## v1.4.1 — 18/04/2026 — Docker infrastructure fixes
+
+**Dockerfile**
+- Rust toolchain bumped `1.82-bookworm` → `1.88-bookworm` across all three build stages; `edition = "2024"` in `Cargo.toml` requires Rust ≥ 1.85, and cargo-chef 0.1.77 requires ≥ 1.88.
+- `COPY RailPredict/static ./static` added to builder stage; `rust-embed` embeds static assets at compile time and panics if the folder is absent during `cargo build`.
+- `COPY migrations /migrations` path corrected; `sqlx::migrate!("../migrations")` resolves relative to the crate root at `/app`, so migrations must be at `/migrations` (not `/app/migrations`).
+
+**docker-compose.yml**
+- `dns: [8.8.8.8, 8.8.4.4]` added to the `app` service; Docker's default resolver failed to resolve `darwin-dist-44ae45.nationalrail.co.uk` inside the container.
+- DB host port mapping commented out to avoid conflict with a locally-running Postgres instance.
 
 ---
 
