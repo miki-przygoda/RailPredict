@@ -54,6 +54,18 @@ use filter::Filter;
 use parser::{parse_pport, ParsedUpdate};
 use stomp_client::{StompClient, StompError, StompFrame};
 
+fn decompress_if_gzip(data: &[u8]) -> anyhow::Result<std::borrow::Cow<'_, [u8]>> {
+    if data.starts_with(&[0x1f, 0x8b]) {
+        use std::io::Read;
+        let mut decoder = flate2::read::GzDecoder::new(data);
+        let mut out = Vec::new();
+        decoder.read_to_end(&mut out)?;
+        Ok(std::borrow::Cow::Owned(out))
+    } else {
+        Ok(std::borrow::Cow::Borrowed(data))
+    }
+}
+
 const INGESTION_BUFFER: usize = 512;
 
 // ---------------------------------------------------------------------------
@@ -153,7 +165,16 @@ impl IngestionPipeline {
         // Phase 2: count every Darwin message received from the broker.
         metrics::counter!("darwin_messages_received_total").increment(1);
 
-        let xml_bytes = &frame.body;
+        // Decompress gzip body if present (Darwin Push Port sends gzip-compressed XML).
+        let decompressed = match decompress_if_gzip(&frame.body) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(error = %e, "Gzip decompression failed — dropping frame");
+                metrics::counter!("darwin_messages_dropped_total", "reason" => "decompress_error").increment(1);
+                return;
+            }
+        };
+        let xml_bytes: &[u8] = &decompressed;
 
         // Gate 1: taxonomy + route filter (no XML parse).
         // We don't have a CRS at this point (pre-parse); pass None to rely on taxonomy only.

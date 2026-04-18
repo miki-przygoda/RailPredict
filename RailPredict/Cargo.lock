@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "RailPredict"
-version = "1.4.0"
+version = "1.4.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -15,6 +15,7 @@ dependencies = [
  "csv",
  "dashmap 6.1.0",
  "dotenvy",
+ "flate2",
  "futures-core",
  "maud",
  "metrics",
