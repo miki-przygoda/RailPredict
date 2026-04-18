@@ -226,6 +226,9 @@ impl Config {
 mod tests {
     use super::*;
 
+    // Env vars are process-global; tests that mutate them must not run concurrently.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn config_error_lists_all_missing_vars_in_one_message() {
         // Test the error display directly — avoids env var race conditions in parallel tests.
@@ -248,7 +251,7 @@ mod tests {
 
     #[test]
     fn watched_routes_parsed_from_csv() {
-        // SAFETY: single-threaded test; no other thread reads these vars concurrently.
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
             std::env::set_var("GBR_API_KEY", "k");
@@ -275,7 +278,7 @@ mod tests {
 
     #[test]
     fn log_format_json_parsed() {
-        // SAFETY: single-threaded test; no other thread reads these vars concurrently.
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
             std::env::set_var("GBR_API_KEY", "k");
@@ -299,7 +302,7 @@ mod tests {
 
     #[test]
     fn cors_allowed_origins_required_in_production() {
-        // SAFETY: single-threaded test.
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
             std::env::set_var("GBR_API_KEY", "k");
@@ -323,7 +326,7 @@ mod tests {
 
     #[test]
     fn cors_allowed_origins_parsed_from_csv() {
-        // SAFETY: single-threaded test.
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
             std::env::set_var("GBR_API_KEY", "k");
