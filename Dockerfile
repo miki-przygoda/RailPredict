@@ -4,7 +4,7 @@
 # cargo-chef analyses the workspace and emits a recipe.json describing only the
 # dependency graph. As long as Cargo.toml / Cargo.lock don't change, every
 # subsequent stage that reads recipe.json gets a cache hit.
-FROM rust:1.82-bookworm AS planner
+FROM rust:1.88-bookworm AS planner
 WORKDIR /app
 RUN cargo install cargo-chef --locked
 COPY RailPredict/Cargo.toml RailPredict/Cargo.lock ./
@@ -14,7 +14,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ─── Stage 2: Cacher ──────────────────────────────────────────────────────────
 # Builds all dependencies (the slow part). Cached as a layer until recipe.json
 # changes (i.e. until Cargo.lock changes).
-FROM rust:1.82-bookworm AS cacher
+FROM rust:1.88-bookworm AS cacher
 WORKDIR /app
 RUN cargo install cargo-chef --locked
 COPY --from=planner /app/recipe.json recipe.json
@@ -23,7 +23,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # ─── Stage 3: Builder ─────────────────────────────────────────────────────────
 # Builds only the application code. Dependency compilation is already done —
 # this stage compiles just src/ on top of the cached deps.
-FROM rust:1.82-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 WORKDIR /app
 
 # sqlx offline mode: compile-time query checking without a live DB.
@@ -34,8 +34,10 @@ COPY --from=cacher /app/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 COPY RailPredict/Cargo.toml RailPredict/Cargo.lock ./
 COPY RailPredict/src ./src
-# Migrations are embedded by sqlx::migrate! at compile time.
-COPY migrations ./migrations
+# rust-embed needs the static assets at compile time (relative to crate root).
+COPY RailPredict/static ./static
+# sqlx::migrate!("../migrations") resolves to one level above the crate root.
+COPY migrations /migrations
 
 RUN cargo build --release --bin railpredict
 
