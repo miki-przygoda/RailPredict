@@ -4,6 +4,7 @@ use axum::extract::{Query, State};
 use maud::{Markup, html};
 use serde::Deserialize;
 
+use crate::api::handlers::{StationResult, StationSearchQuery};
 use crate::api::types::DepartureBoardEntry;
 use crate::api::AppState;
 
@@ -21,13 +22,29 @@ pub async fn search_page() -> Markup {
                     hx-target="#results"
                     hx-trigger="submit, every 30s"
                     hx-swap="innerHTML transition:true"
+                    hx-include="[name='crs']"
                 {
-                    input
-                        type="text"
-                        name="crs"
-                        placeholder="Station code (e.g. KGX)"
-                        autocomplete="off"
-                        maxlength="3";
+                    div style="position:relative" {
+                        // Visible text input — triggers autocomplete
+                        input
+                            type="text"
+                            name="q"
+                            id="station-q"
+                            placeholder="Station name (e.g. London Kings Cross)"
+                            autocomplete="off"
+                            hx-get="/ui/stations/search"
+                            hx-trigger="input changed delay:300ms"
+                            hx-target="#station-suggestions"
+                            hx-include="[name='q']";
+                        // Hidden input carrying the actual CRS code for the form submit
+                        input
+                            type="hidden"
+                            name="crs"
+                            id="crs-hidden"
+                            value="";
+                        // Autocomplete suggestion list target
+                        div #station-suggestions {}
+                    }
                     button type="submit" { "Search" }
                 }
                 div #results {}
@@ -46,7 +63,8 @@ pub async fn departures_fragment(
     State(state): State<AppState>,
 ) -> Markup {
     let crs_upper = q.crs.trim().to_uppercase();
-    let entries = state.registry.departure_snapshot(&crs_upper).await;
+    // Item 2.3r: merged DB + registry departure board.
+    let entries = crate::api::handlers::build_departure_board(&state, &crs_upper).await;
     departure_board_fragment(&crs_upper, &entries)
 }
 
@@ -79,6 +97,63 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
                             (platform_chip(entry.platform.as_deref()))
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// `GET /ui/stations/search?q=<term>`
+///
+/// Returns an HTML `<ul>` of matching station suggestions for the autocomplete
+/// dropdown. Each `<li>` sets the hidden CRS input and the visible text input
+/// on click, then clears the suggestions div.
+pub async fn station_suggestions_fragment(
+    Query(params): Query<StationSearchQuery>,
+    State(state): State<AppState>,
+) -> Markup {
+    let q = params.q.trim().to_string();
+    if q.len() < 2 {
+        return html! {};
+    }
+
+    let results: Vec<StationResult> = sqlx::query_as::<_, (String, String)>(
+        "SELECT crs, name FROM stations \
+         WHERE to_tsvector('english', name) @@ plainto_tsquery('english', $1) \
+         ORDER BY name LIMIT 10",
+    )
+    .bind(&q)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(crs, name)| StationResult { crs, name })
+    .collect();
+
+    if results.is_empty() {
+        return html! {};
+    }
+
+    html! {
+        ul .station-suggestions {
+            @for result in &results {
+                @let crs_val = result.crs.clone();
+                @let name_val = result.name.clone();
+                li
+                    style="cursor:pointer"
+                    hx-on:click={
+                        "document.getElementById('crs-hidden').value='"
+                        (crs_val)
+                        "';"
+                        "document.getElementById('station-q').value='"
+                        (name_val)
+                        "';"
+                        "document.getElementById('station-suggestions').innerHTML='';"
+                    }
+                {
+                    span .suggestion-name { (result.name) }
+                    " "
+                    span .suggestion-crs { "(" (result.crs) ")" }
                 }
             }
         }
