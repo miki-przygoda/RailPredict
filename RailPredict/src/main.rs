@@ -5,10 +5,13 @@
 //! ```text
 //! main
 //!  ├── db::connect + load_history
+//!  ├── registry warm-up        — pre-register today's timetable (Tier A)
 //!  ├── PollManager::run        — global BinaryHeap poll scheduler
 //!  ├── IngestionPipeline::run  — Darwin STOMP firehose → registry writes
 //!  ├── eviction_task           — 60s tick; calls registry.evict_departed()
 //!  ├── db_flush_task           — 60s tick; flushes delay history to DB
+//!  ├── prune_task              — 24h tick; deletes old timetable/history rows
+//!  ├── poll_consumer_task      — optional; wires GBR REST polling (requires GBR_API_KEY)
 //!  └── axum server             — HTTP API + SSE
 //! ```
 //!
@@ -33,8 +36,10 @@ use railpredict::db;
 use railpredict::ingestion::gtfs;
 use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
+use railpredict::networking::{CircuitBreaker, Coalescer, LiveGbrClient, RateLimiter};
 use railpredict::prediction::PredictionEngine;
 use railpredict::state_machine::PollManager;
+use railpredict::types::{TrainId, TrainStatus};
 
 fn init_tracing(config: &Config) {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -114,6 +119,33 @@ async fn main() -> anyhow::Result<()> {
     let prediction_engine = PredictionEngine::with_store(Arc::clone(&history_store));
 
     let registry = Arc::new(TrainRegistry::new());
+
+    // --- Proactive warm-up: pre-register today's future departures (Tier A) ---
+    // Ensures trains are in the registry before Darwin mentions them, so state
+    // transitions and predictions can start immediately on first message arrival.
+    match db::maintenance::load_todays_calls(&db_pool).await {
+        Ok(calls) => {
+            let today = chrono::Utc::now().date_naive();
+            let statuses: Vec<(TrainId, TrainStatus)> = calls
+                .into_iter()
+                .filter_map(|call| {
+                    let time = call.scheduled_departure?;
+                    let dt = chrono::NaiveDateTime::new(today, time).and_utc();
+                    // UIDs from the timetable may be shorter/longer than 6 chars on a fresh
+                    // install. Skip those that fail validation rather than panicking.
+                    let id = TrainId::uid(&call.uid).ok()?;
+                    let mut status = TrainStatus::new(id.clone(), dt, dt);
+                    status.origin_crs = Some(call.location_crs);
+                    status.uid = Some(call.uid);
+                    Some((id, status))
+                })
+                .collect();
+            let count = statuses.len();
+            registry.warm(statuses);
+            tracing::info!(trains = count, "Pre-warmed registry from today's timetable");
+        }
+        Err(e) => tracing::warn!(error = %e, "Registry warm-up from timetable skipped"),
+    }
 
     // Single broadcast channel shared by PollManager, IngestionPipeline, and SSE handlers.
     let (sc_tx, _initial_rx) = broadcast::channel(1024);
@@ -270,6 +302,161 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // --- DB prune background task (24h tick) ---
+    let prune_db = db_pool.clone();
+    let prune_token = token.clone();
+    let prune_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(86400)); // 24h
+        loop {
+            tokio::select! {
+                _ = prune_token.cancelled() => {
+                    tracing::info!("Prune task shutting down");
+                    break;
+                }
+                _ = interval.tick() => {
+                    match db::maintenance::prune_old_rows(&prune_db).await {
+                        Ok((tc, dh)) => tracing::debug!(
+                            timetable_rows = tc,
+                            history_rows = dh,
+                            "DB prune complete"
+                        ),
+                        Err(e) => tracing::error!(error = %e, "DB prune failed"),
+                    }
+                }
+            }
+        }
+    });
+
+    // --- Poll consumer task (Tier C — only when GBR_API_KEY is set) ---
+    let gbr_key = std::env::var("GBR_API_KEY").unwrap_or_default();
+    let poll_task: Option<tokio::task::JoinHandle<()>> = if gbr_key.is_empty() {
+        tracing::warn!("GBR_API_KEY not set — poll consumer disabled, Tier C inactive");
+        None
+    } else {
+        let gbr_client = match LiveGbrClient::from_env() {
+            Ok(c) => Arc::new(c) as Arc<dyn railpredict::networking::gbr_client::GbrClient>,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to build GBR client — poll consumer disabled");
+                return Err(e);
+            }
+        };
+        let coalescer = Arc::new(Coalescer::new(gbr_client));
+        let rate_limiter = Arc::new(RateLimiter::default_gbr());
+        let cb = Arc::new(CircuitBreaker::default_gbr());
+
+        let mut poll_rx = sc_tx.subscribe();
+        let poll_registry = Arc::clone(&registry);
+        let poll_token = token.clone();
+
+        Some(tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = poll_token.cancelled() => {
+                        tracing::info!("Poll consumer shutting down");
+                        break;
+                    }
+                    result = poll_rx.recv() => {
+                        let event = match result {
+                            Ok(e) => e,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(skipped = n, "Poll consumer lagged — skipping events");
+                                continue;
+                            }
+                            Err(_) => break,
+                        };
+
+                        // Only process same-state events (poll interval fired, not a real promotion).
+                        // Real state promotions have old_state != new_state.
+                        if event.old_state != event.new_state {
+                            continue;
+                        }
+                        // Only Active/Critical trains need live GBR polling.
+                        use railpredict::state_machine::train_state::TrainState;
+                        if !matches!(event.new_state, TrainState::Active | TrainState::Critical) {
+                            continue;
+                        }
+
+                        // Check circuit breaker before consuming a rate-limit token.
+                        if !cb.is_request_allowed().await {
+                            metrics::counter!("circuit_breaker_blocked_total").increment(1);
+                            continue;
+                        }
+
+                        // Acquire a rate-limit token (sleeps if bucket is empty).
+                        rate_limiter.acquire().await;
+
+                        let train_id = event.train_id.clone();
+                        let coalescer = Arc::clone(&coalescer);
+                        let cb_clone = Arc::clone(&cb);
+                        let reg_clone = Arc::clone(&poll_registry);
+
+                        tokio::spawn(async move {
+                            match coalescer.get(train_id.clone()).await {
+                                Ok(status) => {
+                                    cb_clone.record_success().await;
+                                    reg_clone
+                                        .update(&train_id, |existing| {
+                                            // Only apply if GBR data is at least as fresh as stored data.
+                                            let gbr_ts =
+                                                status.actual_estimated_departure.last_updated;
+                                            if gbr_ts
+                                                >= existing
+                                                    .actual_estimated_departure
+                                                    .last_updated
+                                            {
+                                                existing.actual_estimated_departure =
+                                                    status.actual_estimated_departure.clone();
+                                                existing.reported_delay_mins =
+                                                    status.reported_delay_mins.clone();
+                                            }
+                                            if gbr_ts >= existing.actual_platform.last_updated {
+                                                existing.actual_platform =
+                                                    status.actual_platform.clone();
+                                            }
+                                            if gbr_ts >= existing.is_cancelled.last_updated {
+                                                existing.is_cancelled =
+                                                    status.is_cancelled.clone();
+                                            }
+                                            existing.last_update_source =
+                                                status.last_update_source;
+                                        })
+                                        .await;
+                                    tracing::debug!(
+                                        train_id = %train_id,
+                                        "GBR poll applied to registry"
+                                    );
+                                }
+                                Err(e) => {
+                                    use railpredict::networking::coalescer::CoalescerError;
+                                    match &e {
+                                        CoalescerError::GbrError(msg) if msg.contains("503") => {
+                                            cb_clone.record_failure().await;
+                                            tracing::warn!(
+                                                "GBR returned 503 — circuit breaker incremented"
+                                            );
+                                        }
+                                        CoalescerError::GbrError(msg) if msg.contains("429") => {
+                                            tracing::warn!("GBR rate limited — backing off");
+                                        }
+                                        CoalescerError::InFlightDropped => {
+                                            tracing::debug!(
+                                                train_id = %train_id,
+                                                "In-flight GBR request dropped"
+                                            );
+                                        }
+                                        _ => {
+                                            tracing::warn!(error = %e, "GBR poll error");
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        }))
+    };
+
     // --- axum HTTP server ---
     let app_state = AppState {
         registry: Arc::clone(&registry),
@@ -305,7 +492,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Shutdown signal received — initiating graceful shutdown");
     token.cancel();
 
-    let _ = tokio::join!(pm_task, pipeline_task, eviction_task, flush_task, api_task);
+    let _ = tokio::join!(pm_task, pipeline_task, eviction_task, flush_task, prune_task, api_task);
+    if let Some(pt) = poll_task {
+        let _ = pt.await;
+    }
 
     // Final flush before exit.
     if let Err(e) = db::history::flush_history(&db_pool, &history_store).await {

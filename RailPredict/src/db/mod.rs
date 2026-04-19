@@ -8,6 +8,7 @@
 //!   - `history`:     load/flush for the Tier B delay_history table
 
 pub mod history;
+pub mod maintenance;
 pub mod static_data;
 
 use sqlx::postgres::PgPoolOptions;
