@@ -11,11 +11,7 @@ pub mod coalescer;
 pub mod gbr_client;
 pub mod rate_limiter;
 
-#[allow(unused_imports)]
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerState};
-#[allow(unused_imports)]
 pub use coalescer::Coalescer;
-#[allow(unused_imports)]
 pub use gbr_client::{GbrClient, GbrClientError, LiveGbrClient};
-#[allow(unused_imports)]
 pub use rate_limiter::RateLimiter;

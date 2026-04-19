@@ -102,7 +102,6 @@ impl CircuitBreaker {
     }
 
     /// Call on a successful response. Resets failure count; closes the breaker if HalfOpen.
-    #[allow(dead_code)]
     pub async fn record_success(&self) {
         let mut inner = self.inner.lock().await;
         inner.consecutive_failures = 0;

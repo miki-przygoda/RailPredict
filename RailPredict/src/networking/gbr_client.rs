@@ -21,6 +21,7 @@
 //! update here; nothing else in the codebase should parse raw GBR JSON.
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use thiserror::Error;
 
 use crate::types::{TrainId, TrainStatus};
@@ -30,12 +31,9 @@ use crate::types::{TrainId, TrainStatus};
 // ---------------------------------------------------------------------------
 
 /// Base URL for the GBR Retail API. Override via `GBR_API_BASE_URL` env var in tests.
-#[allow(dead_code)]
 pub const GBR_API_BASE_URL: &str = "https://api.rtt.io/api";
 
-#[allow(dead_code)]
 pub const ENDPOINT_TRAIN_STATUS: &str = "/v1/train/{rid}/status";
-#[allow(dead_code)]
 pub const ENDPOINT_DEPARTURES: &str = "/v1/station/{crs}/departures";
 
 // ---------------------------------------------------------------------------
@@ -43,7 +41,6 @@ pub const ENDPOINT_DEPARTURES: &str = "/v1/station/{crs}/departures";
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum GbrClientError {
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
@@ -62,6 +59,43 @@ pub enum GbrClientError {
 }
 
 // ---------------------------------------------------------------------------
+// RTT API response shapes
+// ---------------------------------------------------------------------------
+
+/// Top-level response from the RTT `/v1/train/{uid}/YYYY/MM/DD` endpoint.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RttServiceResponse {
+    pub service_uid: String,
+    pub run_date: String, // "YYYY-MM-DD"
+    pub train_identity: Option<String>,
+    pub is_passenger_train: Option<bool>,
+    pub locations: Vec<RttLocation>,
+}
+
+/// A single calling point within an RTT service response.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RttLocation {
+    pub crs: Option<String>,
+    pub description: Option<String>,
+    pub gbtt_booked_departure: Option<String>,  // "HHMM"
+    pub realtime_departure: Option<String>,     // "HHMM"
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub cancelled: bool,
+    pub service_location: Option<String>, // "CALL", "PASS", "ORIGIN", "DESTINATION"
+}
+
+/// Parse an RTT "HHMM" time string into a `DateTime<Utc>` on a given date.
+fn parse_rtt_time(s: &str, date: chrono::NaiveDate) -> Option<chrono::DateTime<chrono::Utc>> {
+    let h = s.get(0..2)?.parse::<u32>().ok()?;
+    let m = s.get(2..4)?.parse::<u32>().ok()?;
+    chrono::NaiveTime::from_hms_opt(h, m, 0)
+        .map(|t| chrono::NaiveDateTime::new(date, t).and_utc())
+}
+
+// ---------------------------------------------------------------------------
 // Client trait
 // ---------------------------------------------------------------------------
 
@@ -77,7 +111,6 @@ pub trait GbrClient: Send + Sync {
 // Live implementation
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 /// Production GBR client. Reads credentials from environment variables:
 ///   - `GBR_API_KEY` — x-apikey header value for the Retail API
 pub struct LiveGbrClient {
@@ -164,10 +197,54 @@ impl GbrClient for LiveGbrClient {
 
         match status_code {
             200 => {
-                // TODO: parse GBR JSON into TrainStatus once Darwin credentials arrive
-                // and response schema is confirmed. For now return NotFound to signal
-                // the caller should fall back to cache.
-                Err(GbrClientError::NotFound(rid.clone()))
+                let body: RttServiceResponse = resp
+                    .json()
+                    .await
+                    .map_err(GbrClientError::Http)?;
+
+                let run_date =
+                    chrono::NaiveDate::parse_from_str(&body.run_date, "%Y-%m-%d")
+                        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+
+                // Use the first location as the origin for departure-time purposes.
+                let origin = body
+                    .locations
+                    .first()
+                    .ok_or_else(|| GbrClientError::NotFound(rid.clone()))?;
+
+                let scheduled_dt = origin
+                    .gbtt_booked_departure
+                    .as_deref()
+                    .and_then(|s| parse_rtt_time(s, run_date))
+                    .unwrap_or_else(chrono::Utc::now);
+
+                let estimated_dt = origin
+                    .realtime_departure
+                    .as_deref()
+                    .and_then(|s| parse_rtt_time(s, run_date));
+
+                let mut status =
+                    TrainStatus::new(rid.clone(), scheduled_dt, scheduled_dt);
+
+                status.actual_platform =
+                    crate::types::train_status::Stamped::new(origin.platform.clone());
+
+                let any_cancelled = body.locations.iter().any(|l| l.cancelled);
+                status.is_cancelled =
+                    crate::types::train_status::Stamped::new(Some(any_cancelled));
+
+                if let Some(est) = estimated_dt {
+                    status.actual_estimated_departure =
+                        crate::types::train_status::Stamped::new(Some(est));
+                    let delay = (est - scheduled_dt).num_minutes() as i32;
+                    status.reported_delay_mins =
+                        crate::types::train_status::Stamped::new(Some(delay));
+                }
+
+                status.last_update_source =
+                    crate::types::train_status::UpdateSource::RestPoll;
+
+                Ok(status)
             }
             429 => Err(GbrClientError::RateLimited),
             503 => Err(GbrClientError::ServiceUnavailable),

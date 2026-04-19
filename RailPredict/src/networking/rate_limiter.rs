@@ -18,10 +18,8 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
 
 /// Conservative request rate based on typical rail data API policies.
-#[allow(dead_code)]
 pub const MAX_REQUESTS_PER_SECOND: u32 = 10;
 /// Burst headroom for startup warm-up or short request spikes.
-#[allow(dead_code)]
 pub const BURST_CAPACITY: u32 = 20;
 
 pub struct RateLimiter {
@@ -48,7 +46,6 @@ impl RateLimiter {
     }
 
     /// Default instance using the published constants.
-    #[allow(dead_code)]
     pub fn default_gbr() -> Self {
         Self::new(MAX_REQUESTS_PER_SECOND, BURST_CAPACITY)
     }
