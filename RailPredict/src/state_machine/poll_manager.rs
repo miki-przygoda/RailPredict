@@ -60,7 +60,6 @@ impl PartialOrd for PollEntry {
 
 /// Emitted on the notification channel whenever a train changes state.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct StateChangeEvent {
     pub train_id: TrainId,
     pub old_state: TrainState,

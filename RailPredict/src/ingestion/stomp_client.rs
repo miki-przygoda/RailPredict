@@ -46,7 +46,6 @@ use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls;
 
-#[allow(dead_code)]
 const DEFAULT_DARWIN_PORT: u16 = 61613;
 const DEFAULT_DESTINATION: &str = "/topic/darwin.pushport-v16";
 
@@ -60,7 +59,6 @@ type BoxReader = Box<dyn AsyncRead + Unpin + Send>;
 
 /// A single STOMP frame received from the broker.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct StompFrame {
     pub command: String,
     pub headers: Vec<(String, String)>,
@@ -69,7 +67,6 @@ pub struct StompFrame {
 }
 
 impl StompFrame {
-    #[allow(dead_code)]
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -79,7 +76,6 @@ impl StompFrame {
 }
 
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum StompError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -97,7 +93,6 @@ pub enum StompError {
 
 /// Configuration for a Darwin STOMP connection.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct StompConfig {
     pub host: String,
     pub port: u16,
@@ -155,7 +150,6 @@ pub trait StompClient: Send + Sync {
 // Live implementation
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub struct LiveStompClient {
     config: StompConfig,
 }
@@ -358,7 +352,7 @@ pub struct MockStompClient {
 }
 
 impl MockStompClient {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new(frames: Vec<Result<StompFrame, StompError>>) -> Self {
         Self { frames }
     }
