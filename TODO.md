@@ -41,9 +41,11 @@ The CI sqlx-check step will fail until this is done. See `TODOs/CI_DevEx.md` for
 
 Epics are ordered by suggested execution sequence. Completed epics are destroyed and recorded in `CHANGELOG.md`.
 
-| Epic | File | Items | Order |
+| Agent | File | Items | Notes |
 |---|---|---|---|
-| Product Features | `TODOs/ProductFeatures.md` | 5.1, 5.3, 5.4, 5.5, 8.2 | Next |
+| Agent A | `TODOs/AgentA.md` | 5.3, 8.2 | `detail.rs` + migration; smallest, no overlap |
+| Agent B | `TODOs/AgentB.md` | 5.1 | Journey search; `handlers.rs`, `api/mod.rs`, `search.rs` |
+| Agent C | `TODOs/AgentC.md` | 5.4, 5.5 | Weather + push notifications; `weather/`, `main.rs`, `config.rs` |
 
 ### Completed
 

@@ -16,7 +16,9 @@ use the epic files instead.
 | `TODOs/CI_DevEx.md`            | 1.3, 4.1, 4.2, 4.3, 4.4             | **COMPLETE — v1.3.0** (kept for reference) |
 | `TODOs/TierADataLayer.md`      | 2.3 (remaining), 2.4, 2.5, 6.1, 6.2 | Pending — next epic                        |
 | `TODOs/TierCWiring.md`         | 2.1, 2.2, 2.6, 8.1, 4.5             | Pending                                    |
-| `TODOs/ProductFeatures.md`     | 5.1, 5.3, 5.4, 5.5, 8.2             | Pending                                    |
+| `TODOs/AgentA.md`              | 5.3, 8.2                             | Pending — fare display + DB partition       |
+| `TODOs/AgentB.md`              | 5.1                                  | Pending — journey search                    |
+| `TODOs/AgentC.md`              | 5.4, 5.5                             | Pending — weather + push notifications      |
 | Docker infra + Darwin wiring   | Dockerfile, DNS, STOMP, gzip        | **COMPLETE — v1.4.1–v1.4.3**              |
 
 ### Already completed (do not re-implement)
