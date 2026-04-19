@@ -175,8 +175,10 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/trains/:rid/view", get(detail::detail_page))
         // UI fragment routes — consumed by htmx partial swaps
         .route("/ui/stations/departures", get(search::departures_fragment))
+        .route("/ui/stations/search", get(search::station_suggestions_fragment))
         .route("/ui/trains/:rid/live", get(detail::ui_live_handler))
         // JSON API routes
+        .route("/stations/search", get(handlers::station_search_handler))
         .route("/stations/:crs/departures", get(handlers::departures_handler))
         .route("/trains/:rid", get(handlers::train_handler))
         .route("/trains/:rid/live", get(sse::live_handler))
