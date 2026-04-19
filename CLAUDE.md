@@ -55,12 +55,10 @@ RailPredict/                        ← repo root
 ├── .github/workflows/ci.yml        ← GitHub Actions CI (deny → clippy → test → release build)
 ├── TODOs/
 │   ├── Improvements.md             ← full item index + cross-reference; source of all epics
-│   ├── TechnicalDebt.md            ← DESTROYED v1.4.0 — epic complete
-│   ├── TierADataLayer.md           ← DESTROYED v1.5.0 — epic complete
-│   ├── TierCWiring.md              ← DESTROYED v1.6.0 — epic complete
-│   ├── ProductFeatures.md          ← user-facing features (journey planner, alerts, etc.)
-│   ├── ProductionHardening.md      ← COMPLETE (v1.2.0) — kept for reference
-│   └── CI_DevEx.md                 ← COMPLETE (v1.3.0); item 1.3 (.sqlx/) still needs user action
+│   ├── Improvements.md             ← full item index + cross-reference; source of all epics
+│   ├── AgentA.md                   ← pending: 5.3 fare display + 8.2 delay_history partitioning
+│   ├── AgentB.md                   ← pending: 5.1 journey search
+│   └── AgentC.md                   ← pending: 5.4 weather volatility + 5.5 push notifications
 └── RailPredict/                    ← Rust crate root
     ├── Cargo.toml                  ← crate manifest; version must match project version
     ├── Cargo.lock                  ← committed; this is a binary application not a library
