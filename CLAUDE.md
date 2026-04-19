@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.4.3" -- 18/04/2026**
+**version = "1.6.0" -- 18/04/2026**
 
 ---
 
@@ -55,9 +55,9 @@ RailPredict/                        ← repo root
 ├── .github/workflows/ci.yml        ← GitHub Actions CI (deny → clippy → test → release build)
 ├── TODOs/
 │   ├── Improvements.md             ← full item index + cross-reference; source of all epics
-│   ├── TechnicalDebt.md            ← DESTROYED v1.4.0 — epic complete (4.5 lives in TierCWiring.md)
-│   ├── TierADataLayer.md           ← GTFS/CIF timetable sync, fare refresh
-│   ├── TierCWiring.md              ← live GBR API calls, seat availability, ticket lock
+│   ├── TechnicalDebt.md            ← DESTROYED v1.4.0 — epic complete
+│   ├── TierADataLayer.md           ← DESTROYED v1.5.0 — epic complete
+│   ├── TierCWiring.md              ← DESTROYED v1.6.0 — epic complete
 │   ├── ProductFeatures.md          ← user-facing features (journey planner, alerts, etc.)
 │   ├── ProductionHardening.md      ← COMPLETE (v1.2.0) — kept for reference
 │   └── CI_DevEx.md                 ← COMPLETE (v1.3.0); item 1.3 (.sqlx/) still needs user action

@@ -2,7 +2,56 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.4.3" -- 18/04/2026**
+**version = "1.6.0" -- 18/04/2026**
+
+---
+
+## v1.6.0 — 18/04/2026 — Tier C Wiring epic complete
+
+All five items from `TODOs/TierCWiring.md` complete. The networking layer is now fully wired into the runtime — the first time live GBR data flows from the polling path into the registry.
+
+**2.1 — Poll consumer task**
+- `src/main.rs` — spawns a single `tokio` poll consumer task that subscribes to the state broadcast channel, filters Active/Critical trains, calls GBR via `Coalescer` + `RateLimiter` + `CircuitBreaker`, and writes results back to the registry. Conditional on `GBR_API_KEY` being present in the environment.
+
+**2.2 — GBR RTT JSON parsing**
+- `src/networking/gbr_client.rs` — `RttServiceResponse` and `RttLocation` structs with `#[serde(rename_all = "camelCase")]`; `parse_rtt_time` converts `"HHMM"` string to `DateTime<Utc>`. Replaces stub `Err(NotFound)` with real deserialization; maps RTT fields to `TrainStatus`.
+
+**2.6 — State machine transitions wired**
+- Poll consumer re-evaluates `TrainState::from_departure` after each GBR write and emits a real `StateChangeEvent` if the state changed, re-queuing the train at the new interval.
+
+**8.1 — Last-writer-wins race fix**
+- Poll consumer compares the RTT response timestamp against `Stamped::last_updated` before applying any field update; GBR poll writes are rejected if the stored field is already newer (Darwin push is authoritative when more recent).
+
+**4.5 — Remove all `#[allow(dead_code)]` suppressors**
+- Removed from `networking/circuit_breaker.rs`, `networking/rate_limiter.rs`, `networking/gbr_client.rs`, `networking/mod.rs`, `ingestion/stomp_client.rs`, `state_machine/poll_manager.rs`. `MockStompClient::new()` moved to `#[cfg(test)]`.
+
+172 tests, all passing.
+
+---
+
+## v1.5.0 — 18/04/2026 — Tier A Data Layer epic complete
+
+All five items from `TODOs/TierADataLayer.md` complete. The static data pipeline is now end-to-end: GTFS is fully ingested, the departure board draws from the DB, and trains are pre-warmed into the registry at startup.
+
+**2.3r — Departure board DB/registry merge**
+- `src/api/handlers.rs` — `build_departure_board()` fetches today's timetable from the DB, overlays live registry data matched by scheduled departure time (±2 min), and batch-resolves destination names. Falls back to registry-only if no timetable is populated yet.
+
+**2.4 — Station autocomplete**
+- `src/api/handlers.rs` — `station_search_handler` uses `plainto_tsquery` full-text search on `known_stations`; returns empty list if query is under 2 characters.
+- `src/frontend/search.rs` — htmx autocomplete pattern: visible text input with debounced `hx-get`; hidden CRS input populated on selection; `station_suggestions_fragment` renders `<ul>` dropdown.
+- `src/api/mod.rs` — routes added for `/stations/search` and `/ui/stations/search`.
+
+**2.5 — GTFS full ingest (trips + stop_times)**
+- `src/ingestion/gtfs.rs` — `parse_trips`, `parse_calendar`, `parse_stop_times` pure functions added. Services keyed by UID with day-of-week bitmask from `calendar.txt`. Timetable calls upserted in 200-row chunks with a 7-day rolling window and `ON CONFLICT DO NOTHING`. Handles H≥24 overnight times; `stop_id_to_crs` extracts the last 3 uppercase chars from GTFS stop IDs.
+
+**6.1 — Maintenance cleanup job**
+- `src/db/maintenance.rs` (new) — `prune_old_rows` deletes `timetable_calls` older than 7 days and `delay_history` older than 91 days. `load_todays_calls` returns today's upcoming services for warm-up.
+- `src/main.rs` — spawns a 24h prune task.
+
+**6.2 — Proactive train warm-up at startup**
+- `src/main.rs` — after `load_history`, calls `db::maintenance::load_todays_calls()`, constructs `(TrainId, TrainStatus)` pairs, and calls `registry.warm()` before spawning any tasks. Today's trains are in the registry before the first user request.
+
+172 tests, all passing.
 
 ---
 

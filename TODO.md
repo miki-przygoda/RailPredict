@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.4.3" -- 18/04/2026**
+**version = "1.6.0" -- 18/04/2026**
 
 ---
 
@@ -43,10 +43,7 @@ Epics are ordered by suggested execution sequence. Completed epics are destroyed
 
 | Epic | File | Items | Order |
 |---|---|---|---|
-| Tier A Data Layer | `TODOs/TierADataLayer.md` | 2.3r, 2.4, 2.5, 6.1, 6.2 | Next |
-| Tier C Wiring | `TODOs/TierCWiring.md` | 2.1, 2.2, 2.6, 8.1 | 2nd (largest) |
-| Product Features | `TODOs/ProductFeatures.md` | 5.1, 5.3, 5.4, 5.5, 8.2 | 3rd |
-| Dead Code Cleanup | (inline) | 4.5 — remove `#[allow(dead_code)]` | After TierCWiring |
+| Product Features | `TODOs/ProductFeatures.md` | 5.1, 5.3, 5.4, 5.5, 8.2 | Next |
 
 ### Completed
 
@@ -55,6 +52,8 @@ Epics are ordered by suggested execution sequence. Completed epics are destroyed
 | Production Hardening | v1.2.0 | TLS, reconnect, rate limit, CORS, CRS validation, health probe, SECURITY.md |
 | CI & Developer Experience | v1.3.0 | GitHub Actions, cargo-deny, DB integration tests, README fix |
 | Technical Debt | v1.4.0 | 9.1–9.5, 7.1, 7.3 done; 4.5 deferred pending TierCWiring |
+| Tier A Data Layer | v1.5.0 | 2.3r, 2.4, 2.5, 6.1, 6.2 — full static pipeline; DB merge, autocomplete, GTFS, warm-up |
+| Tier C Wiring | v1.6.0 | 2.1, 2.2, 2.6, 8.1, 4.5 — live GBR calls end-to-end; poll consumer, JSON parse, state transitions |
 
 ---
 
