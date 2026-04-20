@@ -12,6 +12,8 @@
 //!  ├── db_flush_task           — 60s tick; flushes delay history to DB
 //!  ├── prune_task              — 24h tick; deletes old timetable/history rows
 //!  ├── poll_consumer_task      — optional; wires GBR REST polling (requires GBR_API_KEY)
+//!  ├── weather_task            — optional; 10min Open-Meteo wind poll → VolatilityStore
+//!  ├── notification_task       — optional; ntfy push on Critical promotions
 //!  └── axum server             — HTTP API + SSE
 //! ```
 //!
@@ -119,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
     let prediction_engine = PredictionEngine::with_store(Arc::clone(&history_store));
 
     let registry = Arc::new(TrainRegistry::new());
+    let volatility_store: railpredict::weather::VolatilityStore = Arc::new(dashmap::DashMap::new());
 
     // --- Proactive warm-up: pre-register today's future departures (Tier A) ---
     // Ensures trains are in the registry before Darwin mentions them, so state
@@ -327,6 +330,21 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // --- Weather polling task (optional — only when WEATHER_ANCHORS is set) ---
+    if !config.weather_anchors.is_empty() {
+        let store = Arc::clone(&volatility_store);
+        let anchors: Vec<railpredict::weather::WeatherAnchor> = config.weather_anchors.iter()
+            .map(|(id, lat, lon)| railpredict::weather::WeatherAnchor {
+                route_id: id.clone(),
+                lat: *lat,
+                lon: *lon,
+            })
+            .collect();
+        let http_client = reqwest::Client::new();
+        tokio::spawn(railpredict::weather::run_weather_task(store, anchors, http_client));
+        tracing::info!(anchors = config.weather_anchors.len(), "Weather polling task started");
+    }
+
     // --- Poll consumer task (Tier C — only when GBR_API_KEY is set) ---
     let gbr_key = std::env::var("GBR_API_KEY").unwrap_or_default();
     let poll_task: Option<tokio::task::JoinHandle<()>> = if gbr_key.is_empty() {
@@ -389,6 +407,7 @@ async fn main() -> anyhow::Result<()> {
                         let coalescer = Arc::clone(&coalescer);
                         let cb_clone = Arc::clone(&cb);
                         let reg_clone = Arc::clone(&poll_registry);
+                        let volatility_store_poll = Arc::clone(&volatility_store);
 
                         tokio::spawn(async move {
                             match coalescer.get(train_id.clone()).await {
@@ -425,6 +444,23 @@ async fn main() -> anyhow::Result<()> {
                                         train_id = %train_id,
                                         "GBR poll applied to registry"
                                     );
+
+                                    // Weather-driven volatility: check if any anchor covers this train's origin
+                                    if let Some(origin) = status.origin_crs.as_deref()
+                                        && let Some(wind_entry) = volatility_store_poll.get(origin) {
+                                            let wind_mph = *wind_entry;
+                                            if wind_mph > 50.0 {
+                                                reg_clone.update(&train_id, |existing| {
+                                                    existing.volatility.wind_speed_mph = Some(wind_mph);
+                                                    existing.volatility.incident_flagged = true;
+                                                }).await;
+                                                tracing::info!(
+                                                    train_id = %train_id,
+                                                    wind_mph,
+                                                    "Wind-driven volatility promotion"
+                                                );
+                                            }
+                                    }
                                 }
                                 Err(e) => {
                                     use railpredict::networking::coalescer::CoalescerError;
@@ -456,6 +492,43 @@ async fn main() -> anyhow::Result<()> {
             }
         }))
     };
+
+    // --- Push notification task (optional — only when enabled + NTFY_URL set) ---
+    if config.notifications_enabled
+        && let Some(ntfy_url) = config.ntfy_url.clone() {
+            let mut notif_rx = sc_tx.subscribe();
+            let http_client = reqwest::Client::new();
+            tokio::spawn(async move {
+                loop {
+                    match notif_rx.recv().await {
+                        Ok(event)
+                            if event.new_state
+                                == railpredict::state_machine::train_state::TrainState::Critical
+                                && event.old_state
+                                    != railpredict::state_machine::train_state::TrainState::Critical =>
+                        {
+                            let title = format!("Train {} now Critical", event.train_id);
+                            let body = "State promotion detected — check live updates".to_string();
+                            let result = http_client
+                                .post(&ntfy_url)
+                                .header("Title", &title)
+                                .body(body)
+                                .send()
+                                .await;
+                            if let Err(e) = result {
+                                tracing::warn!(error = %e, "ntfy push notification failed");
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(skipped = n, "notification receiver lagged");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+            tracing::info!("Push notification task started");
+    }
 
     // --- axum HTTP server ---
     let app_state = AppState {

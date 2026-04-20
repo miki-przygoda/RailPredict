@@ -279,3 +279,20 @@ nav a + a { margin-left: 1.5rem; font-weight: 500; font-size: 0.95rem; }
 .api-table th, .api-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); text-align: left; }
 .api-table th { color: var(--text-muted); font-weight: 600; }
 .api-table code { background: #2a2a2a; padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.85em; }
+
+/* Fare chip on train detail page */
+.fare-chip {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #a5d6a7;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+/* Journey search tabs */
+.search-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.tab-btn { padding: 0.4rem 1rem; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: var(--surface); color: var(--text); }
+.tab-btn.active { background: var(--green); color: #000; border-color: var(--green); }
+.hidden { display: none !important; }
