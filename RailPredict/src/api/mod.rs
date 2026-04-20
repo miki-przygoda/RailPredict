@@ -13,6 +13,8 @@
 //! | GET    | /trains/{rid}/view                 | B/C  | HTML detail page            | maud + htmx SSE                   |
 //! | GET    | /ui/stations/departures?crs=XXX    | A    | HTML fragment               | htmx swap target                  |
 //! | GET    | /ui/trains/{rid}/live              | C    | SSE HTML fragments          | htmx `sse-swap="update"`          |
+//! | GET    | /journeys?from=XXX&to=YYY          | A    | `Vec<DepartureBoardEntry>`  | Direct services A→B in order      |
+//! | GET    | /ui/journeys?from=XXX&to=YYY       | A    | HTML fragment               | htmx swap target                  |
 //! | GET    | /static/{path}                     | —    | Embedded static asset       | rust-embed, no filesystem dep     |
 //!
 //! ## Middleware
@@ -177,7 +179,10 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/ui/stations/departures", get(search::departures_fragment))
         .route("/ui/stations/search", get(search::station_suggestions_fragment))
         .route("/ui/trains/:rid/live", get(detail::ui_live_handler))
+        // UI fragment routes — journey search
+        .route("/ui/journeys", get(search::journeys_fragment))
         // JSON API routes
+        .route("/journeys", get(handlers::journey_handler))
         .route("/stations/search", get(handlers::station_search_handler))
         .route("/stations/:crs/departures", get(handlers::departures_handler))
         .route("/trains/:rid", get(handlers::train_handler))
