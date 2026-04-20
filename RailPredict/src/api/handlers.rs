@@ -269,6 +269,87 @@ pub async fn train_handler(
 #[derive(Debug, Deserialize)]
 pub struct StationSearchQuery {
     pub q: String,
+    pub crs_input_id: Option<String>,
+    pub q_input_id: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Item 5.1 — Journey search (A → B)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct JourneyQuery {
+    pub from: String,
+    pub to: String,
+    pub date: Option<String>, // YYYY-MM-DD; defaults to today
+}
+
+/// `GET /journeys?from=XXX&to=YYY[&date=YYYY-MM-DD]`
+///
+/// Returns all direct services that call both `from` and `to` in order
+/// (origin `call_order` < destination `call_order`) on the given operating date.
+pub async fn journey_handler(
+    Query(params): Query<JourneyQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<DepartureBoardEntry>>, ApiError> {
+    validate_crs(&params.from)?;
+    validate_crs(&params.to)?;
+
+    if params.from.eq_ignore_ascii_case(&params.to) {
+        return Err(ApiError::bad_request("Origin and destination must differ"));
+    }
+
+    let from = params.from.to_uppercase();
+    let to = params.to.to_uppercase();
+
+    let date = params
+        .date
+        .as_deref()
+        .and_then(|s| s.parse::<chrono::NaiveDate>().ok())
+        .unwrap_or_else(|| chrono::Utc::now().date_naive());
+
+    // Join timetable_calls to itself: find services calling both `from` and `to`
+    // in order. The table has no trip_id; join on (uid, operating_date).
+    // No scheduled_arrival column exists; use scheduled_departure of the `to` call.
+    let rows = sqlx::query_as::<_, (String, chrono::NaiveTime, Option<String>)>(
+        "SELECT tc_from.uid, \
+                tc_from.scheduled_departure, \
+                tc_from.platform \
+         FROM timetable_calls tc_from \
+         JOIN timetable_calls tc_to \
+             ON tc_to.uid            = tc_from.uid \
+            AND tc_to.operating_date = tc_from.operating_date \
+            AND tc_to.location_crs   = $2 \
+            AND tc_to.call_order     > tc_from.call_order \
+         WHERE tc_from.location_crs  = $1 \
+           AND tc_from.operating_date = $3 \
+         ORDER BY tc_from.scheduled_departure",
+    )
+    .bind(&from)
+    .bind(&to)
+    .bind(date)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("DB error: {e}")))?;
+
+    let entries: Vec<DepartureBoardEntry> = rows
+        .into_iter()
+        .map(|(uid, dep_time, platform)| {
+            let scheduled_dt = chrono::NaiveDateTime::new(date, dep_time).and_utc();
+            DepartureBoardEntry {
+                rid: uid.trim().to_string(),
+                scheduled_departure: scheduled_dt.to_rfc3339(),
+                estimated_departure: None,
+                delay_mins: None,
+                platform,
+                is_cancelled: None,
+                last_updated_secs_ago: None,
+                destination_name: Some(to.clone()),
+            }
+        })
+        .collect();
+
+    Ok(Json(entries))
 }
 
 #[derive(Debug, Serialize)]
