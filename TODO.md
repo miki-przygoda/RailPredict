@@ -43,14 +43,14 @@ No remaining epics. All items from `TODOs/Improvements.md` are complete.
 
 ### Completed
 
-| Epic | Version | Notes |
-|---|---|---|
-| Production Hardening | v1.2.0 | TLS, reconnect, rate limit, CORS, CRS validation, health probe, SECURITY.md |
-| CI & Developer Experience | v1.3.0 | GitHub Actions, cargo-deny, DB integration tests, README fix |
-| Technical Debt | v1.4.0 | 9.1–9.5, 7.1, 7.3 done; 4.5 deferred pending TierCWiring |
-| Tier A Data Layer | v1.5.0 | 2.3r, 2.4, 2.5, 6.1, 6.2 — full static pipeline; DB merge, autocomplete, GTFS, warm-up |
-| Tier C Wiring | v1.6.0 | 2.1, 2.2, 2.6, 8.1, 4.5 — live GBR calls end-to-end; poll consumer, JSON parse, state transitions |
-| Product Features | v1.7.0 | 5.1, 5.3, 5.4, 5.5, 8.2 — journey search, fare chip, weather volatility, push notifications, DB partitioning |
+| Epic                      | Version | Notes                                                                                                        |
+|---------------------------|---------|--------------------------------------------------------------------------------------------------------------|
+| Production Hardening      | v1.2.0  | TLS, reconnect, rate limit, CORS, CRS validation, health probe, SECURITY.md                                  |
+| CI & Developer Experience | v1.3.0  | GitHub Actions, cargo-deny, DB integration tests, README fix                                                 |
+| Technical Debt            | v1.4.0  | 9.1–9.5, 7.1, 7.3 done; 4.5 deferred pending TierCWiring                                                     |
+| Tier A Data Layer         | v1.5.0  | 2.3r, 2.4, 2.5, 6.1, 6.2 — full static pipeline; DB merge, autocomplete, GTFS, warm-up                       |
+| Tier C Wiring             | v1.6.0  | 2.1, 2.2, 2.6, 8.1, 4.5 — live GBR calls end-to-end; poll consumer, JSON parse, state transitions            |
+| Product Features          | v1.7.0  | 5.1, 5.3, 5.4, 5.5, 8.2 — journey search, fare chip, weather volatility, push notifications, DB partitioning |
 
 ---
 
