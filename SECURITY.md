@@ -7,11 +7,11 @@ recommended rotation cadence.
 
 ## Secrets inventory
 
-| Secret             | Env var            | Where it is used                                           |
-|--------------------|--------------------|------------------------------------------------------------|
-| GBR API key        | `GBR_API_KEY`      | `x-apikey` header on all outbound GBR Retail API calls     |
-| Darwin password    | `DARWIN_PASSWORD`  | STOMP CONNECT frame to the Darwin Push Port broker         |
-| DB password        | `DB_PASSWORD`      | Part of `DATABASE_URL`; authenticates the PostgreSQL user   |
+| Secret          | Env var           | Where it is used                                          |
+|-----------------|-------------------|-----------------------------------------------------------|
+| GBR API key     | `GBR_API_KEY`     | `x-apikey` header on all outbound GBR Retail API calls    |
+| Darwin password | `DARWIN_PASSWORD` | STOMP CONNECT frame to the Darwin Push Port broker        |
+| DB password     | `DB_PASSWORD`     | Part of `DATABASE_URL`; authenticates the PostgreSQL user |
 
 ---
 
@@ -57,11 +57,11 @@ recommended rotation cadence.
 
 ## Recommended rotation cadence
 
-| Secret          | Cadence                                                       |
-|-----------------|---------------------------------------------------------------|
-| `GBR_API_KEY`   | On personnel change, or immediately on suspected exposure     |
-| `DARWIN_PASSWORD` | On personnel change, or immediately on suspected exposure   |
-| `DB_PASSWORD`   | Quarterly minimum; immediately on personnel change or breach  |
+| Secret            | Cadence                                                      |
+|-------------------|--------------------------------------------------------------|
+| `GBR_API_KEY`     | On personnel change, or immediately on suspected exposure    |
+| `DARWIN_PASSWORD` | On personnel change, or immediately on suspected exposure    |
+| `DB_PASSWORD`     | Quarterly minimum; immediately on personnel change or breach |
 
 ---
 
