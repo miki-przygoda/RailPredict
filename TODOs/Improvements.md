@@ -17,9 +17,9 @@ use the epic files instead.
 | TierADataLayer      | 2.3r, 2.4, 2.5, 6.1, 6.2          | **COMPLETE — v1.5.0** (deleted)        |
 | TierCWiring         | 2.1, 2.2, 2.6, 8.1, 4.5           | **COMPLETE — v1.6.0** (deleted)        |
 | Docker + Darwin     | Dockerfile, DNS, STOMP, gzip      | **COMPLETE — v1.4.1–v1.4.3**           |
-| `TODOs/AgentA.md`   | 5.3, 8.2                          | Pending — fare display + DB partition  |
-| `TODOs/AgentB.md`   | 5.1                               | Pending — journey search               |
-| `TODOs/AgentC.md`   | 5.4, 5.5                          | Pending — weather + push notifications |
+| AgentA              | 5.3, 8.2                          | **COMPLETE — v1.7.0** (deleted)        |
+| AgentB              | 5.1                               | **COMPLETE — v1.7.0** (deleted)        |
+| AgentC              | 5.4, 5.5                          | **COMPLETE — v1.7.0** (deleted)        |
 
 ### Already completed (do not re-implement)
 - **1.1** (STOMP TLS) — completed in ProductionHardening v1.2.0.

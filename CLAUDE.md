@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.6.0" -- 18/04/2026**
+**version = "1.7.0" -- 20/04/2026**
 
 ---
 
@@ -54,11 +54,7 @@ RailPredict/                        ← repo root
 ├── migrations/                     ← sqlx SQL migrations (run at startup via sqlx::migrate!)
 ├── .github/workflows/ci.yml        ← GitHub Actions CI (deny → clippy → test → release build)
 ├── TODOs/
-│   ├── Improvements.md             ← full item index + cross-reference; source of all epics
-│   ├── Improvements.md             ← full item index + cross-reference; source of all epics
-│   ├── AgentA.md                   ← pending: 5.3 fare display + 8.2 delay_history partitioning
-│   ├── AgentB.md                   ← pending: 5.1 journey search
-│   └── AgentC.md                   ← pending: 5.4 weather volatility + 5.5 push notifications
+│   └── Improvements.md             ← full item index + cross-reference; all epics complete at v1.7.0
 └── RailPredict/                    ← Rust crate root
     ├── Cargo.toml                  ← crate manifest; version must match project version
     ├── Cargo.lock                  ← committed; this is a binary application not a library
@@ -102,9 +98,11 @@ RailPredict/                        ← repo root
         │   ├── mod.rs              ← connect(); type Db = PgPool; runs migrations at startup
         │   ├── static_data.rs      ← get_station, departures_from, cheapest_fare
         │   └── history.rs          ← load_history (window fn); flush_history (500-row chunks, idempotent)
+        ├── weather/
+        │   └── mod.rs              ← VolatilityStore; WeatherAnchor; fetch_wind_mph (Open-Meteo); run_weather_task (10min)
         ├── api/
         │   ├── mod.rs              ← axum Router; AppState; CorsLayer; GovernorLayer; infra_router
-        │   ├── handlers.rs         ← departures_handler, train_handler, health_handler; validate_crs
+        │   ├── handlers.rs         ← departures_handler, journey_handler, train_handler, health_handler; validate_crs
         │   ├── sse.rs              ← /trains/:rid/live SSE stream; 15s KeepAlive
         │   └── types.rs            ← ApiError; DTOs: TrainSummary, DepartureBoardEntry, HealthResponse
         └── frontend/
