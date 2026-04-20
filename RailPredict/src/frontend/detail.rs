@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, State},
     response::sse::{Event, KeepAlive, Sse},
 };
-use chrono::Utc;
+use chrono::{Utc, Local};
 use maud::{Markup, html};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -22,6 +22,10 @@ use crate::{
 use super::components::{delay_badge, platform_chip};
 use super::layout::base;
 
+fn pence_to_pounds(pence: i32) -> String {
+    format!("£{:.2}", pence as f64 / 100.0)
+}
+
 pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>) -> Markup {
     let snapshot = match TrainId::rid(&rid).ok().and_then(|id| state.registry.get(&id)) {
         Some(arc) => {
@@ -32,15 +36,31 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                 s.best_delay_mins(),
                 s.best_platform().map(str::to_string),
                 s.is_cancelled.value.unwrap_or(false),
+                s.destination_crs.clone(),
             ))
         }
         None => None,
     };
 
+    let fare_pence: Option<i32> = if let Some((ref origin, _, _, _, _, ref dest)) = snapshot {
+        if let (Some(o), Some(d)) = (origin, dest) {
+            let today = Local::now().date_naive();
+            crate::db::static_data::cheapest_fare(&state.db, o, d, today)
+                .await
+                .ok()
+                .flatten()
+                .map(|f| f.price_pence)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     base(
         &format!("Train {rid}"),
         html! {
-            @if let Some((origin, scheduled, delay, platform, cancelled)) = snapshot {
+            @if let Some((origin, scheduled, delay, platform, cancelled, _dest)) = snapshot {
                 div .train-header {
                     h1 { "Train " (rid) }
                     @if let Some(o) = &origin {
@@ -52,6 +72,9 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                     div style="display:flex;gap:0.75rem;align-items:center;" {
                         (delay_badge(delay, cancelled))
                         (platform_chip(platform.as_deref()))
+                    }
+                    @if let Some(pence) = fare_pence {
+                        span .fare-chip { "From " (pence_to_pounds(pence)) }
                     }
                 }
                 div .live-section hx-ext="sse" sse-connect={ "/ui/trains/" (rid) "/live" } {
