@@ -2,7 +2,35 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.6.0" -- 18/04/2026**
+**version = "1.7.0" -- 20/04/2026**
+
+---
+
+## v1.7.0 — 20/04/2026 — Product Features epic complete
+
+All five items from `TODOs/AgentA.md`, `TODOs/AgentB.md`, and `TODOs/AgentC.md` complete. The system now has journey search, fare display, weather-driven volatility, push notifications, and a partitioned delay history table.
+
+**5.1 — Journey search (A→B)**
+- `src/api/handlers.rs` — `JourneyQuery` struct, `journey_handler` with self-join on `timetable_calls` (keyed on `uid + operating_date`; no `trip_id` column exists). Returns ordered services calling both origin and destination.
+- `src/api/mod.rs` — `/journeys` and `/ui/journeys` routes added to `build_api_router`.
+- `src/frontend/search.rs` — tab-toggle UI (Departures / Journey); `journeys_fragment`; shared autocomplete dropdowns parameterised by `crs_input_id`/`q_input_id`.
+
+**5.3 — Fare display on train detail page**
+- `src/frontend/detail.rs` — snapshot tuple extended to capture `destination_crs`; `cheapest_fare` called with `NaiveDate`; `pence_to_pounds` formatter; `.fare-chip` span rendered when fare is available.
+
+**5.4 — Weather-driven volatility promotions**
+- `src/weather/mod.rs` (new) — `VolatilityStore`, `WeatherAnchor`, `fetch_wind_mph` via Open-Meteo, `run_weather_task` (10-min interval). `WEATHER_ANCHORS` env var.
+- `src/config.rs` — `weather_anchors: Vec<(String, f64, f64)>`, `parse_weather_anchors` public parser with 3 unit tests.
+- `src/main.rs` — weather task spawned conditionally; wind >50mph sets `volatility.wind_speed_mph` + `incident_flagged` after each GBR poll.
+
+**5.5 — Push notifications on Critical promotions**
+- `src/main.rs` — ntfy push task spawned when `NOTIFICATIONS_ENABLED=true` and `NTFY_URL` set. Fires on `new_state==Critical && old_state!=Critical`. Dedup guard prevents repeat fires.
+- `src/config.rs` — `ntfy_url: Option<String>`, `notifications_enabled: bool`.
+
+**8.2 — `delay_history` range partitioning**
+- `migrations/20240419_partition_delay_history.sql` (new) — renames existing table to `_legacy`, creates quarterly RANGE partitions covering 2024 Q1 – 2026 Q2, copies data. DROP of legacy table intentionally commented out for manual verification.
+
+175 tests, all passing.
 
 ---
 

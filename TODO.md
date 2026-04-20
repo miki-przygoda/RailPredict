@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.6.0" -- 18/04/2026**
+**version = "1.7.0" -- 20/04/2026**
 
 ---
 
@@ -39,13 +39,7 @@ The CI sqlx-check step will fail until this is done. See `TODOs/CI_DevEx.md` for
 
 ## Remaining Epics
 
-Epics are ordered by suggested execution sequence. Completed epics are destroyed and recorded in `CHANGELOG.md`.
-
-| Agent | File | Items | Notes |
-|---|---|---|---|
-| Agent A | `TODOs/AgentA.md` | 5.3, 8.2 | `detail.rs` + migration; smallest, no overlap |
-| Agent B | `TODOs/AgentB.md` | 5.1 | Journey search; `handlers.rs`, `api/mod.rs`, `search.rs` |
-| Agent C | `TODOs/AgentC.md` | 5.4, 5.5 | Weather + push notifications; `weather/`, `main.rs`, `config.rs` |
+No remaining epics. All items from `TODOs/Improvements.md` are complete.
 
 ### Completed
 
@@ -56,6 +50,7 @@ Epics are ordered by suggested execution sequence. Completed epics are destroyed
 | Technical Debt | v1.4.0 | 9.1–9.5, 7.1, 7.3 done; 4.5 deferred pending TierCWiring |
 | Tier A Data Layer | v1.5.0 | 2.3r, 2.4, 2.5, 6.1, 6.2 — full static pipeline; DB merge, autocomplete, GTFS, warm-up |
 | Tier C Wiring | v1.6.0 | 2.1, 2.2, 2.6, 8.1, 4.5 — live GBR calls end-to-end; poll consumer, JSON parse, state transitions |
+| Product Features | v1.7.0 | 5.1, 5.3, 5.4, 5.5, 8.2 — journey search, fare chip, weather volatility, push notifications, DB partitioning |
 
 ---
 
