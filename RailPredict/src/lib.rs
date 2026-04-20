@@ -14,3 +14,4 @@ pub mod networking;
 pub mod prediction;
 pub mod state_machine;
 pub mod types;
+pub mod weather;

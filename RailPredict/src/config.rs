@@ -21,6 +21,9 @@
 //! | `CORS_ALLOWED_ORIGINS`  | prod-req | —                                     | Comma-separated allowed origins; required in production |
 //! | `HTTP_RATE_LIMIT_PER_SEC` | no     | 60                                    | Max requests per second per IP (0 = disabled)          |
 //! | `DB_MAX_CONNECTIONS`    | no       | 5                                     | sqlx pool max connections                              |
+//! | `NTFY_URL`              | no       | —                                     | ntfy.sh topic URL for push notifications            |
+//! | `NOTIFICATIONS_ENABLED` | no       | false                                 | Set to `true` to enable push notifications          |
+//! | `WEATHER_ANCHORS`       | no       | ""                                    | Comma-separated "route_id:lat:lon" route anchors    |
 
 use std::collections::HashSet;
 use std::fmt;
@@ -90,6 +93,17 @@ pub struct Config {
 
     /// Maximum DB pool connections. Defaults to 5.
     pub db_max_connections: u32,
+
+    // Push notifications
+    /// ntfy.sh topic URL (e.g. https://ntfy.sh/my-topic). None = disabled.
+    pub ntfy_url: Option<String>,
+    /// Gate for push notifications. Must be true AND ntfy_url set for notifications to fire.
+    pub notifications_enabled: bool,
+
+    // Weather
+    /// Comma-separated "route_id:lat:lon" tuples for weather polling.
+    /// When empty, weather polling is disabled.
+    pub weather_anchors: Vec<(String, f64, f64)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +190,14 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(5u32);
 
+        let ntfy_url = std::env::var("NTFY_URL").ok().filter(|s| !s.is_empty());
+        let notifications_enabled = std::env::var("NOTIFICATIONS_ENABLED")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false);
+        let weather_anchors = parse_weather_anchors(
+            &std::env::var("WEATHER_ANCHORS").unwrap_or_default()
+        );
+
         Ok(Self {
             database_url,
             gbr_api_key,
@@ -195,6 +217,9 @@ impl Config {
             cors_allowed_origins,
             http_rate_limit_per_sec,
             db_max_connections,
+            ntfy_url,
+            notifications_enabled,
+            weather_anchors,
         })
     }
 
@@ -218,8 +243,28 @@ impl Config {
             cors_allowed_origins: None,
             http_rate_limit_per_sec: 0,
             db_max_connections: 2,
+            ntfy_url: None,
+            notifications_enabled: false,
+            weather_anchors: Vec::new(),
         }
     }
+}
+
+/// Parse a comma-separated `"route_id:lat:lon"` string into a `Vec<(String, f64, f64)>`.
+/// Malformed or unparseable entries are silently skipped.
+pub fn parse_weather_anchors(raw: &str) -> Vec<(String, f64, f64)> {
+    raw.split(',')
+        .filter_map(|entry| {
+            let parts: Vec<&str> = entry.trim().splitn(3, ':').collect();
+            if parts.len() == 3 {
+                let lat = parts[1].parse::<f64>().ok()?;
+                let lon = parts[2].parse::<f64>().ok()?;
+                Some((parts[0].to_string(), lat, lon))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
