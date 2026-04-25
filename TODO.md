@@ -39,7 +39,17 @@ The CI sqlx-check step will fail until this is done. See `TODOs/CI_DevEx.md` for
 
 ## Remaining Epics
 
-No remaining epics. All items from `TODOs/Improvements.md` are complete.
+Four new items added to `TODOs/Improvements.md` post-v1.7.0. No epic files created yet —
+create a focused epic file when starting work on any of these.
+
+| Item | Description                                          | Effort | Prerequisite          |
+|------|------------------------------------------------------|--------|-----------------------|
+| 8.3  | Cross-source write ordering (`Stamped` version counter) | Medium | Tier C live (✓ v1.6.0) |
+| 6.4  | `timetable_calls` self-join opt + materialised view   | Medium | 6.1 prune job (✓ v1.5.0) |
+| 5.6  | Planned platform display from GTFS stop_times         | Small  | 2.5 GTFS ingest (✓ v1.5.0) |
+| 2.8  | GBR Purchase API / Tier C checkout flow               | Large  | 2.1/2.2 wired (✓ v1.6.0) |
+
+See `TODOs/Improvements.md` (sections 8.3, 6.4, 5.6, 2.8) for full detail on each.
 
 ### Completed
 
