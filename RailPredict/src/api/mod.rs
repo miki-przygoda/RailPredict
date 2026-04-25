@@ -35,7 +35,7 @@ use axum::{
     extract::{Path, State},
     http::{header, HeaderValue, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use metrics_exporter_prometheus::PrometheusHandle;
@@ -47,7 +47,8 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::TrainRegistry,
     db::Db,
-    frontend::{dashboard, detail, search},
+    frontend::{dashboard, demo, detail, search},
+    ingestion::gtfs::IngestStatus,
     state_machine::poll_manager::StateChangeEvent,
 };
 
@@ -94,6 +95,8 @@ pub struct AppState {
     pub cors_allowed_origins: Option<Vec<String>>,
     /// Max requests per second per IP (0 = disabled).
     pub http_rate_limit_per_sec: u64,
+    /// GTFS ingest progress — updated by the ingest background task, read by SSE stream.
+    pub ingest_status: Arc<tokio::sync::watch::Sender<IngestStatus>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,8 +161,19 @@ pub fn router(state: AppState) -> Router {
     // be throttled, and the dashboard is a lightweight status page that should always load.
     let infra_router = Router::new()
         .route("/", get(dashboard::dashboard_page))
+        .route("/demo", get(demo::demo_page))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(handlers::health_handler))
+        // Demo fragment routes — no rate limit (dev/admin tools)
+        .route("/ui/demo/status",   get(demo::demo_status_fragment))
+        .route("/ui/demo/registry", get(demo::demo_registry_fragment))
+        .route("/ui/demo/journeys", get(demo::demo_journeys_fragment))
+        .route("/ui/demo/checkout", get(demo::demo_checkout_fragment))
+        .route("/ui/demo/purchase", post(demo::demo_purchase_fragment))
+        .route("/ui/demo/events",          get(demo::demo_events_sse))
+        .route("/ui/demo/ingest/freshness", get(demo::demo_ingest_freshness))
+        .route("/ui/demo/ingest/start",    post(demo::demo_ingest_start))
+        .route("/ui/demo/ingest/stream",   get(demo::demo_ingest_stream))
         .with_state(state.clone());
 
     // Public API sub-router — rate-limited.

@@ -26,7 +26,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use clap::Parser;
 use metrics_exporter_prometheus::PrometheusBuilder;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -35,7 +35,7 @@ use railpredict::cache::TrainRegistry;
 use railpredict::cli::{Cli, Commands, IngestSource};
 use railpredict::config::{Config, LogFormat};
 use railpredict::db;
-use railpredict::ingestion::gtfs;
+use railpredict::ingestion::gtfs::{self, IngestStatus};
 use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
 use railpredict::networking::{CircuitBreaker, Coalescer, LiveGbrClient, RateLimiter};
@@ -154,6 +154,10 @@ async fn main() -> anyhow::Result<()> {
     let (sc_tx, _initial_rx) = broadcast::channel(1024);
     drop(_initial_rx);
 
+    // Watch channel for GTFS ingest progress — updated by the ingest UI task.
+    let (ingest_tx, _ingest_rx) = watch::channel(IngestStatus::default());
+    let ingest_tx = Arc::new(ingest_tx);
+
     let token = CancellationToken::new();
 
     // --- Poll manager ---
@@ -178,6 +182,7 @@ async fn main() -> anyhow::Result<()> {
             wait_for_shutdown(
                 token, pm_task, registry, sc_tx, &config,
                 Arc::clone(&history_store), db_pool, Arc::clone(&prometheus_handle),
+                Arc::clone(&ingest_tx),
             )
             .await;
             return Ok(());
@@ -538,6 +543,7 @@ async fn main() -> anyhow::Result<()> {
         prometheus: Arc::clone(&prometheus_handle),
         cors_allowed_origins: config.cors_allowed_origins.clone(),
         http_rate_limit_per_sec: config.http_rate_limit_per_sec,
+        ingest_status: Arc::clone(&ingest_tx),
     };
     let app = router(app_state);
     let bind_addr: std::net::SocketAddr = config
@@ -605,6 +611,7 @@ async fn wait_for_shutdown(
     history_store: Arc<railpredict::prediction::types::HistoricalStore>,
     db_pool: db::Db,
     prometheus_handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
+    ingest_tx: Arc<watch::Sender<IngestStatus>>,
 ) {
     let app_state = AppState {
         registry,
@@ -613,6 +620,7 @@ async fn wait_for_shutdown(
         prometheus: prometheus_handle,
         cors_allowed_origins: config.cors_allowed_origins.clone(),
         http_rate_limit_per_sec: config.http_rate_limit_per_sec,
+        ingest_status: ingest_tx,
     };
     let app = router(app_state);
 
