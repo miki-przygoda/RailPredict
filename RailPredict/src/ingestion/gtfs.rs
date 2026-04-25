@@ -11,8 +11,53 @@ use std::io::Read;
 
 use serde::Deserialize;
 use sqlx::QueryBuilder;
+use tokio::sync::watch;
 
 use crate::db::Db;
+
+// ---------------------------------------------------------------------------
+// Ingest progress types — streamed via tokio::sync::watch to the HTTP ingest UI
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum IngestPhase {
+    #[default]
+    Idle,
+    Downloading,
+    Parsing,
+    Stations,
+    Services,
+    TimetableCalls,
+    Complete,
+    Failed,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct IngestStatus {
+    pub phase: IngestPhase,
+    pub stations: usize,
+    pub services: usize,
+    pub timetable_calls: usize,
+    pub log: Vec<String>,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub error: Option<String>,
+}
+
+impl IngestStatus {
+    pub(crate) fn push_log(&mut self, msg: impl Into<String>) {
+        self.log.push(msg.into());
+        if self.log.len() > 50 {
+            self.log.remove(0);
+        }
+    }
+}
+
+fn emit(progress: Option<&watch::Sender<IngestStatus>>, f: impl FnOnce(&mut IngestStatus)) {
+    if let Some(tx) = progress {
+        tx.send_modify(f);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // GTFS row types
@@ -331,6 +376,17 @@ async fn upsert_timetable_calls(
 // Full ingest pipeline
 // ---------------------------------------------------------------------------
 
+/// Return the number of timetable_calls rows that exist for today.
+/// Used by the ingest UI to warn the user before overwriting fresh data.
+pub async fn today_call_count(db: &crate::db::Db) -> anyhow::Result<i64> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM timetable_calls WHERE operating_date = CURRENT_DATE",
+    )
+    .fetch_one(db)
+    .await?;
+    Ok(count)
+}
+
 /// Download the GTFS ZIP from `url`, extract and parse all relevant files,
 /// and upsert stations, services, and timetable_calls into the database.
 /// Returns the number of stations upserted (for backward compatibility).
@@ -339,26 +395,44 @@ pub async fn run_ingest(db: &Db, url: &str) -> anyhow::Result<usize> {
     let bytes = reqwest::get(url).await?.bytes().await?;
     tracing::info!(size_bytes = bytes.len(), "Downloaded GTFS archive");
 
-    run_ingest_from_bytes(db, &bytes).await
+    run_ingest_from_bytes(db, &bytes, None).await
 }
 
 /// Same as `run_ingest` but reads from a local file instead of downloading.
 /// Returns the number of stations upserted (for backward compatibility).
 pub async fn run_ingest_from_file(db: &Db, path: &std::path::Path) -> anyhow::Result<usize> {
     let bytes = std::fs::read(path)?;
-    run_ingest_from_bytes(db, &bytes).await
+    run_ingest_from_bytes(db, &bytes, None).await
 }
 
-/// Shared implementation used by both `run_ingest` and `run_ingest_from_file`.
-async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8]) -> anyhow::Result<usize> {
+/// Download `url`, stream progress into `tx`, then run the full ingest pipeline.
+/// Called by the HTTP ingest UI handler (POST /ui/demo/ingest/start).
+pub async fn run_ingest_with_watch(
+    db: &Db,
+    url: &str,
+    tx: &watch::Sender<IngestStatus>,
+) -> anyhow::Result<usize> {
+    tracing::info!(%url, "Downloading GTFS archive (with progress)");
+    let bytes = reqwest::get(url).await?.bytes().await?;
+    let mb = bytes.len() as f64 / 1_048_576.0;
+    tracing::info!(size_bytes = bytes.len(), "Downloaded GTFS archive");
+    tx.send_modify(|s| s.push_log(format!("Downloaded {mb:.1} MB")));
+    run_ingest_from_bytes(db, &bytes, Some(tx)).await
+}
+
+/// Shared implementation used by `run_ingest`, `run_ingest_from_file`, and `run_ingest_with_watch`.
+async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watch::Sender<IngestStatus>>) -> anyhow::Result<usize> {
     // --- Phase 1: Stations ---
+    emit(progress, |s| { s.phase = IngestPhase::Parsing; s.push_log("Extracting stations"); });
     let stops_bytes = extract_stops_txt(zip_bytes)?;
     let stations = parse_stops(&stops_bytes)?;
     let station_count = stations.len();
     tracing::info!(stations = station_count, "Parsed GTFS stops");
+    emit(progress, |s| { s.phase = IngestPhase::Stations; s.push_log(format!("Upserting {station_count} stations")); });
 
     upsert_stations(db, &stations).await?;
     tracing::info!(stations = station_count, "Stations upserted");
+    emit(progress, |s| { s.stations = station_count; s.push_log(format!("Stations done: {station_count}")); });
 
     // Build a set of known CRS codes for FK guard.
     let known_stations: HashSet<String> = stations.iter().map(|s| s.stop_id.clone()).collect();
@@ -382,9 +456,11 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8]) -> anyhow::Result<usiz
     };
 
     if calendar_map.is_empty() {
+        emit(progress, |s| { s.phase = IngestPhase::Complete; s.finished_at = Some(chrono::Utc::now()); s.push_log("Complete (stations only — no calendar)"); });
         tracing::info!(stations = station_count, "GTFS ingest complete (stations only)");
         return Ok(station_count);
     }
+    emit(progress, |s| s.push_log(format!("Calendar: {} entries", calendar_map.len())));
 
     // --- Phase 3: Trips ---
     let trips = match extract_file(zip_bytes, "trips.txt") {
@@ -404,7 +480,9 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8]) -> anyhow::Result<usiz
         }
     };
 
+    emit(progress, |s| s.push_log(format!("Trips parsed: {}", trips.len())));
     if trips.is_empty() {
+        emit(progress, |s| { s.phase = IngestPhase::Complete; s.finished_at = Some(chrono::Utc::now()); s.push_log("Complete (no trips found)"); });
         tracing::info!(stations = station_count, "GTFS ingest complete (stations only)");
         return Ok(station_count);
     }
@@ -475,8 +553,10 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8]) -> anyhow::Result<usiz
         services.push((uid, origin_crs, dest_crs, days));
     }
 
+    emit(progress, |s| { s.phase = IngestPhase::Services; s.push_log(format!("Upserting {} services", services.len())); });
     let services_upserted = upsert_services(db, &services, &known_stations).await?;
     tracing::info!(services = services_upserted, "Services upserted");
+    emit(progress, |s| { s.services = services_upserted; s.push_log(format!("Services done: {services_upserted}")); });
 
     // Build known UIDs set (those actually persisted)
     let known_uids: HashSet<String> = services
@@ -488,7 +568,9 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8]) -> anyhow::Result<usiz
         .collect();
 
     // --- Phase 7: Build timetable_calls ---
+    emit(progress, |s| s.push_log(format!("Stop times: {}", stop_times.len())));
     if stop_times.is_empty() {
+        emit(progress, |s| { s.phase = IngestPhase::Complete; s.finished_at = Some(chrono::Utc::now()); s.push_log("Complete (no stop_times)"); });
         tracing::info!(
             stations = station_count,
             services = services_upserted,
@@ -542,6 +624,7 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8]) -> anyhow::Result<usiz
         }
     }
 
+    emit(progress, |s| { s.phase = IngestPhase::TimetableCalls; s.push_log(format!("Upserting {} timetable calls", calls.len())); });
     let calls_upserted = upsert_timetable_calls(db, &calls, &known_uids, &known_stations).await?;
     tracing::info!(
         stations = station_count,
@@ -549,6 +632,14 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8]) -> anyhow::Result<usiz
         timetable_calls = calls_upserted,
         "GTFS ingest complete"
     );
+    emit(progress, |s| {
+        s.timetable_calls = calls_upserted;
+        s.phase = IngestPhase::Complete;
+        s.finished_at = Some(chrono::Utc::now());
+        s.push_log(format!(
+            "Complete — stations: {station_count}, services: {services_upserted}, calls: {calls_upserted}"
+        ));
+    });
 
     Ok(station_count)
 }

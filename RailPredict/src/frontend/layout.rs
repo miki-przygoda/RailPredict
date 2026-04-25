@@ -18,6 +18,7 @@ pub fn base(title: &str, content: Markup) -> Markup {
                 nav {
                     a href="/" { "RailPredict" }
                     a href="/search" { "Departures" }
+                    a href="/demo" { "Dev Console" }
                 }
                 main {
                     (content)
