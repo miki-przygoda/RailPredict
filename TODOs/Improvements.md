@@ -20,6 +20,7 @@ use the epic files instead.
 | AgentA              | 5.3, 8.2                          | **COMPLETE — v1.7.0** (deleted)        |
 | AgentB              | 5.1                               | **COMPLETE — v1.7.0** (deleted)        |
 | AgentC              | 5.4, 5.5                          | **COMPLETE — v1.7.0** (deleted)        |
+| _(pending)_         | 8.3, 5.6, 6.4, 2.8                | **NOT STARTED** — new items added post-v1.7.0 |
 
 ### Already completed (do not re-implement)
 - **1.1** (STOMP TLS) — completed in ProductionHardening v1.2.0.
@@ -48,10 +49,11 @@ use the epic files instead.
 - **9.4** (departure sort by string) — completed in TechnicalDebt v1.4.0.
 - **9.5** (CIF `unimplemented!()` panic) — completed in TechnicalDebt v1.4.0.
 
-### Suggested epic execution order
-1. `TierADataLayer.md` (completes the data pipeline; enables product features)
-2. `TierCWiring.md` (the big architecture epic — wires live GBR calls; also unblocks 4.5)
-3. `ProductFeatures.md` (builds on everything above)
+### Suggested epic execution order (post-v1.7.0)
+1. **8.3** — Cross-source write ordering (correctness fix; no new features required, small scope)
+2. **6.4** — Journey handler query optimization (unblock 5.1 scaling; can be done in isolation)
+3. **5.6** — Planned platform in search results (product polish; requires 2.5 complete ✓)
+4. **2.8** — GBR Purchase API / Tier C checkout (the transactional "final boss"; do last, most risk)
 
 ---
 
@@ -165,6 +167,68 @@ Trains never naturally progress from `Dormant → Monitored → Active`.
 compare with the stored state, and emit a real state-change event + re-queue at the
 new interval if the state has changed.
 
+### 2.8 GBR Purchase API — Tier C checkout flow is unimplemented
+
+The GBR REST client (`src/networking/gbr_client.rs`) currently only supports read operations
+(train status polling). The advertised Tier C functionality includes ticket purchase, but
+`LiveGbrClient` has no method for sending purchase commands. This is the only part of the
+system that is transactionally irreversible: once a purchase command is sent, it cannot be
+retried blindly (idempotency is not guaranteed by the GBR Retail API).
+
+**Why this is different from the rest of Tier C:**
+All existing Tier C calls (status polling) are safe to retry — a duplicate poll is harmless.
+A duplicate purchase command could charge the user twice. The circuit breaker and rate limiter
+must therefore be configured *more aggressively* here than for polling: lower failure threshold,
+shorter cool-down window, and a mandatory idempotency key on every request.
+
+**Architecture:**
+1. **Add `GbrPurchaseRequest` / `GbrPurchaseResponse` serde structs** to `gbr_client.rs`.
+   Model the GBR Retail API v1 `/bookings` endpoint. Key fields: `journey_uid`, `passenger_count`,
+   `fare_id` (from `cheapest_fare` in `db/static_data.rs`), `idempotency_key` (UUID generated
+   client-side, stored before the call, never reused). Map the 201 response to a
+   `BookingConfirmation { booking_ref: String, total_price_pence: u32 }`.
+
+2. **Introduce a dedicated `PurchaseCircuitBreaker`** separate from the polling circuit breaker
+   in `src/networking/circuit_breaker.rs`. Config: `PURCHASE_FAILURE_THRESHOLD=1` (fail on first
+   error), `PURCHASE_COOL_DOWN_SECS=60`. Rationale: a slow/erroring purchase endpoint should
+   immediately stop all purchase attempts so the user gets a fast "try again later" rather than
+   hanging. Never let a purchase call block the polling path — they must run on separate circuits.
+
+3. **Add `POST /journeys/{uid}/purchase` HTTP handler** in `src/api/handlers.rs`. Handler flow:
+   a. Validate `uid` format (same pattern as `validate_crs` but for service UIDs).
+   b. Look up the fare via `db::static_data::cheapest_fare`.
+   c. Generate a UUID idempotency key and persist it to a new `purchase_attempts` table
+      (migration required) *before* calling GBR — so a server crash mid-call doesn't lose the key.
+   d. Call `LiveGbrClient::purchase(request)` through the `PurchaseCircuitBreaker`.
+   e. On 201: write the `BookingConfirmation` to `purchase_attempts`, return confirmation JSON.
+   f. On any error: update `purchase_attempts` row to `failed`, return a structured `ApiError`
+      with a user-facing message. Never expose raw GBR error bodies to the client.
+
+4. **Add migration** `migrations/YYYYMMDDHHMMSS_create_purchase_attempts.sql`:
+   ```sql
+   CREATE TABLE purchase_attempts (
+       id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       idempotency_key UUID NOT NULL UNIQUE,
+       journey_uid   TEXT NOT NULL,
+       fare_id       TEXT NOT NULL,
+       status        TEXT NOT NULL DEFAULT 'pending',  -- pending | confirmed | failed
+       booking_ref   TEXT,
+       created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   );
+   CREATE INDEX pa_journey_idx ON purchase_attempts(journey_uid);
+   ```
+
+5. **Test strategy:** `tests/db_integration.rs` should cover the idempotency key uniqueness
+   constraint (duplicate key → `ON CONFLICT DO NOTHING` or explicit error). Integration tests
+   for the handler should use a mock `GbrClient` that returns a 503 on first call and a 201 on
+   second, asserting that the circuit breaker fires on the first failure (threshold=1) and
+   that the `purchase_attempts` row is marked `failed` — not retried automatically.
+
+**Risk note:** Do not implement retry logic for failed purchases. Retrying is the user's
+explicit action (re-submitting the form). Automatic retries on purchase commands are a
+double-charge footgun. The circuit breaker's cool-down is the only "retry gate" here.
+
 ### 2.7 `AppState` missing DB — static data queries are unreachable from handlers
 `departures_from`, `get_station`, `cheapest_fare` all exist in `src/db/static_data.rs`
 but `AppState` only carries `registry` and `state_change_tx`. There is no path from
@@ -260,6 +324,53 @@ reads `wind_speed_mph` to trigger a promotion.
 for the bounding boxes of active routes; write into a shared `VolatilityStore`; have
 the poll consumer check it before computing next state.
 
+### 5.6 Planned platform display from GTFS stop_times (Tier A prediction)
+
+After item 2.5 completed the GTFS `trips.txt` + `stop_times.txt` ingest into `timetable_calls`,
+the planned platform data is now in the database but is not surfaced in any UI or API response.
+The departure board and journey search results show live platform only when Tier C data is
+available — meaning platform is blank during `Dormant` and `Monitored` states, which is the
+majority of the train's lifecycle from a user's perspective.
+
+**The core insight:** Platform assignments rarely change between the timetable and reality for
+well-run services. Showing "Usually Platform 4" from the Tier A timetable is strictly better
+than showing nothing, and it's free — the data is already in `timetable_calls.platform`.
+
+**What needs to change:**
+
+1. **Confirm `timetable_calls.platform` is populated.** After the 2.5 ingest, verify that
+   `platform` in `stop_times.txt` is mapped to the `timetable_calls.platform` column during
+   `run_ingest` in `src/ingestion/gtfs.rs`. Network Rail GTFS uses `stop_times.stop_id`
+   format `{crs}_{platform}` (e.g. `KGX_4`) — parse the suffix as the platform label.
+   Add a DB integration test in `tests/db_integration.rs` asserting that after a known
+   fixture ingest, `timetable_calls.platform` is non-null for stops that have platform data.
+
+2. **Expose planned platform in `departures_from`.** In `src/db/static_data.rs`, the
+   `departures_from` query should already return the `platform` column. If it doesn't,
+   add it to the `SELECT`. The returned `DepartureBoardEntry` (in `src/api/types.rs`) has
+   a `platform` field — if it's `None` after the DB merge and no live Tier C platform is
+   available, populate it from `timetable_calls.platform` as the fallback.
+
+3. **Merge logic in `departures_handler`.** The handler in `src/api/handlers.rs` merges
+   DB timetable rows with live `TrainStatus` overlay. The merge priority for platform must be:
+   - **First:** `TrainStatus.actual_platform` (Tier C confirmed live platform)
+   - **Second:** `TrainStatus.scheduled_platform` (Tier C scheduled but not confirmed)
+   - **Third:** `timetable_calls.platform` (Tier A planned; label it as "Planned" in UI)
+   - **Fourth:** `None` (omit the chip entirely)
+
+4. **UI label.** In `src/frontend/components.rs`, the `platform_chip` component should
+   accept an optional `is_planned: bool` flag. When true, render the chip with a different
+   style (e.g. grey border instead of solid fill, tooltip "Planned — live platform TBC").
+   This distinguishes "Platform 4 (confirmed)" from "Platform 4 (from timetable)" so
+   users aren't confused if the train moves.
+
+5. **Journey search results** (`src/frontend/search.rs`) should also apply the same
+   three-tier platform resolution. Journey result cards currently show no platform at all.
+   Even a planned platform is useful context when choosing which end of the train to board.
+
+**Effort:** Small. The data is already ingested. This is a plumbing + UI label change.
+**Impact:** High perceived quality. Platform is one of the first things passengers look for.
+
 ### 5.5 Push notifications on Critical promotions
 The SSE stream is good for open browser tabs but not for users who have closed the tab.
 Web Push (via `web_push` crate or a service like Ntfy) would let users subscribe to
@@ -293,6 +404,84 @@ AND scheduled_departure > NOW()` and call `registry.warm()` with a `TrainStatus`
 each future departure, setting the state via `TrainState::from_departure`. Register
 each with `PollManager` at the appropriate interval. This closes the gap between Tier A
 (timetable data) and the live state machine without waiting for Darwin to mention the train.
+
+### 6.4 `timetable_calls` God Table — journey handler self-join will degrade
+
+The journey search feature added in v1.7.0 (`journey_handler` in `src/api/handlers.rs`)
+finds trains serving both origin and destination by doing a **self-join** on `timetable_calls`:
+
+```sql
+SELECT t1.uid, t1.scheduled_departure, t2.scheduled_arrival
+FROM timetable_calls t1
+JOIN timetable_calls t2
+  ON t1.uid = t2.uid AND t1.operating_date = t2.operating_date
+WHERE t1.location_crs = $1   -- origin
+  AND t2.location_crs = $2   -- destination
+  AND t1.seq < t2.seq        -- origin must come before destination
+  AND t1.operating_date = $3
+ORDER BY t1.scheduled_departure;
+```
+
+This is a two-side index scan plus a hash join. With the existing `tc_location_date_idx`
+on `(location_crs, operating_date, scheduled_departure)`, each side of the join is fast
+in isolation. But as `timetable_calls` crosses 1M rows (approximately 2 full weekly GTFS
+imports without pruning), the hash join materialises a large intermediate result set,
+and `EXPLAIN ANALYZE` will show it switching to a sequential scan on the inner side.
+At 5M rows the query crawls past 500ms.
+
+**Context:** the 6.1 cleanup job prunes rows older than 7 days. But one weekly GTFS
+import alone can add ~500k rows (approx. 2,500 services × 20 stops average). Two
+overlapping imports (old data not yet pruned, new data just loaded) push the table
+to ~1M rows transiently during the refresh window. This is the "God Table" problem:
+a table that holds both hot (today's departures) and cold (yesterday's that haven't
+been pruned yet) data, making index selectivity poor.
+
+**Fix — three-layer approach (implement in order):**
+
+1. **Verify index coverage for the self-join.** The existing `tc_location_date_idx`
+   covers `(location_crs, operating_date, scheduled_departure)`. Add a second index:
+   ```sql
+   CREATE INDEX IF NOT EXISTS tc_uid_date_seq_idx
+       ON timetable_calls(uid, operating_date, seq);
+   ```
+   This lets the join on `(uid, operating_date)` use an index scan on the inner side
+   rather than a hash. Add this as a new migration.
+
+2. **Add a `connections` materialised view** (or a summary table) refreshed nightly
+   that pre-computes origin→destination pairs for each service UID:
+   ```sql
+   CREATE MATERIALIZED VIEW service_connections AS
+   SELECT
+       t1.uid,
+       t1.operating_date,
+       t1.location_crs AS origin_crs,
+       t2.location_crs AS destination_crs,
+       t1.scheduled_departure,
+       t2.scheduled_arrival,
+       t1.seq AS origin_seq,
+       t2.seq AS destination_seq
+   FROM timetable_calls t1
+   JOIN timetable_calls t2
+     ON t1.uid = t2.uid
+    AND t1.operating_date = t2.operating_date
+    AND t1.seq < t2.seq;
+
+   CREATE INDEX sc_origin_dest_date_idx
+       ON service_connections(origin_crs, destination_crs, operating_date, scheduled_departure);
+   ```
+   `journey_handler` queries `service_connections` instead of `timetable_calls` directly.
+   The self-join cost is paid once per day, not on every HTTP request.
+
+3. **Refresh strategy.** Add a `tokio::spawn` task in `main.rs` (alongside the existing
+   24h cleanup task from 6.1) that calls `REFRESH MATERIALIZED VIEW CONCURRENTLY service_connections`
+   once per day, after the cleanup job runs. `CONCURRENTLY` means the view is not locked
+   during refresh — queries continue to use the old version until the refresh completes.
+   Requires a unique index on the view (add `uid, operating_date, origin_seq, destination_seq`
+   as the uniqueness constraint).
+
+**Effort:** Medium (two migrations + handler query swap + refresh task).
+**When to prioritise:** Before a full national GTFS import. Regional scope (~50k rows/week)
+is fine without this. Flag it when `timetable_calls` row count crosses 500k in production.
 
 ### 6.3 HTMX SSE client has no error handling — freezes silently on disconnect ✓ COMPLETED v1.1.1
 `detail.rs` handles `RecvError::Lagged` and `RecvError::Closed` on the server side, but
@@ -352,6 +541,100 @@ embedded timestamp (once response parsing is implemented — see item 2.2) again
 This mirrors the same "never overwrite with older data" principle the `SequenceGuard`
 already enforces for Darwin messages.
 
+### 8.3 Cross-source write ordering — `SequenceGuard` only guards Darwin→Darwin races
+
+**Background (read 8.1 first):** Item 8.1 (completed in TierCWiring v1.6.0) added a
+per-field timestamp comparison before any GBR poll result is applied to `TrainStatus`.
+This prevents a slow GBR round-trip from overwriting a fresher Darwin update.
+
+**The gap still open:** The existing `SequenceGuard` (in `src/ingestion/filter.rs`) only
+tracks message sequence numbers for the Darwin STOMP firehose. It guarantees Darwin messages
+are applied in monotonic order. It does not participate in writes from the GBR poll path
+(which goes through `src/networking/gbr_client.rs` and writes directly to the registry).
+
+The current fix (8.1) is a "check before write" pattern: before applying the GBR result,
+compare timestamps. This is correct under sequential logic, but there is still a narrow
+TOCTOU (time-of-check / time-of-use) window:
+
+```
+Thread A (Darwin): read lock → check timestamp → ... [preempted] ...
+Thread B (GBR):    write lock → apply GBR data (newer timestamp) → release
+Thread A (Darwin): resumes   → acquires write lock → applies Darwin data
+                               ↑ Darwin check was done before B wrote; now overwrites newer GBR data
+```
+
+This is a low-probability race — it requires preemption at exactly the right instruction.
+But the "Stale Data Overlay" (the visual indicator that a field is stale) will flicker
+incorrectly if it fires, which is the user-visible symptom. Under high Darwin message
+rates (400 msg/s at peak) this race fires at measurable frequency.
+
+**Fix — monotonic version counter per TrainStatus field:**
+
+1. **Add a `version: u64` field to `Stamped<T>`** in `src/types/train_status.rs`.
+   This is an atomically-incrementing sequence number, separate from `last_updated`
+   (which is wall-clock time and can repeat if two events land in the same millisecond).
+   Keep `last_updated` for UI display ("updated 3s ago"); use `version` for write ordering.
+
+   ```rust
+   pub struct Stamped<T> {
+       pub value: T,
+       pub last_updated: DateTime<Utc>,
+       pub version: u64,  // monotonic; 0 = never written
+   }
+   ```
+
+2. **Write helper: `Stamped::apply_if_newer`.**
+   ```rust
+   impl<T: Clone> Stamped<T> {
+       pub fn apply_if_newer(&mut self, incoming: &Stamped<T>) -> bool {
+           if incoming.version > self.version {
+               *self = incoming.clone();
+               true
+           } else {
+               false
+           }
+       }
+   }
+   ```
+   Every write to `TrainStatus` — from any source (Darwin, GBR poll, prediction engine) —
+   must go through `apply_if_newer` rather than directly assigning fields. The caller that
+   constructs the `Stamped` value must assign an appropriate `version`:
+   - Darwin messages: use the STOMP `sequence` number from the `SequenceGuard` (already
+     tracked in `filter.rs`; thread it into the `Stamped` constructor).
+   - GBR poll results: use a global monotonic counter (`AtomicU64` in `AppState`,
+     incremented on each successful GBR response) as the version.
+   - Prediction engine writes: use the same global counter (it's writing estimated values,
+     not observed ones; Darwin observations should always beat predictions).
+
+3. **Assign version priority correctly.** Darwin observations must always beat prediction
+   engine outputs. GBR poll results sit between the two: they are real observations but
+   have higher latency than Darwin push. A clean ordering:
+   - Darwin STOMP: version space `[1_000_000_000, ∞)` — use the sequence number directly
+     (Darwin sequences are large integers, already monotonic).
+   - GBR poll: version space `[1, 999_999_999]` — use `AtomicU64` per-response counter.
+   - Prediction engine: version `0` — predictions never beat observed data.
+
+   This means a Darwin update at sequence 1_000_000_005 will always beat a GBR poll
+   response with version 2, even if the GBR response arrived later in wall time.
+
+4. **Remove the TOCTOU window.** With `apply_if_newer` inside the write lock, the
+   check and the write are atomic with respect to the `RwLock`. The preemption scenario
+   described above is closed: Thread A cannot observe a stale version and then apply
+   it later, because by the time it acquires the write lock, `self.version` reflects
+   Thread B's write, and `incoming.version > self.version` will be false.
+
+5. **Update `SequenceGuard`.** The guard in `filter.rs` currently compares STOMP sequence
+   numbers and drops messages where `seq <= last_seen`. After this change, the guard's role
+   becomes: construct the `Stamped<T>` with the correct `version` set to the STOMP sequence,
+   and pass it to the registry. The registry itself, via `apply_if_newer`, handles the
+   final comparison. The guard no longer needs to duplicate the comparison logic.
+
+**Effort:** Medium (touches `Stamped<T>`, `TrainStatus`, `filter.rs`, registry write paths,
+and GBR client response mapping). Best done as a single focused PR — touching these together
+avoids a half-migrated state where some writes use `apply_if_newer` and others don't.
+**When to prioritise:** Before any production deployment where Darwin and GBR polling
+are both active simultaneously (i.e. after Tier C is live).
+
 ### 8.2 `delay_history` will become a write-heavy bottleneck at UK-network scale
 The 60s flush writes up to ~24,000 rows per flush at Darwin's peak (400 msg/s × 60s,
 assuming one observation per message). Each insert checks the `UNIQUE INDEX` on
@@ -390,10 +673,30 @@ delay; actual vs scheduled for platform) that every UI caller relies on. The cho
 should be explicit and tested.
 
 ### 9.3 STOMP frame body is read byte-by-byte ✓ COMPLETED v1.4.0
+
+> ⚠️ **Performance note — do not underestimate this fix.** The original description
+> classified this as "Trivial / Performance." The actual impact is significant:
+> on an unbuffered TCP stream, each `read_exact(&mut buf[..1])` call is a syscall.
+> At Darwin's peak of ~400 msg/s with 2–10 KB messages, this is 800k–4M syscalls per
+> second on a single thread. Syscall overhead on Linux/macOS is ~100–300 ns each;
+> at 4M/s that is 400–1200ms of pure kernel overhead per second — enough to saturate
+> an entire core just on reads. In practice, the kernel's TCP receive buffer batches
+> some of this, but the async wakeup-per-byte cost in tokio is still measurable.
+> Switching to `BufReader` + `read_until(0, &mut body)` (from `AsyncBufReadExt`)
+> collapses all per-byte wakeups into one syscall per message body, which should
+> reduce Darwin ingestion thread CPU usage by **50–80%** on a loaded instance.
+> The fix is indeed small to write, but treat it as high-impact, not housekeeping.
+
 `read_frame` reads the NULL-terminated body one byte at a time in a loop. At Darwin's
 peak of ~400 msg/s with typical message sizes of 2–10 KB, this is up to 4 million
 single-byte async reads per second. Use `read_until(0, &mut body)` from `AsyncBufReadExt`
-instead — one syscall per message body.
+with a `BufReader` wrapper on the underlying stream instead — one syscall per message body.
+
+**Implementation detail:** `stomp_client.rs` uses the `BoxReader` abstraction over the
+TLS stream. Wrap it in `tokio::io::BufReader` before passing to `read_frame`. The buffer
+size should be at least `16 KB` (`BufReader::with_capacity(16_384, stream)`) — large
+enough to hold a full Darwin TS message in one read. Verify with `strace`/`dtruss` or
+tokio's built-in metrics that the syscall count drops after the change.
 
 ### 9.4 `departures_handler` sorts by stringified RFC3339 timestamp ✓ COMPLETED v1.4.0
 `entries.sort_by_key(|e| e.scheduled_departure.clone())` sorts by the string
@@ -430,7 +733,11 @@ so the process exits cleanly with an error message rather than a panic backtrace
 | 1.4 | CORS tightening                              | Small   | Security                     |
 | 1.5 | HTTP rate limiting                           | Small   | Security                     |
 | 8.1 | Darwin/GBR last-writer-wins race             | Small   | Correctness (after 2.1 done) |
-| 9.3 | STOMP byte-by-byte read fix                  | Trivial | Performance                  |
+| 9.3 | STOMP byte-by-byte read fix                  | Small   | **High** — 50–80% CPU reduction on Darwin thread |
 | 9.1 | `is_cancelled` → `Option<bool>`              | Small   | Correctness                  |
 | 8.2 | `delay_history` partitioning plan            | Medium  | Scale readiness              |
 | 4.4 | Fix README tech stack table                  | Trivial | Housekeeping                 |
+| 8.3 | Cross-source write ordering (`Stamped` version counter) | Medium | Correctness under concurrent Darwin+GBR |
+| 5.6 | Planned platform display from GTFS stop_times | Small  | UX quality (data already ingested)   |
+| 6.4 | `timetable_calls` self-join optimisation + `service_connections` view | Medium | Journey search scaling |
+| 2.8 | GBR Purchase API / Tier C checkout flow       | Large   | Transactional completeness (highest risk) |
