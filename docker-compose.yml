@@ -24,6 +24,9 @@ services:
       - railpredict
 
   # ── RailPredict app ───────────────────────────────────────────────────────────
+  # IMPORTANT: always use `docker compose up --build` (or `make up`) after code
+  # changes. Plain `docker compose up` reuses the cached image and won't pick up
+  # new source files or static assets baked in via rust-embed.
   app:
     build:
       context: .
