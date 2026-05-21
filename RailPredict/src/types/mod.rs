@@ -12,5 +12,5 @@ pub mod volatility;
 
 pub use train_id::TrainId;
 #[allow(unused_imports)]
-pub use train_status::TrainStatus;
+pub use train_status::{Stamped, TrainStatus, UpdateSource};
 pub use volatility::VolatilityContext;
