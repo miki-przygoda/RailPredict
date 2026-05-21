@@ -58,12 +58,9 @@ CREATE TABLE delay_history_2026_q1 PARTITION OF delay_history
 CREATE TABLE delay_history_2026_q2 PARTITION OF delay_history
     FOR VALUES FROM ('2026-04-01') TO ('2026-07-01');
 
--- Recreate the observation uniqueness constraint on the partitioned table.
--- Must be UNIQUE (not just an index) so that flush_history's ON CONFLICT clause works.
--- Must include the partition key (recorded_at) — PG requires all unique constraints on
--- partitioned tables to include every partition key column.
--- PG14+ propagates this index automatically to each new partition.
-CREATE UNIQUE INDEX ON delay_history (uid, weekday, origin_crs, departure_hour, recorded_at);
+-- Recreate the lookup index on the partitioned table.
+-- (PG14+ propagates this automatically to each new partition.)
+CREATE INDEX ON delay_history (uid, weekday, origin_crs, recorded_at);
 
 -- Copy existing data from legacy table (including departure_hour added by 20240417120005).
 INSERT INTO delay_history (uid, weekday, origin_crs, delay_mins, recorded_at, departure_hour)
