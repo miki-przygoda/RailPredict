@@ -19,21 +19,43 @@ use super::{TrainId, VolatilityContext};
 
 /// A timestamped wrapper around any field that is updated from an external source.
 /// Allows per-field staleness checks without embedding timestamps in business logic.
+///
+/// The `version` field encodes source priority to resolve write conflicts atomically
+/// inside the registry write lock (eliminating the TOCTOU window between check and write):
+///   - Darwin firehose: `msg_ts.timestamp_millis() as u64` (~1.75 × 10¹²) — always wins
+///   - GBR REST poll:   monotonic `AtomicU64` counter (1, 2, 3 …)
+///   - Prediction engine: 0 — lowest priority, only fills gaps
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stamped<T> {
     pub value: T,
     pub last_updated: DateTime<Utc>,
+    pub version: u64,
 }
 
 impl<T> Stamped<T> {
     pub fn new(value: T) -> Self {
-        Self { value, last_updated: Utc::now() }
+        Self { value, last_updated: Utc::now(), version: 0 }
+    }
+
+    /// Construct with an explicit source version for priority-ordered writes.
+    pub fn with_version(value: T, version: u64) -> Self {
+        Self { value, last_updated: Utc::now(), version }
     }
 
     /// Returns `true` if this field is older than `max_age`.
     #[allow(dead_code)]
     pub fn is_stale(&self, max_age: chrono::Duration) -> bool {
         Utc::now() - self.last_updated > max_age
+    }
+}
+
+impl<T: Clone> Stamped<T> {
+    /// Replace `self` with `incoming` iff `incoming.version > self.version`.
+    /// Call inside the registry write lock — the check-and-write is atomic in that context.
+    pub fn apply_if_newer(&mut self, incoming: Stamped<T>) {
+        if incoming.version > self.version {
+            *self = incoming;
+        }
     }
 }
 
@@ -128,8 +150,8 @@ impl TrainStatus {
         public_departure: DateTime<Utc>,
     ) -> Self {
         let now = Utc::now();
-        let scheduled_departure = Stamped { value: scheduled_departure, last_updated: now };
-        let public_departure = Stamped { value: public_departure, last_updated: now };
+        let scheduled_departure = Stamped { value: scheduled_departure, last_updated: now, version: 0 };
+        let public_departure = Stamped { value: public_departure, last_updated: now, version: 0 };
 
         Self {
             id,
@@ -247,5 +269,43 @@ mod tests {
         let s = Stamped::new(0u32);
         let after = Utc::now();
         assert!(s.last_updated >= before && s.last_updated <= after);
+    }
+
+    #[test]
+    fn apply_if_newer_overwrites_when_version_higher() {
+        let mut existing = Stamped::with_version(1u32, 5);
+        let incoming = Stamped::with_version(2u32, 10);
+        existing.apply_if_newer(incoming);
+        assert_eq!(existing.value, 2);
+        assert_eq!(existing.version, 10);
+    }
+
+    #[test]
+    fn apply_if_newer_rejects_when_version_lower() {
+        let mut existing = Stamped::with_version(1u32, 10);
+        let incoming = Stamped::with_version(2u32, 5);
+        existing.apply_if_newer(incoming);
+        assert_eq!(existing.value, 1);
+        assert_eq!(existing.version, 10);
+    }
+
+    #[test]
+    fn apply_if_newer_rejects_when_version_equal() {
+        let mut existing = Stamped::with_version(1u32, 7);
+        let incoming = Stamped::with_version(2u32, 7);
+        existing.apply_if_newer(incoming);
+        assert_eq!(existing.value, 1);
+    }
+
+    #[test]
+    fn darwin_version_always_beats_gbr_counter() {
+        // Darwin versions are timestamp_millis (~1.75e12); GBR counters are small.
+        let gbr_version: u64 = 9999;
+        let darwin_version: u64 = 1_750_000_000_000;
+        let mut field = Stamped::with_version(Some(5i32), gbr_version);
+        let darwin_update = Stamped::with_version(Some(3i32), darwin_version);
+        field.apply_if_newer(darwin_update);
+        assert_eq!(field.value, Some(3));
+        assert_eq!(field.version, darwin_version);
     }
 }

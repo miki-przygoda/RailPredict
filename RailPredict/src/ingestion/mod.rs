@@ -223,6 +223,10 @@ impl IngestionPipeline {
                         continue;
                     }
 
+                    // Source version: Darwin message timestamp in milliseconds (~1.75 × 10¹²).
+                    // Always larger than GBR poll counters (1, 2, 3…), so Darwin wins on conflict.
+                    let darwin_version = msg_ts.timestamp_millis() as u64;
+
                     let rid = ts_update.rid.clone();
                     let is_cancelled = ts_update.is_cancelled;
                     let is_delayed = ts_update.is_delayed;
@@ -252,15 +256,19 @@ impl IngestionPipeline {
                     self.ctx.registry
                         .update(&rid, |status| {
                             if let Some(dep) = estimated_dep {
-                                status.actual_estimated_departure = Stamped::new(Some(dep));
-
-                                // Compute reported delay from (estimated - scheduled) in minutes.
                                 let delay_mins =
                                     (dep - status.scheduled_departure.value).num_minutes() as i32;
-                                status.reported_delay_mins = Stamped::new(Some(delay_mins));
+                                status.actual_estimated_departure.apply_if_newer(
+                                    Stamped::with_version(Some(dep), darwin_version),
+                                );
+                                status.reported_delay_mins.apply_if_newer(
+                                    Stamped::with_version(Some(delay_mins), darwin_version),
+                                );
                             }
                             if let Some(p) = platform {
-                                status.actual_platform = Stamped::new(Some(p));
+                                status.actual_platform.apply_if_newer(
+                                    Stamped::with_version(Some(p), darwin_version),
+                                );
                             }
                             // Populate uid on first sighting.
                             if status.uid.is_none() {
@@ -271,7 +279,9 @@ impl IngestionPipeline {
                             if ts_destination_crs.is_some() {
                                 status.destination_crs = ts_destination_crs;
                             }
-                            status.is_cancelled = Stamped::new(Some(is_cancelled));
+                            status.is_cancelled.apply_if_newer(
+                                Stamped::with_version(Some(is_cancelled), darwin_version),
+                            );
                             status.last_update_source = UpdateSource::StompFirehose;
 
                             // Feed confirmed delay into historical store, then refresh prediction.
