@@ -35,6 +35,10 @@ pub struct DepartureBoardEntry {
     pub estimated_departure: Option<String>,
     pub delay_mins: Option<i32>,
     pub platform: Option<String>,
+    /// `true` when `platform` was sourced from the static timetable DB (no live confirmation
+    /// yet). `false` when Darwin or GBR has provided a confirmed platform.
+    #[serde(default)]
+    pub is_platform_planned: bool,
     pub is_cancelled: Option<bool>,
     /// Seconds since the most recent Stamped field on the backing TrainStatus was updated.
     /// `None` means the age could not be determined (e.g. no registry entry).
@@ -174,7 +178,8 @@ mod tests {
             scheduled_departure: "2024-04-17T12:00:00Z".to_string(),
             estimated_departure: Some("2024-04-17T12:05:00Z".to_string()),
             delay_mins: Some(5),
-            platform: None,
+            platform: Some("3".to_string()),
+            is_platform_planned: true,
             is_cancelled: Some(false),
             last_updated_secs_ago: None,
             destination_name: None,
@@ -183,6 +188,14 @@ mod tests {
         let back: DepartureBoardEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rid, entry.rid);
         assert_eq!(back.delay_mins, Some(5));
+        assert!(back.is_platform_planned);
+    }
+
+    #[test]
+    fn departure_board_entry_is_platform_planned_defaults_false() {
+        let json = r#"{"rid":"x","scheduled_departure":"2024-01-01T00:00:00Z","estimated_departure":null,"delay_mins":null,"platform":null,"is_cancelled":null}"#;
+        let entry: DepartureBoardEntry = serde_json::from_str(json).unwrap();
+        assert!(!entry.is_platform_planned);
     }
 
     #[test]

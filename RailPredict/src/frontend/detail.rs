@@ -71,7 +71,7 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                     }
                     div style="display:flex;gap:0.75rem;align-items:center;" {
                         (delay_badge(delay, cancelled))
-                        (platform_chip(platform.as_deref()))
+                        (platform_chip(platform.as_deref(), false))
                     }
                     @if let Some(pence) = fare_pence {
                         span .fare-chip { "From " (pence_to_pounds(pence)) }
@@ -154,7 +154,7 @@ async fn enrich_to_html(
         div # "live-status" {
             div style="display:flex;gap:0.75rem;align-items:center;" {
                 (delay_badge(live.delay_mins, live.is_cancelled.unwrap_or(false)))
-                (platform_chip(live.platform.as_deref()))
+                (platform_chip(live.platform.as_deref(), false))
             }
             p .train-meta { "State: " (live.state) }
             p .last-updated {

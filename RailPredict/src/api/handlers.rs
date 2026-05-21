@@ -160,17 +160,23 @@ pub async fn build_departure_board(
                 .unwrap_or_else(|| call.uid.trim().to_string());
 
             // Overlay live fields from the registry match.
-            let (estimated_departure, delay_mins, platform, is_cancelled, last_updated_secs_ago) =
+            // `is_platform_planned` is true only when no live source has confirmed a platform
+            // and we are falling back to the static timetable DB value.
+            let (estimated_departure, delay_mins, platform, is_platform_planned, is_cancelled, last_updated_secs_ago) =
                 if let Some(rm) = registry_match {
+                    let live_platform = rm.platform.clone();
+                    let planned = live_platform.is_none() && call.platform.is_some();
                     (
                         rm.estimated_departure.clone(),
                         rm.delay_mins,
-                        rm.platform.clone().or_else(|| call.platform.clone()),
+                        live_platform.or_else(|| call.platform.clone()),
+                        planned,
                         rm.is_cancelled,
                         rm.last_updated_secs_ago,
                     )
                 } else {
-                    (None, None, call.platform.clone(), None, None)
+                    let planned = call.platform.is_some();
+                    (None, None, call.platform.clone(), planned, None, None)
                 };
 
             // Resolve destination name: use the registry match's destination CRS (if any)
@@ -187,6 +193,7 @@ pub async fn build_departure_board(
                 estimated_departure,
                 delay_mins,
                 platform,
+                is_platform_planned,
                 is_cancelled,
                 last_updated_secs_ago,
                 destination_name,
@@ -336,12 +343,14 @@ pub async fn journey_handler(
         .into_iter()
         .map(|(uid, dep_time, platform)| {
             let scheduled_dt = chrono::NaiveDateTime::new(date, dep_time).and_utc();
+            let is_platform_planned = platform.is_some();
             DepartureBoardEntry {
                 rid: uid.trim().to_string(),
                 scheduled_departure: scheduled_dt.to_rfc3339(),
                 estimated_departure: None,
                 delay_mins: None,
                 platform,
+                is_platform_planned,
                 is_cancelled: None,
                 last_updated_secs_ago: None,
                 destination_name: Some(to.clone()),

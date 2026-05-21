@@ -622,7 +622,7 @@ pub async fn demo_journeys_fragment(
                     div .purchase-result-left {
                         span .purchase-result-time { (dep_str) }
                         span .purchase-result-route { (from.clone()) " → " (to.clone()) }
-                        (platform_chip(platform.as_deref()))
+                        (platform_chip(platform.as_deref(), true))
                     }
                     button
                         type="button"
@@ -1102,34 +1102,33 @@ pub async fn demo_ingest_start(
 
     // Freshness guard: warn before overwriting data that already exists for today.
     let is_forced = form.force.trim() == "1";
-    if !is_forced {
-        if let Ok(count) = today_call_count(&state.db).await {
-            if count > 0 {
-                let url_for_form = url.clone();
-                return html! {
-                    div .ingest-guard {
-                        p .ingest-guard-msg {
-                            "⚠  Today already has "
-                            strong { (count) }
-                            " timetable rows in the database — the app will use this data after a restart."
-                            br;
-                            "Re-ingesting is safe (uses " code { "ON CONFLICT DO NOTHING" }
-                            ") but takes several minutes. Are you sure?"
-                        }
-                        form
-                            hx-post="/ui/demo/ingest/start"
-                            hx-target="#ingest-feedback"
-                            hx-swap="innerHTML"
-                            style="display:inline-flex;gap:0.5rem;margin-top:0.5rem"
-                        {
-                            input type="hidden" name="url"   value=(url_for_form);
-                            input type="hidden" name="force" value="1";
-                            button type="submit" .ingest-force-btn { "Yes, re-ingest anyway" }
-                        }
-                    }
-                };
+    if !is_forced
+        && let Ok(count) = today_call_count(&state.db).await
+        && count > 0
+    {
+        let url_for_form = url.clone();
+        return html! {
+            div .ingest-guard {
+                p .ingest-guard-msg {
+                    "⚠  Today already has "
+                    strong { (count) }
+                    " timetable rows in the database — the app will use this data after a restart."
+                    br;
+                    "Re-ingesting is safe (uses " code { "ON CONFLICT DO NOTHING" }
+                    ") but takes several minutes. Are you sure?"
+                }
+                form
+                    hx-post="/ui/demo/ingest/start"
+                    hx-target="#ingest-feedback"
+                    hx-swap="innerHTML"
+                    style="display:inline-flex;gap:0.5rem;margin-top:0.5rem"
+                {
+                    input type="hidden" name="url"   value=(url_for_form);
+                    input type="hidden" name="force" value="1";
+                    button type="submit" .ingest-force-btn { "Yes, re-ingest anyway" }
+                }
             }
-        }
+        };
     }
 
     // Reset to Downloading — fires the watch channel, SSE stream updates immediately.
@@ -1179,15 +1178,10 @@ pub async fn demo_ingest_stream(
             yield Ok(Event::default().event("ingest-update").data(html));
         }
 
-        loop {
-            match rx.changed().await {
-                Ok(()) => {
-                    let status = rx.borrow_and_update().clone();
-                    let html = render_ingest_progress(&status).into_string();
-                    yield Ok(Event::default().event("ingest-update").data(html));
-                }
-                Err(_) => break,
-            }
+        while let Ok(()) = rx.changed().await {
+            let status = rx.borrow_and_update().clone();
+            let html = render_ingest_progress(&status).into_string();
+            yield Ok(Event::default().event("ingest-update").data(html));
         }
     };
 
