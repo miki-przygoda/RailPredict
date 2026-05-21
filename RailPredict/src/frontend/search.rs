@@ -91,7 +91,10 @@ pub async fn search_page() -> Markup {
         "Search",
         html! {
             div .search-container {
-                h1 { "Where are you going?" }
+                div .search-hero {
+                    h1 { "Where are you going?" }
+                    p { "Live UK rail departures — type a station name to begin." }
+                }
                 div .search-tabs {
                     button .tab-btn.active type="button"
                         onclick="showTab('departures', event)" { "Departures" }
@@ -208,7 +211,10 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
             p .no-results { "No departures found for " (crs) "." }
         } @else {
             div .departure-board {
-                h2 { "Departures from " (crs) }
+                div .departure-board-header {
+                    h2 { "Departures from " (crs) }
+                    span .departure-count { (entries.len()) " service" (if entries.len() == 1 { "" } else { "s" }) }
+                }
                 @for entry in entries {
                     @let stale = entry.last_updated_secs_ago.is_some_and(|s| s > 120);
                     a .train-card
