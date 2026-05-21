@@ -62,6 +62,8 @@ pub struct Config {
     // GBR Retail API
     pub gbr_api_key: String,
     pub gbr_api_base_url: String,
+    /// `true` iff `GBR_API_KEY` is set — gates the poll consumer task.
+    pub gbr_configured: bool,
 
     // Darwin Push Port (STOMP)
     pub darwin_host: String,
@@ -69,6 +71,8 @@ pub struct Config {
     pub darwin_username: String,
     pub darwin_password: String,
     pub darwin_destination: String,
+    /// `true` iff all three of `DARWIN_HOST`, `DARWIN_USERNAME`, `DARWIN_PASSWORD` are set.
+    pub darwin_configured: bool,
 
     // Ingestion
     /// Empty set means watch all routes (no filter applied).
@@ -134,14 +138,22 @@ impl Config {
         }
 
         let database_url = require!("DATABASE_URL");
-        let gbr_api_key = require!("GBR_API_KEY");
-        let darwin_host = require!("DARWIN_HOST");
-        let darwin_username = require!("DARWIN_USERNAME");
-        let darwin_password = require!("DARWIN_PASSWORD");
 
         if !missing.is_empty() {
             return Err(ConfigError { missing });
         }
+
+        // Darwin and GBR are optional — missing vars disable those features but don't
+        // prevent startup. The startup report (printed before config loads) tells the
+        // operator exactly what is missing and what that disables.
+        let gbr_api_key = optional!("GBR_API_KEY", "");
+        let darwin_host = optional!("DARWIN_HOST", "");
+        let darwin_username = optional!("DARWIN_USERNAME", "");
+        let darwin_password = optional!("DARWIN_PASSWORD", "");
+
+        let gbr_configured = !gbr_api_key.is_empty();
+        let darwin_configured =
+            !darwin_host.is_empty() && !darwin_username.is_empty() && !darwin_password.is_empty();
 
         let darwin_port = std::env::var("DARWIN_PORT")
             .ok()
@@ -202,10 +214,12 @@ impl Config {
             database_url,
             gbr_api_key,
             gbr_api_base_url: optional!("GBR_API_BASE_URL", "https://api.rtt.io/api"),
+            gbr_configured,
             darwin_host,
             darwin_port,
             darwin_username,
             darwin_password,
+            darwin_configured,
             darwin_destination: optional!(
                 "DARWIN_DESTINATION",
                 "/topic/darwin.pushport-v16"
@@ -230,11 +244,13 @@ impl Config {
             database_url: "postgres://railpredict:railpredict@localhost:5432/railpredict".to_string(),
             gbr_api_key: "test-key".to_string(),
             gbr_api_base_url: "http://localhost:9999".to_string(),
+            gbr_configured: true,
             darwin_host: "localhost".to_string(),
             darwin_port: 61613,
             darwin_username: "test".to_string(),
             darwin_password: "test".to_string(),
             darwin_destination: "/topic/test".to_string(),
+            darwin_configured: true,
             watched_routes: HashSet::new(),
             log_level: "debug".to_string(),
             log_format: LogFormat::Pretty,
@@ -399,5 +415,51 @@ mod tests {
     fn database_url_required() {
         let err = ConfigError { missing: vec!["DATABASE_URL"] };
         assert!(err.to_string().contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn darwin_and_gbr_absent_does_not_fail_config() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
+            std::env::remove_var("GBR_API_KEY");
+            std::env::remove_var("DARWIN_HOST");
+            std::env::remove_var("DARWIN_USERNAME");
+            std::env::remove_var("DARWIN_PASSWORD");
+            std::env::set_var("LOG_LEVEL", "debug");
+        }
+
+        let config = Config::from_env().expect("should succeed without Darwin/GBR creds");
+        assert!(!config.darwin_configured, "darwin_configured must be false when creds absent");
+        assert!(!config.gbr_configured, "gbr_configured must be false when key absent");
+
+        unsafe {
+            for v in ["DATABASE_URL", "LOG_LEVEL"] {
+                std::env::remove_var(v);
+            }
+        }
+    }
+
+    #[test]
+    fn darwin_configured_true_when_all_three_vars_set() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://u:p@localhost/db");
+            std::env::set_var("DARWIN_HOST", "darwin.example.com");
+            std::env::set_var("DARWIN_USERNAME", "user");
+            std::env::set_var("DARWIN_PASSWORD", "pass");
+            std::env::remove_var("GBR_API_KEY");
+            std::env::set_var("LOG_LEVEL", "debug");
+        }
+
+        let config = Config::from_env().unwrap();
+        assert!(config.darwin_configured);
+        assert!(!config.gbr_configured);
+
+        unsafe {
+            for v in ["DATABASE_URL", "DARWIN_HOST", "DARWIN_USERNAME", "DARWIN_PASSWORD", "LOG_LEVEL"] {
+                std::env::remove_var(v);
+            }
+        }
     }
 }

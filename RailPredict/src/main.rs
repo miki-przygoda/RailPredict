@@ -43,6 +43,98 @@ use railpredict::prediction::PredictionEngine;
 use railpredict::state_machine::PollManager;
 use railpredict::types::{TrainId, TrainStatus};
 
+/// Prints a startup diagnostics table to stderr before the structured logger initialises,
+/// so the report is always readable regardless of LOG_FORMAT (pretty/json).
+///
+/// Uses `ok` / `--` / `!!` markers instead of Unicode symbols for maximum terminal compat.
+fn print_startup_report() {
+    const W: usize = 28;
+    let sep = "─".repeat(58);
+
+    eprintln!();
+    eprintln!("{sep}");
+    eprintln!("  RailPredict v{}  —  startup", env!("CARGO_PKG_VERSION"));
+    eprintln!("{sep}");
+    eprintln!();
+
+    let db = std::env::var("DATABASE_URL").unwrap_or_default();
+    let darwin_host = std::env::var("DARWIN_HOST").unwrap_or_default();
+    let darwin_user = std::env::var("DARWIN_USERNAME").unwrap_or_default();
+    let darwin_pass = std::env::var("DARWIN_PASSWORD").unwrap_or_default();
+    let gbr_key = std::env::var("GBR_API_KEY").unwrap_or_default();
+    let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+    let cors = std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_default();
+
+    // Helpers — macros so the label width constant W is in scope.
+    macro_rules! ok   { ($lbl:expr, $note:expr) => { eprintln!("    {:<W$} ok  {}", $lbl, $note) }; }
+    macro_rules! opt  { ($lbl:expr, $note:expr) => { eprintln!("    {:<W$} --  {}", $lbl, $note) }; }
+    macro_rules! miss { ($lbl:expr, $note:expr) => { eprintln!("    {:<W$} !!  {}", $lbl, $note) }; }
+
+    // --- Core ---
+    eprintln!("  core");
+    if db.is_empty() {
+        miss!("DATABASE_URL", "not set  <- server cannot start without this");
+    } else {
+        ok!("DATABASE_URL", "configured");
+    }
+    let bind = std::env::var("API_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3000 (default)".to_string());
+    ok!("API_BIND_ADDR", bind);
+    eprintln!();
+
+    // --- Live ingestion ---
+    let darwin_ok = !darwin_host.is_empty() && !darwin_user.is_empty() && !darwin_pass.is_empty();
+    eprintln!("  live ingestion  (Darwin Push Port)");
+    if darwin_host.is_empty()  { miss!("DARWIN_HOST",     "not set"); }
+    else                       { ok!(  "DARWIN_HOST",     &darwin_host); }
+    if darwin_user.is_empty()  { miss!("DARWIN_USERNAME", "not set"); }
+    else                       { ok!(  "DARWIN_USERNAME", "configured"); }
+    if darwin_pass.is_empty()  { miss!("DARWIN_PASSWORD", "not set"); }
+    else                       { ok!(  "DARWIN_PASSWORD", "set"); }
+    if !darwin_ok {
+        eprintln!("    -> live arrival updates disabled");
+        eprintln!("       set DARWIN_HOST / DARWIN_USERNAME / DARWIN_PASSWORD to enable");
+    }
+    eprintln!();
+
+    // --- REST polling ---
+    eprintln!("  REST polling  (GBR Retail API)");
+    if gbr_key.is_empty() {
+        miss!("GBR_API_KEY", "not set  -> fares and seat data disabled");
+    } else {
+        ok!("GBR_API_KEY", "set");
+    }
+    eprintln!();
+
+    // --- Security ---
+    let cors_required = log_level != "debug";
+    eprintln!("  security");
+    if cors.is_empty() && cors_required {
+        miss!("CORS_ALLOWED_ORIGINS", "not set  <- required in production (LOG_LEVEL != debug)");
+    } else if cors.is_empty() {
+        opt!("CORS_ALLOWED_ORIGINS", "not set  (permissive — dev mode only)");
+    } else {
+        let n = cors.split(',').filter(|s| !s.trim().is_empty()).count();
+        ok!("CORS_ALLOWED_ORIGINS", format!("{n} origin(s) configured"));
+    }
+    eprintln!();
+
+    // --- Optional ---
+    eprintln!("  optional");
+    let routes = std::env::var("WATCHED_ROUTES").unwrap_or_default();
+    if routes.is_empty() { opt!("WATCHED_ROUTES",   "not set  (watching all routes)"); }
+    else                 { ok!( "WATCHED_ROUTES",   &routes); }
+    let ntfy = std::env::var("NTFY_URL").unwrap_or_default();
+    if ntfy.is_empty() { opt!("NTFY_URL",           "not set  (push notifications off)"); }
+    else               { ok!( "NTFY_URL",           &ntfy); }
+    let weather = std::env::var("WEATHER_ANCHORS").unwrap_or_default();
+    if weather.is_empty() { opt!("WEATHER_ANCHORS", "not set  (weather polling off)"); }
+    else                  { ok!( "WEATHER_ANCHORS", "configured"); }
+
+    eprintln!();
+    eprintln!("{sep}");
+    eprintln!();
+}
+
 fn init_tracing(config: &Config) {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -72,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("Failed to install rustls ring crypto provider"))?;
 
     dotenvy::dotenv().ok();
+    print_startup_report();
 
     let config = Config::from_env().map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -351,8 +444,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // --- Poll consumer task (Tier C — only when GBR_API_KEY is set) ---
-    let gbr_key = std::env::var("GBR_API_KEY").unwrap_or_default();
-    let poll_task: Option<tokio::task::JoinHandle<()>> = if gbr_key.is_empty() {
+    let poll_task: Option<tokio::task::JoinHandle<()>> = if !config.gbr_configured {
         tracing::warn!("GBR_API_KEY not set — poll consumer disabled, Tier C inactive");
         None
     } else {
@@ -366,6 +458,10 @@ async fn main() -> anyhow::Result<()> {
         let coalescer = Arc::new(Coalescer::new(gbr_client));
         let rate_limiter = Arc::new(RateLimiter::default_gbr());
         let cb = Arc::new(CircuitBreaker::default_gbr());
+
+        // Monotonic counter for GBR poll versions. Values stay small (1, 2, 3 …) so Darwin
+        // firehose versions (timestamp_millis ~ 1.75 × 10¹²) always take priority.
+        let poll_version = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
         let mut poll_rx = sc_tx.subscribe();
         let poll_registry = Arc::clone(&registry);
@@ -413,34 +509,45 @@ async fn main() -> anyhow::Result<()> {
                         let cb_clone = Arc::clone(&cb);
                         let reg_clone = Arc::clone(&poll_registry);
                         let volatility_store_poll = Arc::clone(&volatility_store);
+                        let poll_version_inner = Arc::clone(&poll_version);
 
                         tokio::spawn(async move {
                             match coalescer.get(train_id.clone()).await {
                                 Ok(status) => {
                                     cb_clone.record_success().await;
+                                    // Assign a monotonic version to this poll result.
+                                    // fetch_add is Relaxed — ordering is enforced by the
+                                    // registry write lock acquired inside update().
+                                    let ver = poll_version_inner
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                        + 1;
                                     reg_clone
                                         .update(&train_id, |existing| {
-                                            // Only apply if GBR data is at least as fresh as stored data.
-                                            let gbr_ts =
-                                                status.actual_estimated_departure.last_updated;
-                                            if gbr_ts
-                                                >= existing
-                                                    .actual_estimated_departure
-                                                    .last_updated
-                                            {
-                                                existing.actual_estimated_departure =
-                                                    status.actual_estimated_departure.clone();
-                                                existing.reported_delay_mins =
-                                                    status.reported_delay_mins.clone();
-                                            }
-                                            if gbr_ts >= existing.actual_platform.last_updated {
-                                                existing.actual_platform =
-                                                    status.actual_platform.clone();
-                                            }
-                                            if gbr_ts >= existing.is_cancelled.last_updated {
-                                                existing.is_cancelled =
-                                                    status.is_cancelled.clone();
-                                            }
+                                            use railpredict::types::Stamped;
+                                            existing.actual_estimated_departure.apply_if_newer(
+                                                Stamped::with_version(
+                                                    status.actual_estimated_departure.value,
+                                                    ver,
+                                                ),
+                                            );
+                                            existing.reported_delay_mins.apply_if_newer(
+                                                Stamped::with_version(
+                                                    status.reported_delay_mins.value,
+                                                    ver,
+                                                ),
+                                            );
+                                            existing.actual_platform.apply_if_newer(
+                                                Stamped::with_version(
+                                                    status.actual_platform.value.clone(),
+                                                    ver,
+                                                ),
+                                            );
+                                            existing.is_cancelled.apply_if_newer(
+                                                Stamped::with_version(
+                                                    status.is_cancelled.value,
+                                                    ver,
+                                                ),
+                                            );
                                             existing.last_update_source =
                                                 status.last_update_source;
                                         })
