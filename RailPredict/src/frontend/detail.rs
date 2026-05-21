@@ -64,17 +64,17 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                 div .train-header {
                     h1 { "Train " (rid) }
                     @if let Some(o) = &origin {
-                        p .train-meta { "From " (o) }
+                        p .train-meta { "Departing from " (o) }
                     }
                     p .train-meta {
-                        "Scheduled " (scheduled.get(11..16).unwrap_or("--:--"))
+                        "Scheduled departure " (scheduled.get(11..16).unwrap_or("--:--"))
                     }
-                    div style="display:flex;gap:0.75rem;align-items:center;" {
+                    div .train-header-badges {
                         (delay_badge(delay, cancelled))
                         (platform_chip(platform.as_deref(), false))
-                    }
-                    @if let Some(pence) = fare_pence {
-                        span .fare-chip { "From " (pence_to_pounds(pence)) }
+                        @if let Some(pence) = fare_pence {
+                            span .fare-chip { "From " (pence_to_pounds(pence)) }
+                        }
                     }
                 }
                 div .live-section hx-ext="sse" sse-connect={ "/ui/trains/" (rid) "/live" } {
@@ -152,13 +152,13 @@ async fn enrich_to_html(
 
     html! {
         div # "live-status" {
-            div style="display:flex;gap:0.75rem;align-items:center;" {
+            div .train-header-badges {
                 (delay_badge(live.delay_mins, live.is_cancelled.unwrap_or(false)))
                 (platform_chip(live.platform.as_deref(), false))
             }
             p .train-meta { "State: " (live.state) }
             p .last-updated {
-                "Updated " (live.timestamp.get(11..19).unwrap_or(&live.timestamp))
+                "Last updated " (live.timestamp.get(11..19).unwrap_or(&live.timestamp)) " UTC"
             }
         }
     }

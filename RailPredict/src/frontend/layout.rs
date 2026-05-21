@@ -16,9 +16,14 @@ pub fn base(title: &str, content: Markup) -> Markup {
             }
             body {
                 nav {
-                    a href="/" { "RailPredict" }
-                    a href="/search" { "Departures" }
-                    a href="/demo" { "Dev Console" }
+                    a .nav-brand href="/" {
+                        span .nav-brand-dot {}
+                        "RailPredict"
+                    }
+                    div .nav-links {
+                        a href="/search" { "Departures" }
+                        a href="/demo" { "Dev Console" }
+                    }
                 }
                 main {
                     (content)

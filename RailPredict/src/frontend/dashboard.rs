@@ -1,6 +1,4 @@
 //! Dashboard page — served at `/`, outside rate limiting.
-//!
-//! Shows system status, DB stats, and navigation links to all major features.
 
 use axum::extract::State;
 use maud::{Markup, html};
@@ -35,88 +33,113 @@ pub async fn dashboard_page(State(state): State<AppState>) -> Markup {
         None
     };
 
-    let (db_label, db_class) = if db_ok {
-        ("Connected", "status-ok")
-    } else {
-        ("Unreachable", "status-error")
-    };
-
-    let stomp_label = if !state.registry.is_empty() {
-        "Live data flowing"
-    } else {
-        "Awaiting Darwin feed"
-    };
+    let stomp_ok = !state.registry.is_empty();
 
     base("Dashboard", html! {
         div .dashboard {
-            h1 { "RailPredict" }
-            p .subtitle { "High-efficiency UK Rail data engine — v" (env!("CARGO_PKG_VERSION")) }
+            // ── Hero ────────────────────────────────────────────────────────
+            div .dashboard-hero {
+                h1 { "RailPredict" }
+                p .subtitle { "UK Rail data engine — v" (env!("CARGO_PKG_VERSION")) }
+            }
 
-            // ── System status ───────────────────────────────────────────────
-            section .dashboard-section {
-                h2 { "System Status" }
-                div .status-grid {
-                    div .status-card {
-                        span .status-label { "Database" }
-                        span .status-value .(db_class) { (db_label) }
+            // ── Live stats ──────────────────────────────────────────────────
+            div .stat-row {
+                div .stat-card {
+                    span .stat-label { "Database" }
+                    span .stat-value .(if db_ok { "ok" } else { "error" }) {
+                        @if db_ok { "Online" } @else { "Down" }
                     }
-                    div .status-card {
-                        span .status-label { "Darwin STOMP" }
-                        span .status-value { (stomp_label) }
+                }
+                div .stat-card {
+                    span .stat-label { "Darwin STOMP" }
+                    span .stat-value .(if stomp_ok { "ok" } else { "warn" }) {
+                        @if stomp_ok { "Live" } @else { "Awaiting" }
                     }
-                    div .status-card {
-                        span .status-label { "Active trains" }
-                        span .status-value { (train_count) }
+                }
+                div .stat-card {
+                    span .stat-label { "Active trains" }
+                    span .stat-value { (train_count) }
+                }
+                div .stat-card {
+                    span .stat-label { "Stations" }
+                    span .stat-value {
+                        @if let Some(n) = station_count { (n) } @else { "—" }
                     }
-                    div .status-card {
-                        span .status-label { "Stations in DB" }
-                        span .status-value {
-                            @if let Some(n) = station_count { (n) } @else { "—" }
-                        }
-                    }
-                    div .status-card {
-                        span .status-label { "Delay records" }
-                        span .status-value {
-                            @if let Some(n) = history_count { (n) } @else { "—" }
-                        }
+                }
+                div .stat-card {
+                    span .stat-label { "Delay records" }
+                    span .stat-value {
+                        @if let Some(n) = history_count { (n) } @else { "—" }
                     }
                 }
             }
 
-            // ── Navigation ──────────────────────────────────────────────────
+            // ── Explore ─────────────────────────────────────────────────────
             section .dashboard-section {
-                h2 { "Explore" }
+                p .section-header { "Explore" }
                 div .nav-grid {
                     a .nav-card href="/search" {
                         h3 { "Departure Board" }
-                        p { "Search departures from any UK station by CRS code." }
+                        p { "Live departures from any UK station. Type a name, pick from autocomplete." }
                     }
-                    a .nav-card href="/health" {
-                        h3 { "Health Check" }
-                        p { "Live DB connectivity probe — used by load balancers." }
+                    a .nav-card href="/demo" {
+                        h3 { "Developer Console" }
+                        p { "Ingest GTFS timetable data, probe the registry, and simulate a ticket purchase." }
                     }
                     a .nav-card href="/metrics" {
                         h3 { "Prometheus Metrics" }
                         p { "Ingestion counters, API latency histograms, circuit breaker state." }
                     }
+                    a .nav-card href="/health" {
+                        h3 { "Health Check" }
+                        p { "DB connectivity probe used by load balancers." }
+                    }
                 }
             }
 
-            // ── Quick API reference ─────────────────────────────────────────
+            // ── API reference ────────────────────────────────────────────────
             section .dashboard-section {
-                h2 { "API" }
+                p .section-header { "REST API" }
                 table .api-table {
                     thead {
                         tr {
-                            th { "Method" } th { "Path" } th { "Returns" }
+                            th { "Method" }
+                            th { "Endpoint" }
+                            th { "Returns" }
                         }
                     }
                     tbody {
-                        tr { td { "GET" } td { code { "/stations/{crs}/departures" } } td { "JSON departure board" } }
-                        tr { td { "GET" } td { code { "/trains/{rid}" }             } td { "JSON train summary" } }
-                        tr { td { "GET" } td { code { "/trains/{rid}/live" }        } td { "SSE live updates" } }
-                        tr { td { "GET" } td { code { "/health" }                   } td { "DB health probe" } }
-                        tr { td { "GET" } td { code { "/metrics" }                  } td { "Prometheus scrape" } }
+                        tr {
+                            td { span .method-badge { "GET" } }
+                            td { code { "/stations/{crs}/departures" } }
+                            td { "JSON departure board" }
+                        }
+                        tr {
+                            td { span .method-badge { "GET" } }
+                            td { code { "/trains/{rid}" } }
+                            td { "JSON train summary" }
+                        }
+                        tr {
+                            td { span .method-badge { "GET" } }
+                            td { code { "/trains/{rid}/live" } }
+                            td { "SSE live updates" }
+                        }
+                        tr {
+                            td { span .method-badge { "GET" } }
+                            td { code { "/journeys?from=XXX&to=YYY" } }
+                            td { "JSON direct services" }
+                        }
+                        tr {
+                            td { span .method-badge { "GET" } }
+                            td { code { "/stations/search?q=..." } }
+                            td { "JSON station autocomplete" }
+                        }
+                        tr {
+                            td { span .method-badge { "GET" } }
+                            td { code { "/health" } }
+                            td { "DB health probe" }
+                        }
                     }
                 }
             }
