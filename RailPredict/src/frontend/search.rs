@@ -162,7 +162,7 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
                         }
                         div .train-card-right {
                             span .train-rid { (entry.rid) }
-                            (platform_chip(entry.platform.as_deref()))
+                            (platform_chip(entry.platform.as_deref(), entry.is_platform_planned))
                         }
                     }
                 }
@@ -311,12 +311,14 @@ pub async fn journeys_fragment(
         .into_iter()
         .map(|(uid, dep_time, platform)| {
             let scheduled_dt = chrono::NaiveDateTime::new(date, dep_time).and_utc();
+            let is_platform_planned = platform.is_some();
             crate::api::types::DepartureBoardEntry {
                 rid: uid.trim().to_string(),
                 scheduled_departure: scheduled_dt.to_rfc3339(),
                 estimated_departure: None,
                 delay_mins: None,
                 platform,
+                is_platform_planned,
                 is_cancelled: None,
                 last_updated_secs_ago: None,
                 destination_name: Some(to.clone()),

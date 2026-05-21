@@ -136,6 +136,7 @@ impl TrainRegistry {
                     .map(|dt| dt.to_rfc3339()),
                 delay_mins: status.best_delay_mins(),
                 platform: status.best_platform().map(str::to_string),
+                is_platform_planned: false,
                 is_cancelled: status.is_cancelled.value,
                 last_updated_secs_ago,
                 destination_name: status.destination_crs.clone(),

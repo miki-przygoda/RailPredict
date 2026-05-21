@@ -22,13 +22,22 @@ pub fn delay_badge(delay_mins: Option<i32>, is_cancelled: bool) -> Markup {
 }
 
 /// Large-type platform indicator — Uber-style "your platform is X" moment.
+/// `is_planned = true` renders a muted chip with a "Planned" label when the platform
+/// comes from the static timetable and has not yet been confirmed by a live source.
 /// Renders nothing when no platform is known.
-pub fn platform_chip(platform: Option<&str>) -> Markup {
+pub fn platform_chip(platform: Option<&str>, is_planned: bool) -> Markup {
     html! {
         @if let Some(p) = platform {
-            div .platform-chip {
-                span .platform-label { "Platform" }
-                span .platform-number { (p) }
+            @if is_planned {
+                div .platform-chip.planned {
+                    span .platform-label { "Platform (planned)" }
+                    span .platform-number { (p) }
+                }
+            } @else {
+                div .platform-chip {
+                    span .platform-label { "Platform" }
+                    span .platform-number { (p) }
+                }
             }
         }
     }
