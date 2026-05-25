@@ -10,10 +10,10 @@ services:
       POSTGRES_DB: railpredict
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # ports:
-    #   # Exposed on host for local psql / pgadmin access (dev only).
-    #   # Remove or restrict in docker-compose.prod.yml.
-    #   - "127.0.0.1:5432:5432"
+    ports:
+      # Exposed on host for local psql / pgadmin access (dev only).
+      # Remove or restrict in docker-compose.prod.yml.
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "railpredict", "-d", "railpredict"]
       interval: 5s
@@ -84,7 +84,7 @@ services:
       - "--web.console.libraries=/usr/share/prometheus/console_libraries"
       - "--web.console.templates=/usr/share/prometheus/consoles"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
