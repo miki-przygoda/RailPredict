@@ -365,6 +365,10 @@ pub async fn journey_handler(
 pub struct StationResult {
     pub crs: String,
     pub name: String,
+    /// Number of scheduled services at this station today (from timetable_calls).
+    /// Zero when GTFS data has not been ingested yet.
+    #[serde(default)]
+    pub trains_today: i64,
 }
 
 /// `GET /stations/search?q=<term>`
@@ -380,17 +384,23 @@ pub async fn station_search_handler(
         return Ok(Json(vec![]));
     }
 
-    let rows: Vec<StationResult> = sqlx::query_as::<_, (String, String)>(
-        "SELECT crs, name FROM stations \
-         WHERE to_tsvector('english', name) @@ plainto_tsquery('english', $1) \
-         ORDER BY name LIMIT 10",
+    let rows: Vec<StationResult> = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT s.crs, s.name, COALESCE(t.cnt, 0) AS trains_today \
+         FROM stations s \
+         LEFT JOIN LATERAL ( \
+             SELECT COUNT(*) AS cnt FROM timetable_calls tc \
+             WHERE tc.location_crs = s.crs AND tc.operating_date = CURRENT_DATE \
+         ) t ON true \
+         WHERE to_tsvector('english', s.name) @@ plainto_tsquery('english', $1) \
+         ORDER BY t.cnt DESC NULLS LAST, s.name \
+         LIMIT 10",
     )
     .bind(&q)
     .fetch_all(&state.db)
     .await
     .map_err(|e| ApiError::internal(format!("DB error: {e}")))?
     .into_iter()
-    .map(|(crs, name)| StationResult { crs, name })
+    .map(|(crs, name, trains_today)| StationResult { crs, name, trains_today })
     .collect();
 
     Ok(Json(rows))
