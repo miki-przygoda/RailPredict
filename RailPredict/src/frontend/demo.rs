@@ -118,6 +118,18 @@ pub async fn demo_page() -> Markup {
                 a .demo-back-link href="/" { "← Dashboard" }
             }
 
+            // ── System Status — full-width above the grid ─────────────────
+            div .demo-status-section {
+                div .demo-section-title { "System Status" }
+                div
+                    hx-get="/ui/demo/status"
+                    hx-trigger="load, every 5s"
+                    hx-swap="innerHTML"
+                {
+                    p .demo-loading { "Polling…" }
+                }
+            }
+
             div .demo-grid {
 
                 // ══════════════════════════════════════════════════════════
@@ -125,23 +137,11 @@ pub async fn demo_page() -> Markup {
                 // ══════════════════════════════════════════════════════════
                 div .demo-col {
 
-                    // 1. System Status ─────────────────────────────────────
-                    div .demo-section {
-                        div .demo-section-title { "System Status" }
-                        div
-                            hx-get="/ui/demo/status"
-                            hx-trigger="load, every 5s"
-                            hx-swap="innerHTML"
-                        {
-                            p .demo-loading { "Polling…" }
-                        }
-                    }
-
-                    // 2. Station Autocomplete tester ────────────────────────
+                    // 1. Station Autocomplete tester ────────────────────────
                     div .demo-section {
                         div .demo-section-title { "Station Autocomplete" }
                         p .demo-hint { "Type 2+ characters — fires /ui/stations/search." }
-                        div style="position:relative" {
+                        div .search-input-group {
                             input
                                 type="text"
                                 id="demo-ac-q"
@@ -156,11 +156,10 @@ pub async fn demo_page() -> Markup {
                             input type="hidden" id="demo-ac-crs" value="";
                             div #demo-ac-results {}
                         }
-                        p .demo-hint style="margin-top:0.5rem" {
+                        p .demo-crs-display {
                             "Selected CRS: "
                             code id="demo-ac-crs-display" { "—" }
                         }
-                        // Mirror the hidden CRS input into the display span on change
                         script { (PreEscaped(r#"
 document.addEventListener('htmx:afterSettle', function() {
     var crs = document.getElementById('demo-ac-crs');
@@ -170,10 +169,10 @@ document.addEventListener('htmx:afterSettle', function() {
 "#)) }
                     }
 
-                    // 3. Departure Board tester ─────────────────────────────
+                    // 2. Departure Board tester ─────────────────────────────
                     div .demo-section {
                         div .demo-section-title { "Departure Board" }
-                        p .demo-hint { "Enter a CRS to load live timetable rows." }
+                        p .demo-hint { "Enter a station name to load live timetable rows." }
                         form
                             hx-get="/ui/stations/departures"
                             hx-target="#demo-board-results"
@@ -181,7 +180,7 @@ document.addEventListener('htmx:afterSettle', function() {
                             hx-swap="innerHTML"
                             .demo-inline-form
                         {
-                            div style="position:relative;flex:1" {
+                            div .search-input-group {
                                 input
                                     type="text"
                                     name="q"
@@ -202,7 +201,7 @@ document.addEventListener('htmx:afterSettle', function() {
                         div #demo-board-results {}
                     }
 
-                    // 4. Registry Probe ─────────────────────────────────────
+                    // 3. Registry Probe ─────────────────────────────────────
                     div .demo-section {
                         div .demo-section-title { "Registry Probe" }
                         p .demo-hint {
@@ -221,13 +220,13 @@ document.addEventListener('htmx:afterSettle', function() {
                                 type="text"
                                 name="rid"
                                 placeholder="RID (e.g. 202404170123456)"
-                                style="flex:1;font-family:monospace;font-size:0.82rem;";
+                                .demo-mono-input;
                             button type="submit" { "Probe" }
                         }
                         div #demo-reg-result {}
                     }
 
-                    // 5. Live Event Monitor ─────────────────────────────────
+                    // 4. Live Event Monitor ─────────────────────────────────
                     div .demo-section {
                         div .demo-section-title {
                             "Live Event Monitor"
@@ -241,38 +240,30 @@ document.addEventListener('htmx:afterSettle', function() {
                                 "Connecting to /ui/demo/events…"
                             }
                         }
-                        // Raw EventSource — needed for prepend behaviour htmx SSE doesn't support.
                         script { (PreEscaped(r#"
 (function() {
     var feed  = document.getElementById('demo-event-feed');
     var es    = new EventSource('/ui/demo/events');
     var MAX_ROWS = 30;
-
     es.addEventListener('state-change', function(e) {
         var ph = document.getElementById('event-feed-placeholder');
         if (ph) ph.remove();
-
         var row = document.createElement('div');
         row.className = 'demo-event-row';
         row.innerHTML = e.data;
         feed.insertBefore(row, feed.firstChild);
-
         var rows = feed.querySelectorAll('.demo-event-row');
         if (rows.length > MAX_ROWS) rows[rows.length - 1].remove();
     });
-
     es.onerror = function() {
         var ph = document.getElementById('event-feed-placeholder');
-        if (ph) {
-            ph.className = 'demo-error';
-            ph.textContent = 'Stream disconnected — reload to reconnect.';
-        }
+        if (ph) { ph.className = 'demo-error'; ph.textContent = 'Stream disconnected — reload to reconnect.'; }
     };
 })();
 "#)) }
                     }
 
-                    // 6. GTFS Data Ingest ───────────────────────────────────
+                    // 5. GTFS Data Ingest ───────────────────────────────────
                     div .demo-section {
                         div .demo-section-title {
                             "Data Ingest"
@@ -282,7 +273,6 @@ document.addEventListener('htmx:afterSettle', function() {
                             "Seed the database with stations, services, and timetable data. "
                             "Leave URL blank to use the " code { "GTFS_URL" } " env var."
                         }
-                        // Freshness indicator — loaded once on page open
                         div
                             hx-get="/ui/demo/ingest/freshness"
                             hx-trigger="load"
@@ -301,7 +291,7 @@ document.addEventListener('htmx:afterSettle', function() {
                                 name="url"
                                 id="ingest-url-input"
                                 placeholder="GTFS URL (or blank for GTFS_URL env)"
-                                style="flex:1;font-family:monospace;font-size:0.82rem;";
+                                .demo-mono-input;
                             button type="submit" .ingest-start-btn { "▶ Start" }
                         }
                         div #ingest-feedback {}
@@ -350,7 +340,7 @@ document.addEventListener('htmx:afterSettle', function() {
                             .purchase-search-form
                         {
                             div .purchase-from-to {
-                                div style="position:relative" {
+                                div .search-input-group {
                                     input
                                         type="text"
                                         name="from-q"
@@ -367,7 +357,7 @@ document.addEventListener('htmx:afterSettle', function() {
                                     div #purch-from-sugg {}
                                 }
                                 span .purchase-arrow { "→" }
-                                div style="position:relative" {
+                                div .search-input-group {
                                     input
                                         type="text"
                                         name="to-q"
@@ -384,7 +374,7 @@ document.addEventListener('htmx:afterSettle', function() {
                                     div #purch-to-sugg {}
                                 }
                             }
-                            div style="display:flex;gap:0.6rem;align-items:center;" {
+                            div .purchase-date-row {
                                 input
                                     type="date"
                                     name="date"
@@ -394,13 +384,13 @@ document.addEventListener('htmx:afterSettle', function() {
                         }
 
                         // Step 2: Results ─────────────────────────────────
-                        div id="purchase-journey-results" style="margin:0.75rem 0;" {}
+                        div #purchase-journey-results {}
 
                         // Step 3: Checkout (loaded by "Book" button on a result card) ──
-                        div id="purchase-checkout" {}
+                        div #purchase-checkout {}
 
                         // Step 4: Outcome (loaded by "Confirm & Pay") ──────
-                        div id="purchase-outcome" {}
+                        div #purchase-outcome {}
 
                     } // end purchase-panel
                 } // end right col
@@ -611,7 +601,7 @@ pub async fn demo_journeys_fragment(
     }
 
     html! {
-        div .purchase-step-header style="margin-top:0.75rem" {
+        div .purchase-step-header .purchase-step-spaced {
             span .purchase-step-num { "2" }
             " Select a service"
         }
@@ -681,7 +671,7 @@ pub async fn demo_checkout_fragment(
     let to_display   = to_name.as_deref().unwrap_or(&to);
 
     html! {
-        div .purchase-step-header style="margin-top:1.25rem" {
+        div .purchase-step-header .purchase-step-spaced-lg {
             span .purchase-step-num { "3" }
             " Review & pay"
         }
@@ -722,11 +712,11 @@ pub async fn demo_checkout_fragment(
             // Passenger details (mock form — no real validation needed for demo)
             div .checkout-passenger-section {
                 p .checkout-section-label { "Passenger details" }
-                div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.75rem;" {
+                div .checkout-name-grid {
                     input type="text" placeholder="First name" .checkout-field;
                     input type="text" placeholder="Last name"  .checkout-field;
                 }
-                input type="email" placeholder="Email address" .checkout-field style="width:100%;margin-bottom:0.5rem;";
+                input type="email" placeholder="Email address" .checkout-field .checkout-field-full;
             }
 
             // Developer info bar (always visible on demo page)
@@ -843,7 +833,7 @@ pub async fn demo_purchase_fragment(
     );
 
     html! {
-        div .purchase-step-header style="margin-top:1.25rem" {
+        div .purchase-step-header .purchase-step-spaced-lg {
             span .purchase-step-num .step-done { "✓" }
             " Booking confirmed (simulated)"
         }
@@ -861,7 +851,7 @@ pub async fn demo_purchase_fragment(
                         @if form.passengers > 1 { "s" }
                     }
                     p .purchase-confirmed-total { "Total paid: " strong { (total) } }
-                    p .purchase-confirmed-time style="font-size:0.78rem;opacity:0.7" { "Confirmed at " (confirmed_at) }
+                    p .purchase-confirmed-time { "Confirmed at " (confirmed_at) }
                 }
             }
 
@@ -906,11 +896,11 @@ pub async fn demo_purchase_fragment(
                         span .dev-info-label { "Circuit breaker" }
                         code { "PurchaseCircuitBreaker · threshold=1 · cool_down=60s" }
                     }
-                    p .dev-info-label style="margin-top:0.75rem;margin-bottom:0.25rem" { "Request body (JSON):" }
+                    p .dev-info-label .dev-info-code-header { "Request body (JSON):" }
                     pre .dev-code { (mock_request_json) }
-                    p .dev-info-label style="margin-top:0.75rem;margin-bottom:0.25rem" { "Response body (201 Created):" }
+                    p .dev-info-label .dev-info-code-header { "Response body (201 Created):" }
                     pre .dev-code { (mock_response_json) }
-                    p .dev-info-note style="margin-top:0.75rem" {
+                    p .dev-info-note .dev-info-note-spaced {
                         "In production this call goes through "
                         code { "LiveGbrClient::purchase()" }
                         " → "
@@ -1121,7 +1111,7 @@ pub async fn demo_ingest_start(
                     hx-post="/ui/demo/ingest/start"
                     hx-target="#ingest-feedback"
                     hx-swap="innerHTML"
-                    style="display:inline-flex;gap:0.5rem;margin-top:0.5rem"
+                    .demo-inline-form
                 {
                     input type="hidden" name="url"   value=(url_for_form);
                     input type="hidden" name="force" value="1";
@@ -1156,7 +1146,7 @@ pub async fn demo_ingest_start(
     });
 
     html! {
-        p .demo-hint style="color:var(--green)" { "▶ Ingest started — progress shown below." }
+        p .demo-success { "▶ Ingest started — progress shown below." }
     }
 }
 
