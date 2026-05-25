@@ -50,6 +50,10 @@ pub struct DepartureBoardEntry {
     /// is not wired (Phase 4).
     #[serde(default)]
     pub destination_name: Option<String>,
+    /// ML or statistical model prediction made before live data was available.
+    /// `None` when no prediction has been computed for this service pattern.
+    #[serde(default)]
+    pub predicted_delay_mins: Option<i32>,
 }
 
 /// Streamed over SSE for `GET /trains/{rid}/live`.
@@ -63,6 +67,9 @@ pub struct LiveUpdateEvent {
     pub platform: Option<String>,
     /// ISO 8601 timestamp when this event was generated.
     pub timestamp: String,
+    /// ML or statistical model prediction.
+    #[serde(default)]
+    pub predicted_delay_mins: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,11 +190,13 @@ mod tests {
             is_cancelled: Some(false),
             last_updated_secs_ago: None,
             destination_name: None,
+            predicted_delay_mins: Some(4),
         };
         let json = serde_json::to_string(&entry).unwrap();
         let back: DepartureBoardEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rid, entry.rid);
         assert_eq!(back.delay_mins, Some(5));
+        assert_eq!(back.predicted_delay_mins, Some(4));
         assert!(back.is_platform_planned);
     }
 
@@ -207,6 +216,7 @@ mod tests {
             delay_mins: Some(3),
             platform: Some("4A".to_string()),
             timestamp: "2024-04-17T12:00:00Z".to_string(),
+            predicted_delay_mins: Some(5),
         };
         let json = serde_json::to_string(&ev).unwrap();
         let back: LiveUpdateEvent = serde_json::from_str(&json).unwrap();

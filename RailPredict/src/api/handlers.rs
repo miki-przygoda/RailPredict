@@ -162,7 +162,7 @@ pub async fn build_departure_board(
             // Overlay live fields from the registry match.
             // `is_platform_planned` is true only when no live source has confirmed a platform
             // and we are falling back to the static timetable DB value.
-            let (estimated_departure, delay_mins, platform, is_platform_planned, is_cancelled, last_updated_secs_ago) =
+            let (estimated_departure, delay_mins, platform, is_platform_planned, is_cancelled, last_updated_secs_ago, predicted_delay_mins) =
                 if let Some(rm) = registry_match {
                     let live_platform = rm.platform.clone();
                     let planned = live_platform.is_none() && call.platform.is_some();
@@ -173,10 +173,11 @@ pub async fn build_departure_board(
                         planned,
                         rm.is_cancelled,
                         rm.last_updated_secs_ago,
+                        rm.predicted_delay_mins,
                     )
                 } else {
                     let planned = call.platform.is_some();
-                    (None, None, call.platform.clone(), planned, None, None)
+                    (None, None, call.platform.clone(), planned, None, None, None)
                 };
 
             // Resolve destination name: use the registry match's destination CRS (if any)
@@ -197,6 +198,7 @@ pub async fn build_departure_board(
                 is_cancelled,
                 last_updated_secs_ago,
                 destination_name,
+                predicted_delay_mins,
             }
         })
         .collect();
@@ -354,6 +356,7 @@ pub async fn journey_handler(
                 is_cancelled: None,
                 last_updated_secs_ago: None,
                 destination_name: Some(to.clone()),
+                predicted_delay_mins: None,
             }
         })
         .collect();

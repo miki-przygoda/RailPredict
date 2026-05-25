@@ -489,6 +489,86 @@ main {
 .badge.cancelled { background: var(--red-dim);    color: var(--red); }
 
 /* ============================================================
+   Prediction chip
+   ============================================================ */
+
+.pred-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(77, 142, 247, 0.08);
+  border: 1px solid rgba(77, 142, 247, 0.2);
+  border-radius: var(--r-sm);
+  padding: 0.25rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pred-value {
+  color: var(--blue);
+}
+
+.pred-value.pred-ontime {
+  color: var(--green);
+}
+
+.pred-delta {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+
+.pred-delta-exact { background: var(--surface-3); color: var(--text-muted); }
+.pred-delta-over  { background: var(--red-dim);   color: var(--red); }
+.pred-delta-under { background: var(--green-dim); color: var(--green); }
+
+/* ============================================================
+   Prediction filter bar (departure board)
+   ============================================================ */
+
+.pred-filter-bar {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.pred-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.pred-filter-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.pred-filter-btn.active {
+  background: rgba(77, 142, 247, 0.12);
+  border-color: rgba(77, 142, 247, 0.35);
+  color: var(--blue);
+}
+
+.pred-filter-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+/* ============================================================
    Platform chip
    ============================================================ */
 
