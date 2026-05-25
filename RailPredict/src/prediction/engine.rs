@@ -52,7 +52,8 @@ use crate::types::train_status::Stamped;
 use crate::types::volatility::CorrelationSignal;
 use crate::types::TrainStatus;
 
-use super::types::{DelayRecord, HistoricalStore, ServicePattern, MAX_SAMPLES};
+use super::onnx_engine::OnnxEngine;
+use super::types::{DelayRecord, HistoricalStore, LiveFeatures, ServicePattern, MAX_SAMPLES};
 
 // ---------------------------------------------------------------------------
 // Blend weights for Phase 1 (preceding service correlation)
@@ -87,10 +88,14 @@ const STALENESS_THRESHOLD_DAYS: f64 = 21.0;
 // PredictionEngine
 // ---------------------------------------------------------------------------
 
-/// Wraps the shared `HistoricalStore`. Cheap to clone — each clone shares the same store.
+/// Wraps the shared `HistoricalStore` and the optional ONNX ML engine.
+///
+/// Cheap to clone — each clone shares the same `Arc`-backed store and engine.
+/// Prediction priority: real-time ONNX → day-ahead ONNX → trimmed-mean statistical.
 #[derive(Clone)]
 pub struct PredictionEngine {
     store: Arc<HistoricalStore>,
+    onnx:  Arc<OnnxEngine>,
 }
 
 impl Default for PredictionEngine {
@@ -101,12 +106,22 @@ impl Default for PredictionEngine {
 
 impl PredictionEngine {
     pub fn new() -> Self {
-        Self { store: Arc::new(HistoricalStore::new()) }
+        Self {
+            store: Arc::new(HistoricalStore::new()),
+            onnx:  Arc::new(OnnxEngine::default()),
+        }
     }
 
     /// Construct with an existing store (used when pre-loading from the DB on startup).
+    /// Uses the default no-op ONNX engine — call `with_store_and_onnx` to enable ML.
     pub fn with_store(store: Arc<HistoricalStore>) -> Self {
-        Self { store }
+        Self { store, onnx: Arc::new(OnnxEngine::default()) }
+    }
+
+    /// Construct with pre-loaded history AND an ONNX engine.
+    /// This is the production path: `OnnxEngine::load("models")` at startup.
+    pub fn with_store_and_onnx(store: Arc<HistoricalStore>, onnx: Arc<OnnxEngine>) -> Self {
+        Self { store, onnx }
     }
 
     /// Returns a cheap `Arc` clone of the store — used by the background DB flush task.
@@ -151,6 +166,74 @@ impl PredictionEngine {
         registry_snapshot: Option<&[TrainStatus]>,
     ) {
         let Some(pattern) = derive_pattern(status) else { return };
+
+        // -----------------------------------------------------------------------
+        // Rolling stats (shared by both ONNX models and the statistical baseline)
+        // -----------------------------------------------------------------------
+        let rolling = self.store.rolling_stats_7d(&pattern);
+
+        // -----------------------------------------------------------------------
+        // ML path: try real-time ONNX if a live Darwin reading is available,
+        //          then day-ahead ONNX, then fall back to the statistical engine.
+        // -----------------------------------------------------------------------
+        let dep = &status.scheduled_departure.value;
+
+        let ml_prediction: Option<i32> = if let Some(reported) = status.reported_delay_mins.value {
+            // Real-time: we have a live Darwin delay signal — use the 15-feature model.
+            let preceding = status
+                .volatility
+                .correlation_signal
+                .as_ref()
+                .map_or(0.0, |s| s.preceding_delay_mins as f32);
+            let wind = status.volatility.wind_speed_mph.unwrap_or(0.0);
+            let volatility_score = match (status.volatility.is_wind_critical(), status.volatility.incident_flagged) {
+                (true,  true)  => 3.0_f32,
+                (false, true)  => 2.0,
+                (true,  false) => 1.0,
+                (false, false) => 0.0,
+            };
+            let mins_until = (dep.timestamp() - Utc::now().timestamp()) as f32 / 60.0;
+            let live = LiveFeatures {
+                current_delay_mins:   reported as f32,
+                preceding_delay_mins: preceding,
+                wind_mph:             wind,
+                volatility_score,
+                mins_until_departure: mins_until,
+            };
+            self.onnx.predict_realtime(&pattern, &rolling, dep, &live)
+                .or_else(|| self.onnx.predict_day_ahead(&pattern, &rolling, dep))
+        } else {
+            // Day-ahead: no live reading yet.
+            self.onnx.predict_day_ahead(&pattern, &rolling, dep)
+        };
+
+        if let Some(pred) = ml_prediction {
+            status.predicted_delay_mins = Stamped::new(Some(pred));
+            // Confidence for ML path: use rolling sample coverage as proxy.
+            status.volatility.historical_reliability = Some(
+                (rolling.sample_count_log / 4.0_f32).min(1.0),
+            );
+            // Still run correlation scan to populate the signal for UI auditability.
+            let (_, correlation_signal) = if let Some(snapshot) = registry_snapshot {
+                apply_preceding_correlation(pred, status, snapshot)
+            } else {
+                (pred, None)
+            };
+            status.volatility.correlation_signal = correlation_signal;
+
+            if let (Some(predicted), Some(reported)) = (
+                status.predicted_delay_mins.value,
+                status.reported_delay_mins.value,
+            ) {
+                metrics::histogram!("prediction_error_mins")
+                    .record((predicted - reported).unsigned_abs() as f64);
+            }
+            return;
+        }
+
+        // -----------------------------------------------------------------------
+        // Statistical fallback: trimmed mean (unchanged from original engine)
+        // -----------------------------------------------------------------------
         let Some(samples) = self.store.get_samples(&pattern) else { return };
         if samples.len() < 3 {
             return;

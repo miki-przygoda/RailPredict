@@ -15,10 +15,42 @@
 
 use std::collections::VecDeque;
 
-use chrono::{DateTime, Utc, Weekday};
+use chrono::{DateTime, Duration, Utc, Weekday};
 use dashmap::DashMap;
 
 pub const MAX_SAMPLES: usize = 90;
+
+/// Rolling 7-day statistics for a service pattern.
+///
+/// All fields default to 0.0 when no recent history exists — this maps cleanly to
+/// "no prior signal" in the ML feature vector without Option unwrapping at call sites.
+#[derive(Debug, Clone, Default)]
+pub struct RollingStats {
+    /// Mean delay in minutes over the last 7 days.
+    pub mean_delay: f32,
+    /// Standard deviation of delay in minutes over the last 7 days.
+    pub std_delay: f32,
+    /// Percentage of trains that arrived on time (delay ≤ 0) over the last 7 days.
+    pub on_time_pct: f32,
+    /// log1p(n) where n = number of observations in the last 7 days.
+    pub sample_count_log: f32,
+}
+
+/// Live Darwin / weather signals available when a train is in Active or Critical state.
+/// Used as the 5 extra features for the real-time ONNX model.
+#[derive(Debug, Clone, Default)]
+pub struct LiveFeatures {
+    /// Latest reported delay from Darwin (0.0 if unknown).
+    pub current_delay_mins: f32,
+    /// Delay of the preceding service at the same origin (0.0 if no signal).
+    pub preceding_delay_mins: f32,
+    /// Wind speed in mph from VolatilityStore (0.0 if weather polling is off).
+    pub wind_mph: f32,
+    /// Encoded volatility level: 0.0 = none, 1.0 = wind critical, 2.0 = incident, 3.0 = both.
+    pub volatility_score: f32,
+    /// Minutes until scheduled departure (negative = en-route).
+    pub mins_until_departure: f32,
+}
 
 /// The stable identity of a recurring rail service — independent of the daily RID.
 ///
@@ -90,6 +122,36 @@ impl HistoricalStore {
         let entry = self.inner.get(pattern)?;
         // Records are ordered oldest-first (VecDeque, front = oldest), so the back is newest.
         entry.back().map(|r| r.recorded_at)
+    }
+
+    /// Rolling statistics for `pattern` over the last 7 days.
+    ///
+    /// Returns `RollingStats::default()` (all zeros) when no recent data exists, so
+    /// callers can always build a complete ML feature vector without Option handling.
+    pub fn rolling_stats_7d(&self, pattern: &ServicePattern) -> RollingStats {
+        let Some(entry) = self.inner.get(pattern) else {
+            return RollingStats::default();
+        };
+        let cutoff = Utc::now() - Duration::days(7);
+        let recent: Vec<i32> = entry
+            .iter()
+            .filter(|r| r.recorded_at >= cutoff)
+            .map(|r| r.delay_mins)
+            .collect();
+        let n = recent.len();
+        if n == 0 {
+            return RollingStats::default();
+        }
+        let n_f = n as f64;
+        let mean = recent.iter().map(|&x| x as f64).sum::<f64>() / n_f;
+        let variance = recent.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>() / n_f;
+        let on_time = recent.iter().filter(|&&x| x <= 0).count() as f64 / n_f * 100.0;
+        RollingStats {
+            mean_delay:      mean as f32,
+            std_delay:       variance.sqrt() as f32,
+            on_time_pct:     on_time as f32,
+            sample_count_log: (n_f + 1.0).ln() as f32,
+        }
     }
 
     /// Flat snapshot of every record across all patterns. Used by the DB flush task.
