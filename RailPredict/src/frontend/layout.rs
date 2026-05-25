@@ -22,6 +22,7 @@ pub fn base(title: &str, content: Markup) -> Markup {
                     }
                     div .nav-links {
                         a href="/search" { "Departures" }
+                        a href="/predictions" { "Predictions" }
                         a href="/demo" { "Dev Console" }
                     }
                 }

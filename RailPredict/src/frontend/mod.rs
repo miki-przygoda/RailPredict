@@ -15,4 +15,5 @@ pub mod dashboard;
 pub mod demo;
 pub mod detail;
 pub mod layout;
+pub mod predictions;
 pub mod search;
