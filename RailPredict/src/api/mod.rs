@@ -45,7 +45,7 @@ use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
-    cache::TrainRegistry,
+    cache::{StationIndex, TrainRegistry},
     db::Db,
     frontend::{dashboard, demo, detail, predictions, search},
     ingestion::gtfs::IngestStatus,
@@ -97,6 +97,8 @@ pub struct AppState {
     pub http_rate_limit_per_sec: u64,
     /// GTFS ingest progress — updated by the ingest background task, read by SSE stream.
     pub ingest_status: Arc<tokio::sync::watch::Sender<IngestStatus>>,
+    /// In-memory station autocomplete index — loaded at startup, zero DB queries at search time.
+    pub station_index: Arc<StationIndex>,
 }
 
 // ---------------------------------------------------------------------------
