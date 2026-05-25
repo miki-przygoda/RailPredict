@@ -214,7 +214,11 @@ impl PredictionEngine {
     pub fn record_outcome(&self, status: &TrainStatus) {
         let Some(pattern) = derive_pattern(status) else { return };
         let Some(delay_mins) = status.reported_delay_mins.value else { return };
-        self.store.insert(pattern, DelayRecord { delay_mins, recorded_at: Utc::now() });
+        // Capture the prediction that was active before this observation arrived.
+        // status.predicted_delay_mins is set by the previous predict_and_update call,
+        // so it represents what the engine believed just before seeing this actual delay.
+        let predicted_delay_mins = status.predicted_delay_mins.value;
+        self.store.insert(pattern, DelayRecord { delay_mins, predicted_delay_mins, recorded_at: Utc::now() });
     }
 }
 
@@ -559,7 +563,7 @@ mod tests {
         for _ in 0..45 {
             engine.store.insert(
                 pattern.clone(),
-                DelayRecord { delay_mins: 5, recorded_at: now },
+                DelayRecord { delay_mins: 5, predicted_delay_mins: None, recorded_at: now },
             );
         }
 
@@ -590,7 +594,7 @@ mod tests {
         for _ in 0..90 {
             engine.store.insert(
                 pattern.clone(),
-                DelayRecord { delay_mins: 5, recorded_at: stale_time },
+                DelayRecord { delay_mins: 5, predicted_delay_mins: None, recorded_at: stale_time },
             );
         }
 

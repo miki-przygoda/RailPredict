@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RailPredict · Delay Intelligence</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:#1a1a1a; --surface:#242424; --surface-2:#2c2c2c;
+  --border:#333; --green:#00c853; --amber:#ffab40; --red:#ef5350;
+  --text:#e0e0e0; --muted:#888; --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:1.5rem 2rem}
+a{color:var(--green)}
+h1{font-size:1.5rem;font-weight:700;color:var(--green);letter-spacing:-0.02em}
+.meta{color:var(--muted);font-size:0.8rem;margin-top:0.3rem}
+.no-data{text-align:center;padding:4rem 2rem;color:var(--muted);border:1px solid var(--border);border-radius:var(--r);margin-top:2rem}
+.no-data h2{font-size:1.1rem;margin-bottom:0.5rem;color:var(--text)}
+
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.75rem;margin:1.5rem 0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.2rem}
+.card-val{font-size:1.75rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.card-lbl{font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:.35rem}
+.c-green{color:var(--green)} .c-amber{color:var(--amber)} .c-red{color:var(--red)}
+
+/* Charts */
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem}
+@media(max-width:680px){.charts{grid-template-columns:1fr}}
+.chart-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.2rem}
+.chart-title{font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.75rem}
+
+/* Table */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);margin-bottom:1.5rem}
+.tbl-header{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
+.tbl-title{font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.tbl-note{font-size:.72rem;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{background:var(--surface-2);color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:.7rem;padding:.55rem .75rem;text-align:left;white-space:nowrap}
+td{padding:.45rem .75rem;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:hover td{background:var(--surface-2)}
+.badge{display:inline-block;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-weight:600}
+.bg{background:rgba(0,200,83,.15);color:var(--green)}
+.ba{background:rgba(255,171,64,.15);color:var(--amber)}
+.br{background:rgba(239,83,80,.15);color:var(--red)}
+.dim{color:var(--muted)}
+code{font-family:"SF Mono","Fira Code",monospace;font-size:.8em;color:#8080a0}
+
+footer{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--border);font-size:.75rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<h1>RailPredict · Delay Intelligence</h1>
+<p class="meta" id="meta-line"></p>
+<div id="root"></div>
+
+<script>
+const DATA = __EXPORT_DATA__;
+
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const fmt1 = v => v != null ? v.toFixed(1) : '—';
+const fmtPct = v => v != null ? v.toFixed(1) + '%' : '—';
+const pctCls = v => v == null ? '' : v >= 70 ? 'bg' : v >= 50 ? 'ba' : 'br';
+
+// ── Meta line ────────────────────────────────────────────────────────────────
+document.getElementById('meta-line').textContent =
+  `Last ${DATA.days_window} days · Generated ${DATA.generated_at}`;
+
+// ── No-data guard ────────────────────────────────────────────────────────────
+if (DATA.summary.total_observations === 0) {
+  document.getElementById('root').innerHTML = `
+    <div class="no-data">
+      <h2>No delay data yet</h2>
+      <p>Connect RailPredict to the Darwin Push Port and leave it running for a day or two.<br>
+      Re-run <code>make export</code> once observations have accumulated.</p>
+    </div>`;
+} else {
+  renderDashboard();
+}
+
+function renderDashboard() {
+  const s = DATA.summary;
+  const root = document.getElementById('root');
+  root.innerHTML = `
+    <div class="cards" id="cards"></div>
+    <div class="charts">
+      <div class="chart-box"><div class="chart-title">Daily observations &amp; mean prediction error</div><canvas id="c-daily" height="200"></canvas></div>
+      <div class="chart-box"><div class="chart-title">Mean delay by departure hour</div><canvas id="c-hourly" height="200"></canvas></div>
+    </div>
+    <div class="tbl-wrap">
+      <div class="tbl-header">
+        <span class="tbl-title">Service breakdown</span>
+        <span class="tbl-note">Top ${DATA.services.length} services by observation count</span>
+      </div>
+      <table><thead><tr>
+        <th>UID</th><th>Origin</th><th>Day</th><th>Departs</th>
+        <th>Obs</th><th>Actual avg</th><th>Predicted avg</th><th>Error avg</th>
+        <th>On-time</th><th>Coverage</th>
+      </tr></thead><tbody id="tbody"></tbody></table>
+    </div>`;
+
+  // Summary cards
+  const cards = [
+    { val: s.total_observations.toLocaleString(), lbl: 'Observations', cls: '' },
+    { val: s.total_services.toLocaleString(),     lbl: 'Services tracked', cls: '' },
+    { val: fmt1(s.mean_actual_mins) + (s.mean_actual_mins != null ? ' min' : ''), lbl: 'Mean actual delay', cls: 'c-amber' },
+    { val: fmt1(s.mean_abs_error_mins) + (s.mean_abs_error_mins != null ? ' min' : ''), lbl: 'Mean prediction error', cls: 'c-green' },
+    { val: fmtPct(s.on_time_pct), lbl: 'On time (≤ 0 min)', cls: s.on_time_pct >= 70 ? 'c-green' : s.on_time_pct >= 50 ? 'c-amber' : 'c-red' },
+    { val: fmtPct(s.prediction_coverage_pct), lbl: 'Predictions captured', cls: '' },
+  ];
+  document.getElementById('cards').innerHTML = cards.map(c =>
+    `<div class="card"><div class="card-val ${c.cls}">${c.val}</div><div class="card-lbl">${c.lbl}</div></div>`
+  ).join('');
+
+  // Daily chart
+  const daily = DATA.daily;
+  if (daily.length) {
+    new Chart(document.getElementById('c-daily'), {
+      data: {
+        labels: daily.map(d => d.day),
+        datasets: [
+          { type:'bar',  label:'Observations',       data: daily.map(d=>d.observations),       backgroundColor:'rgba(0,200,83,.2)',  borderColor:'rgba(0,200,83,.5)', borderWidth:1, yAxisID:'yb', order:3 },
+          { type:'line', label:'Mean abs error (min)',data: daily.map(d=>d.mean_abs_error_mins), borderColor:'#ffab40', backgroundColor:'transparent', borderWidth:2, pointRadius:4, tension:.3, yAxisID:'ya', order:1 },
+          { type:'line', label:'Mean actual (min)',   data: daily.map(d=>d.mean_actual_mins),    borderColor:'#ef5350', backgroundColor:'transparent', borderWidth:1.5, borderDash:[4,3], pointRadius:3, tension:.3, yAxisID:'ya', order:2 },
+        ]
+      },
+      options: {
+        responsive:true, interaction:{mode:'index',intersect:false},
+        plugins:{ legend:{labels:{color:'#888',font:{size:11}}} },
+        scales:{
+          x:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'}},
+          ya:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'minutes',color:'#888',font:{size:10}}},
+          yb:{position:'right',ticks:{color:'#888',font:{size:11}},grid:{display:false},title:{display:true,text:'count',color:'#888',font:{size:10}}},
+        }
+      }
+    });
+  }
+
+  // Hourly chart
+  const hourly = DATA.hourly;
+  if (hourly.length) {
+    const delays = Array(24).fill(null);
+    hourly.forEach(h => { delays[h.hour] = h.mean_delay; });
+    const labels = Array.from({length:24},(_,i)=>String(i).padStart(2,'0')+':xx');
+    new Chart(document.getElementById('c-hourly'), {
+      type:'bar',
+      data: {
+        labels,
+        datasets:[{ label:'Mean delay (min)', data:delays,
+          backgroundColor: delays.map(d => d==null?'transparent':d<=1?'rgba(0,200,83,.6)':d<=5?'rgba(255,171,64,.6)':'rgba(239,83,80,.6)'),
+          borderWidth:0 }]
+      },
+      options:{
+        responsive:true, plugins:{legend:{display:false}},
+        scales:{
+          x:{ticks:{color:'#888',font:{size:10},maxRotation:45},grid:{color:'#333'}},
+          y:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'minutes',color:'#888',font:{size:10}}},
+        }
+      }
+    });
+  }
+
+  // Service table
+  const tbody = document.getElementById('tbody');
+  if (!DATA.services.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:2rem;color:#888">No service patterns observed yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = DATA.services.map(s => {
+    const err = (s.mean_actual != null && s.mean_predicted != null)
+      ? Math.abs(s.mean_actual - s.mean_predicted).toFixed(1) + ' min' : '—';
+    const ot = fmtPct(s.on_time_pct);
+    const oc = pctCls(s.on_time_pct);
+    const cov = fmtPct(s.coverage_pct);
+    return `<tr>
+      <td><code>${s.uid}</code></td>
+      <td>${s.origin_crs}</td>
+      <td>${DAYS[s.weekday] ?? s.weekday}</td>
+      <td>${String(s.departure_hour).padStart(2,'0')}:xx</td>
+      <td>${s.observations}</td>
+      <td class="${s.mean_actual>5?'c-amber':''}">${fmt1(s.mean_actual)} min</td>
+      <td class="dim">${fmt1(s.mean_predicted)} min</td>
+      <td>${err}</td>
+      <td><span class="badge ${oc}">${ot}</span></td>
+      <td class="dim">${cov}</td>
+    </tr>`;
+  }).join('');
+}
+</script>
+<footer>
+  Generated by <strong>RailPredict</strong> &mdash; data from Darwin Push Port via National Rail.
+  Source: <a href="https://github.com/miki-przygoda/RailPredict">github.com/miki-przygoda/RailPredict</a>
+</footer>
+</body>
+</html>

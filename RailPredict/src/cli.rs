@@ -32,6 +32,20 @@ pub enum Commands {
         #[arg(long, conflicts_with = "url")]
         file: Option<PathBuf>,
     },
+
+    /// Export a self-contained HTML snapshot of delay history and prediction accuracy.
+    ///
+    /// Queries the last N days from the database and writes a single HTML file that
+    /// can be opened in any browser — no server required.
+    ExportSite {
+        /// Output file path.
+        #[arg(long, default_value = "docs/index.html")]
+        output: PathBuf,
+
+        /// How many days of history to include.
+        #[arg(long, default_value = "7")]
+        days: u32,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]

@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.7.0" -- 20/04/2026**
+**version = "1.8.0" -- 25/05/2026**
 
 ---
 
