@@ -1,111 +1,188 @@
-# RailPredict: High-Efficiency UK Rail Data Engine
+# RailPredict
 
-The current version and last worked on date should be noted at the top of this file below this line:
+**v1.7.0 — May 2026**
 
-**version = "1.7.0" -- 20/04/2026**
+A UK rail data engine written in Rust. RailPredict subscribes directly to the **Darwin Push Port** — National Rail's STOMP-based firehose of every train movement in the country — and uses that stream to build an intelligent buffer between users and the Great British Railways API. The vast majority of queries are answered from local state, in-memory cache, and statistical prediction; the only call that ever hits GBR directly is the one that genuinely requires it: final ticket purchase.
 
 ---
 
 ## The Problem
 
-The Great British Railways (GBR) API is slow, rate-limited, and expensive to hit repeatedly. A naive rail app that calls the live API for every search query, every page load, and every status check will feel sluggish and will burn through its API quota the moment traffic spikes.
+The GBR API is slow, rate-limited, and expensive to call repeatedly. A naive rail app that hits the live API for every search, every page load, and every status check will feel sluggish and burn through its quota the moment traffic spikes.
 
-Most rail apps are dumb mirrors: ask GBR, show the result, repeat. RailPredict is built on the premise that the vast majority of the data a user needs can be served without ever touching GBR at all.
-
----
-
-## The Idea: An Intelligent Buffer
-
-RailPredict acts as a **shadow system** — a local layer that sits between users and GBR and tries to answer every query from its own knowledge before falling back to a live call. It does this by separating rail data into three tiers based on how "fresh" it actually needs to be:
-
-**Tier A — Static data** (timetables, station names, base fares) changes once a week. Download it in bulk, store it locally, serve it for free.
-
-**Tier B — Predictive data** (likely delay, typical platform, fare range) can be inferred from history. If the 08:01 from Leeds is late 85% of Mondays, say so — without calling GBR.
-
-**Tier C — Transactional data** (exact live position, seat availability, final ticket lock) genuinely requires a live call. But this should only happen at the last possible moment: when the user is about to pay.
-
-The goal is that by the time a user reaches checkout, the system has already pre-warmed the relevant data so the final live call is the only one that matters.
+Most rail apps are dumb mirrors: ask GBR, show the result, repeat. RailPredict is built on the premise that the vast majority of what a user needs during a journey search can be answered locally — without a single outbound request.
 
 ---
 
-## How the System Stays Efficient
+## Architecture: Three-Tier Data Model
 
-### Progressive Disclosure
-Data is revealed in stages matched to what the user actually needs at each step:
-- **Search results page:** Show last-known price and scheduled time (Tier A, zero cost).
-- **Train detail page:** Show predicted delay based on local history (Tier B, local compute).
-- **Checkout page:** Make the single live call to lock the ticket (Tier C, one call).
+Rail data is separated into tiers based on how frequently it actually needs to change:
 
-### The State Machine
-Not every train needs the same attention. A train departing in three hours is irrelevant right now; a train departing in four minutes needs constant watching. RailPredict uses a state machine to assign each train a polling frequency appropriate to its urgency:
+| Tier  | Data                                               | Staleness tolerance | Source                    |
+|:------|:---------------------------------------------------|:--------------------|:--------------------------|
+| **A** | Timetables, station names, base fares              | Days–weeks          | GTFS static feed          |
+| **B** | Predicted delay, likely platform, fare range       | Minutes–hours       | Local history + inference |
+| **C** | Live position, seat availability, final price lock | Seconds             | GBR Retail API (live)     |
 
-- **Dormant** — departure > 2 hours: no live calls, static data only.
-- **Monitored** — 30–120 minutes out: poll every 10 minutes, build up delay probability.
-- **Active** — 0–30 minutes out: poll every 30–60 seconds.
-- **Critical** — under 5 minutes OR a disruption detected: real-time stream or 10-second polling.
+The goal: by the time a user reaches checkout, all Tier A and Tier B data is already loaded. The single Tier C call happens only when they confirm payment.
 
-External events can force an emergency promotion. A signal failure, a weather alert, or a social media spike about a specific route can push an entire corridor straight to Critical state, regardless of departure time.
+---
+
+## How It Stays Efficient
+
+### Darwin Push Port (zero-poll reads)
+Instead of polling GBR for train positions, RailPredict subscribes to the **Darwin Push Port** — National Rail's STOMP-based firehose of every train movement in the UK. Incoming XML messages are parsed, filtered, and written to an in-memory registry keyed by RID. Read-only queries are served entirely from that cache.
+
+### Urgency State Machine
+Not every train deserves the same attention. Each train in the registry is assigned a state that controls how aggressively the system monitors it:
+
+```
+Dormant → Monitored → Active → Critical → Terminal
+```
+
+| State         | Condition                      | Behaviour                       |
+|:--------------|:-------------------------------|:--------------------------------|
+| **Dormant**   | Departure > 2 h                | Static data only, no live calls |
+| **Monitored** | 30–120 min out                 | Darwin stream, history building |
+| **Active**    | 0–30 min out                   | High-frequency updates          |
+| **Critical**  | < 5 min or disruption detected | Real-time stream, push alerts   |
+| **Terminal**  | Departed                       | Evicted from active monitoring  |
+
+External events — signal failures, weather alerts, route-level disruption flags — can force emergency promotion regardless of departure time.
 
 ### Request Coalescing
-If 50 users are watching the same train, the system makes one outbound API call and fans the result to all 50 — not 50 separate calls.
-
-### Darwin Push Port
-Rather than polling GBR for updates, RailPredict subscribes to the **Darwin Push Port** (a STOMP-based firehose of every train movement in the UK). Incoming updates are stored in a fast in-memory cache. User queries are served from that cache — GBR is never touched for read-only requests.
+If 50 users are watching the same train, one outbound call is made and the result is fanned out to all 50. The coalescer deduplicates concurrent in-flight requests by key and wires late arrivals directly onto the pending future.
 
 ### Circuit Breaker
-If GBR starts returning errors (overloaded, rate-limited), the system automatically enters "Cache Only" mode and stops sending requests until GBR recovers. Users continue to see data; GBR is protected from additional load.
+If GBR starts returning errors, the system enters **Cache Only** mode and stops sending requests until GBR recovers. Callers see cached data; GBR sees no additional load.
+
+### Statistical Prediction Engine (Tier B)
+Per-service delay history is stored in Postgres and loaded into memory at startup. The engine computes:
+- **Weighted delay distribution** by weekday and departure hour
+- **Confidence decay** — recent observations outweigh older ones
+- **On-time probability** — exposed directly in the departure board UI
+
+---
+
+## What's Built
+
+| Component                                                               | Status   |
+|:------------------------------------------------------------------------|:---------|
+| Core types (`TrainId`, `TrainStatus`, `Stamped<T>`)                     | Complete |
+| Urgency state machine + poll manager                                    | Complete |
+| Darwin Push Port ingestion (STOMP/TLS, XML parse, filter)               | Complete |
+| In-memory train registry (`DashMap`, concurrent)                        | Complete |
+| Request coalescer + rate limiter                                        | Complete |
+| Circuit breaker (threshold, cool-down, state transitions)               | Complete |
+| Prediction engine (Tier B — delay probability, confidence)              | Complete |
+| Postgres schema + migrations (sqlx, compile-time checked)               | Complete |
+| Delay history flush (`ON CONFLICT DO UPDATE`)                           | Complete |
+| GTFS timetable ingest (Tier A — stations, services, calls, fares)       | Complete |
+| REST API (`/stations`, `/trains`, `/journeys`, `/health`)               | Complete |
+| SSE live update stream (`/trains/:rid/live`)                            | Complete |
+| Frontend — departure board, train detail, search autocomplete           | Complete |
+| Developer Console — registry probe, event monitor, ingest UI            | Complete |
+| Ticket purchase demo (simulated end-to-end booking flow)                | Complete |
+| Prometheus metrics (`/metrics`, ingestion counters, latency histograms) | Complete |
+| Rate limiting (`tower_governor`, 60 req/s per IP)                       | Complete |
+| Weather volatility promotions (Open-Meteo, configurable anchors)        | Complete |
+| Push notifications (ntfy.sh, fires on Critical state promotions)        | Complete |
+| Tier C wiring (live GBR purchase API)                                   | Pending  |
 
 ---
 
 ## Tech Stack
 
-| Concern                | Tool                                                                   |
-|:-----------------------|:-----------------------------------------------------------------------|
-| Async runtime          | `tokio`                                                                |
-| HTTP client (GBR REST) | `reqwest` (rustls-tls, no native-tls)                                  |
-| Darwin firehose        | STOMP client (`tokio`-based)                                           |
-| In-memory cache        | `dashmap` (concurrent)                                                 |
-| Time handling          | `chrono`                                                               |
-| XML parsing (Darwin)   | `quick-xml`                                                            |
-| Serialisation          | `serde` + `serde_json`                                                 |
-| Database               | `sqlx` 0.8 (Postgres, async, compile-time checked queries)             |
-| HTTP framework         | `axum` 0.7                                                             |
-| HTML templating        | `maud`                                                                 |
-| Static assets          | `rust-embed`                                                           |
-| Observability          | `tracing` + `tracing-subscriber` + `metrics` + `metrics-exporter-prometheus` |
-| Rate limiting          | `tower_governor` 0.4 (60 req/s per IP, `/health`+`/metrics` excluded) |
-| TLS                    | `tokio-rustls` + `rustls-native-certs` (Darwin STOMP connection)       |
-| CLI                    | `clap` 4 (derive)                                                      |
-| Error handling         | `thiserror` (domain errors) + `anyhow` (app-level)                     |
+| Concern                 | Crate                                                    |
+|:------------------------|:---------------------------------------------------------|
+| Async runtime           | `tokio`                                                  |
+| HTTP framework          | `axum` 0.7                                               |
+| HTTP server-sent events | `axum` SSE + `async-stream`                              |
+| Darwin STOMP client     | Custom `tokio`-based                                     |
+| Darwin XML parsing      | `quick-xml`                                              |
+| HTTP client (GBR REST)  | `reqwest` (rustls-tls)                                   |
+| In-memory cache         | `dashmap` (lock-free concurrent)                         |
+| Database                | `sqlx` 0.8, Postgres, async, compile-time query checking |
+| HTML templating         | `maud` (compile-time checked)                            |
+| Frontend interactivity  | `htmx` 2 + SSE extension                                 |
+| Serialisation           | `serde` + `serde_json`                                   |
+| Time                    | `chrono`                                                 |
+| Observability           | `tracing` + `metrics` + `metrics-exporter-prometheus`    |
+| Rate limiting           | `tower_governor`                                         |
+| TLS                     | `tokio-rustls` + `rustls-native-certs`                   |
+| CLI                     | `clap` 4 (derive)                                        |
+| Error handling          | `thiserror` (domain) + `anyhow` (application)            |
 
 ---
 
-## Current Status (v1.3.0)
+## Running Locally
 
-All foundation layers are complete and production-hardened. The system builds, tests pass, and is ready for deployment against real Darwin credentials.
+**Prerequisites:** Rust stable, PostgreSQL, Darwin Push Port credentials (National Rail developer programme).
 
-| Layer | Status | Notes |
-|:------|:-------|:------|
-| Core types (`TrainId`, `TrainStatus`, `Stamped<T>`) | **Done** | |
-| State machine + poll manager | **Done** | |
-| Networking (coalescer, rate limiter, circuit breaker) | **Done** | |
-| Darwin ingestion (STOMP + filter + parser) | **Done** | TLS on by default (`DARWIN_TLS=true`) |
-| In-memory cache (`TrainRegistry`) | **Done** | |
-| Prediction engine (Tier B) | **Done** | Correlation, confidence decay, per-hour history |
-| Database layer (Postgres + sqlx) | **Done** | Migrations, history flush, static data queries |
-| HTTP API + SSE | **Done** | CRS validation, rate limiting, CORS tightening |
-| Frontend (maud + htmx) | **Done** | Stale overlay, destination cards, 30s auto-refresh |
-| Observability | **Done** | Prometheus `/metrics`, Grafana in docker-compose |
-| CI pipeline | **Done** | GitHub Actions: deny + clippy + test + release build |
-| Tier A data layer (GTFS timetable sync) | **Pending** | `TODOs/TierADataLayer.md` |
-| Tier C wiring (live GBR API calls) | **Pending** | `TODOs/TierCWiring.md` |
-| Technical debt cleanup | **Done** | 9.1–9.5, 7.1, 7.3 complete; 4.5 deferred pending Tier C |
-| Product features | **Pending** | `TODOs/ProductFeatures.md` |
+```bash
+# Clone and build
+git clone https://github.com/miki-przygoda/RailPredict.git
+cd RailPredict
+cargo build --release
 
-**One user action required before CI passes fully:** generate the `.sqlx/` offline snapshot — see `TODOs/CI_DevEx.md`.
+# Configure environment
+cp .env.example .env
+# Set DATABASE_URL, DARWIN_HOST, DARWIN_USERNAME, DARWIN_PASSWORD, GBR_API_KEY
+
+# Run migrations and start
+cargo run --release
+
+# (Optional) Seed the timetable database from a GTFS feed
+cargo run --release -- ingest-static --url https://your-gtfs-feed-url.zip
+```
+
+The server starts on `0.0.0.0:3000` by default. Visit:
+
+| URL        | Description                                                     |
+|:-----------|:----------------------------------------------------------------|
+| `/`        | Dashboard — live system health, navigation                      |
+| `/search`  | Departure board — station autocomplete, live trains             |
+| `/demo`    | Developer Console — registry probe, event monitor, booking demo |
+| `/metrics` | Prometheus metrics endpoint                                     |
+| `/health`  | DB health probe                                                 |
 
 ---
 
-## North Star
+## Project Structure
 
-A rail application that feels **instant**. By the time the user has chosen a train, the system has already predicted the delay, pre-warmed the pricing, and queued the transaction — so the only loading spinner the user ever sees is on the final payment confirmation.
+```
+src/
+├── api/            REST handlers, SSE endpoint, response types
+├── cache/          TrainRegistry (DashMap-backed, concurrent)
+├── db/             sqlx queries — history flush, static data, timetables
+├── frontend/       maud page handlers (dashboard, search, detail, demo)
+├── ingestion/      Darwin STOMP client, XML parser, GTFS ingest
+├── networking/     Coalescer, circuit breaker, rate limiter, GBR client
+├── prediction/     Tier B engine — delay probability, confidence scoring
+├── state_machine/  Urgency states, poll manager, state transitions
+├── types/          TrainId, TrainStatus, Stamped<T>, shared domain types
+└── weather/        Weather anchor polling (ntfy integration, optional)
+
+migrations/         sqlx Postgres migrations (versioned, checksum-locked)
+static/             style.css (single-file design system, ~1 400 lines)
+```
+
+---
+
+## What Isn't Here Yet
+
+**Live ticket purchase (Tier C).** The GBR Retail API purchase endpoint (`POST /bookings`) is not wired. The full booking UI exists — search, select, checkout, payment confirmation — and the `/demo` page simulates the complete flow, including the exact request body and idempotency key that would be sent. The blocker is API tier access: the GBR sandbox grants read access freely, but write (purchase) access requires a separate commercial agreement. The circuit breaker, idempotency layer, and `purchase_attempts` table are already built and ready to connect.
+
+---
+
+## Design Principles
+
+**Avoid the live API.** Every architectural decision is evaluated against whether it reduces the number of outbound GBR calls. The API is the bottleneck; everything else is designed around it.
+
+**Compile-time correctness.** SQL queries are checked against the live schema at compile time via `sqlx`. HTML templates are type-checked by `maud`. There is no stringly-typed layer between the application and its data.
+
+**No JavaScript frameworks.** The frontend is `maud` (server-side HTML) + `htmx` for partial updates + a small amount of vanilla JS for the autocomplete event delegation and SSE event feed. No build step, no bundler, no hydration.
+
+**Predictability over cleverness.** The state machine, circuit breaker, and coalescer all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/demo`, `/metrics`, and the live event monitor.
+
+**Dependency hygiene.** `cargo deny` enforces licence compatibility and blocks known-vulnerable crate versions on every build. Secrets are documented with rotation cadence in `SECURITY.md`; none are committed or logged.
