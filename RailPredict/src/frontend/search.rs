@@ -71,6 +71,19 @@ const SEARCH_JS: &str = r#"
         }
     });
 
+    // --- Block Enter-key form submission when no CRS is selected ---
+    // The submit button is disabled but Enter from within the text input
+    // bypasses disabled buttons in some browsers.
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        var input = e.target;
+        if (!input.dataset || !input.dataset.clears) return;
+        var hidden = document.getElementById(input.dataset.clears);
+        if (hidden && !hidden.value) {
+            e.preventDefault();
+        }
+    });
+
     // --- Tab switching ---
     window.showTab = function (name, event) {
         document.querySelectorAll('.tab-pane')
@@ -194,6 +207,10 @@ pub async fn search_page() -> Markup {
 #[derive(Deserialize)]
 pub struct CrsQuery {
     pub crs: String,
+    /// Plain-text station name typed by the user — used as a fallback when
+    /// `crs` is empty (e.g. Enter-key submission before selecting a suggestion).
+    #[serde(default)]
+    pub q: String,
 }
 
 pub async fn departures_fragment(
@@ -201,8 +218,43 @@ pub async fn departures_fragment(
     State(state): State<AppState>,
 ) -> Markup {
     let crs_upper = q.crs.trim().to_uppercase();
-    let entries = crate::api::handlers::build_departure_board(&state, &crs_upper).await;
-    departure_board_fragment(&crs_upper, &entries)
+
+    // If no CRS was set (user hit Enter without picking a suggestion), try to
+    // resolve the station name to a CRS via a DB lookup.
+    let resolved_crs = if crs_upper.is_empty() {
+        let name = q.q.trim().to_string();
+        if name.len() < 2 {
+            return html! {
+                p .no-results { "Start typing a station name and select one from the list." }
+            };
+        }
+        let row: Option<String> = sqlx::query_scalar(
+            "SELECT crs FROM stations \
+             WHERE to_tsvector('english', name) @@ plainto_tsquery('english', $1) \
+             ORDER BY name LIMIT 1",
+        )
+        .bind(&name)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+        match row {
+            Some(crs) => crs,
+            None => {
+                let typed = name.as_str();
+                return html! {
+                    p .no-results {
+                        "No station found matching \u{201c}" (typed) "\u{201d}. Try the autocomplete list."
+                    }
+                };
+            }
+        }
+    } else {
+        crs_upper
+    };
+
+    let entries = crate::api::handlers::build_departure_board(&state, &resolved_crs).await;
+    departure_board_fragment(&resolved_crs, &entries)
 }
 
 pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> Markup {
@@ -266,7 +318,12 @@ pub fn render_suggestion_list(
                     data-suggestions-id=(suggestions_id)
                 {
                     span .suggestion-name { (result.name) }
-                    span .suggestion-crs { "(" (result.crs) ")" }
+                    span .suggestion-crs { (result.crs) }
+                    @if result.trains_today > 0 {
+                        span .suggestion-trains { (result.trains_today) " today" }
+                    } @else {
+                        span .suggestion-trains .suggestion-no-service { "no service" }
+                    }
                 }
             }
         }
@@ -300,17 +357,23 @@ pub async fn station_suggestions_fragment(
         q_id.replace("-q", "-suggestions")
     };
 
-    let results: Vec<StationResult> = sqlx::query_as::<_, (String, String)>(
-        "SELECT crs, name FROM stations \
-         WHERE to_tsvector('english', name) @@ plainto_tsquery('english', $1) \
-         ORDER BY name LIMIT 10",
+    let results: Vec<StationResult> = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT s.crs, s.name, COALESCE(t.cnt, 0) AS trains_today \
+         FROM stations s \
+         LEFT JOIN LATERAL ( \
+             SELECT COUNT(*) AS cnt FROM timetable_calls tc \
+             WHERE tc.location_crs = s.crs AND tc.operating_date = CURRENT_DATE \
+         ) t ON true \
+         WHERE to_tsvector('english', s.name) @@ plainto_tsquery('english', $1) \
+         ORDER BY t.cnt DESC NULLS LAST, s.name \
+         LIMIT 10",
     )
     .bind(&q)
     .fetch_all(&state.db)
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(crs, name)| StationResult { crs, name })
+    .map(|(crs, name, trains_today)| StationResult { crs, name, trains_today })
     .collect();
 
     render_suggestion_list(&results, &crs_id, &q_id, &suggestions_id)
@@ -426,7 +489,7 @@ mod tests {
     }
 
     fn make_station(crs: &str, name: &str) -> StationResult {
-        StationResult { crs: crs.to_string(), name: name.to_string() }
+        StationResult { crs: crs.to_string(), name: name.to_string(), trains_today: 0 }
     }
 
     // ── departure_board_fragment ────────────────────────────────────────────
