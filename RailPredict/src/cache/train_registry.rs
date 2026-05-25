@@ -140,6 +140,7 @@ impl TrainRegistry {
                 is_cancelled: status.is_cancelled.value,
                 last_updated_secs_ago,
                 destination_name: status.destination_crs.clone(),
+                predicted_delay_mins: status.predicted_delay_mins.value,
             });
         }
 

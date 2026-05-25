@@ -61,16 +61,17 @@ async fn enrich(
     registry: &crate::cache::TrainRegistry,
     event: &StateChangeEvent,
 ) -> LiveUpdateEvent {
-    let (delay_mins, platform, is_cancelled) = match registry.get(&event.train_id) {
+    let (delay_mins, platform, is_cancelled, predicted_delay_mins) = match registry.get(&event.train_id) {
         Some(arc) => {
             let s = arc.read().await;
             (
                 s.best_delay_mins(),
                 s.best_platform().map(str::to_string),
                 s.is_cancelled.value,
+                s.predicted_delay_mins.value,
             )
         }
-        None => (None, None, None),
+        None => (None, None, None, None),
     };
 
     LiveUpdateEvent {
@@ -80,5 +81,6 @@ async fn enrich(
         delay_mins,
         platform,
         timestamp: Utc::now().to_rfc3339(),
+        predicted_delay_mins,
     }
 }
