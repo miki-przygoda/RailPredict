@@ -33,6 +33,7 @@ use tokio_util::sync::CancellationToken;
 use railpredict::api::{router, AppState};
 use railpredict::cache::TrainRegistry;
 use railpredict::cli::{Cli, Commands, IngestSource};
+use railpredict::export;
 use railpredict::config::{Config, LogFormat};
 use railpredict::db;
 use railpredict::ingestion::gtfs::{self, IngestPhase, IngestStatus, run_ingest_with_watch};
@@ -193,6 +194,9 @@ async fn main() -> anyhow::Result<()> {
                     anyhow::bail!("CIF ingest is not yet implemented");
                 }
             },
+            Commands::ExportSite { output, days } => {
+                export::export_site(&db_pool, &output, days).await?;
+            }
         }
         return Ok(());
     }

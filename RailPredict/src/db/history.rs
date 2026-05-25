@@ -61,15 +61,16 @@ struct DelayRow {
     origin_crs: String,
     departure_hour: i16,
     delay_mins: i32,
+    predicted_delay_mins: Option<i32>,
     recorded_at: chrono::DateTime<chrono::Utc>,
 }
 
 pub async fn load_history(db: &Db) -> anyhow::Result<HistoricalStore> {
     let rows = sqlx::query_as::<_, DelayRow>(
         r#"
-        SELECT uid, weekday, origin_crs, departure_hour, delay_mins, recorded_at
+        SELECT uid, weekday, origin_crs, departure_hour, delay_mins, predicted_delay_mins, recorded_at
         FROM (
-            SELECT uid, weekday, origin_crs, departure_hour, delay_mins, recorded_at,
+            SELECT uid, weekday, origin_crs, departure_hour, delay_mins, predicted_delay_mins, recorded_at,
                    ROW_NUMBER() OVER (
                        PARTITION BY uid, weekday, origin_crs, departure_hour
                        ORDER BY recorded_at DESC
@@ -95,7 +96,11 @@ pub async fn load_history(db: &Db) -> anyhow::Result<HistoricalStore> {
         };
         store.insert(
             pattern,
-            DelayRecord { delay_mins: row.delay_mins, recorded_at: row.recorded_at },
+            DelayRecord {
+                delay_mins: row.delay_mins,
+                predicted_delay_mins: row.predicted_delay_mins,
+                recorded_at: row.recorded_at,
+            },
         );
     }
 
@@ -123,7 +128,7 @@ pub async fn flush_history(db: &Db, store: &Arc<HistoricalStore>) -> anyhow::Res
     let mut inserted_total = 0usize;
     for chunk in records.chunks(FLUSH_CHUNK) {
         let mut qb = QueryBuilder::new(
-            "INSERT INTO delay_history (uid, weekday, origin_crs, departure_hour, delay_mins, recorded_at) ",
+            "INSERT INTO delay_history (uid, weekday, origin_crs, departure_hour, delay_mins, predicted_delay_mins, recorded_at) ",
         );
         qb.push_values(chunk, |mut b, (pattern, record)| {
             b.push_bind(&pattern.uid)
@@ -131,6 +136,7 @@ pub async fn flush_history(db: &Db, store: &Arc<HistoricalStore>) -> anyhow::Res
                 .push_bind(&pattern.origin_crs)
                 .push_bind(pattern.departure_hour as i16)
                 .push_bind(record.delay_mins)
+                .push_bind(record.predicted_delay_mins)
                 .push_bind(record.recorded_at);
         });
         qb.push(

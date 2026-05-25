@@ -2,7 +2,47 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.7.0" -- 20/04/2026**
+**version = "1.8.0" -- 25/05/2026**
+
+---
+
+## v1.8.0 — 25/05/2026 — Static site export with predicted-vs-actual accuracy
+
+New `export-site` CLI subcommand generates a self-contained HTML page showing the
+last N days of delay history alongside prediction accuracy. Run `make export` to
+write `docs/index.html`; deploy that file to any static host.
+
+**Migration — `predicted_delay_mins` column**
+- `migrations/20240417120009_add_predicted_delay_to_history.sql` — adds nullable
+  `INTEGER` column `predicted_delay_mins` to `delay_history`. Existing rows carry
+  `NULL`; new rows written after this version store the engine's prior prediction.
+
+**Prediction engine — capture prediction at record time**
+- `src/prediction/types.rs` — `DelayRecord` gains `predicted_delay_mins: Option<i32>`.
+- `src/prediction/engine.rs` — `record_outcome` captures `status.predicted_delay_mins.value`
+  before inserting the new observation. Because `record_outcome` is called before
+  `predict_and_update` in the ingestion loop, this is the prediction the engine held
+  just before seeing the actual delay — a true forecast, not a post-hoc one.
+
+**DB layer — flush and load include new field**
+- `src/db/history.rs` — `flush_history` includes `predicted_delay_mins` in the INSERT
+  column list; `load_history` selects and reconstructs it.
+
+**Export module — `src/export/`**
+- `src/export/mod.rs` — four async query functions (summary, daily, service breakdown,
+  hourly); serialises to `ExportData` JSON; substitutes into the HTML template; writes
+  the output file, creating parent directories as needed.
+- `src/export/template.html` — self-contained dark-themed page: six summary cards,
+  dual-axis daily accuracy chart (observations + mean abs error + mean actual),
+  hour-of-day bar chart coloured by severity, service breakdown table (top 100 by
+  observation count with on-time % badge and prediction coverage %).
+
+**CLI + Makefile**
+- `src/cli.rs` — `Commands::ExportSite { output, days }` subcommand; defaults to
+  `docs/index.html` and 7-day window.
+- `Makefile` — `make export` target; override window with `make export DAYS=14`.
+
+175 tests, all passing.
 
 ---
 

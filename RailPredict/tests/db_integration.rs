@@ -107,9 +107,9 @@ async fn flush_then_load_roundtrips(pool: sqlx::PgPool) {
     let t2 = base_time - chrono::Duration::seconds(1);
     let t3 = base_time;
 
-    store.insert(p1.clone(), DelayRecord { delay_mins: 5, recorded_at: t1 });
-    store.insert(p1.clone(), DelayRecord { delay_mins: 10, recorded_at: t2 });
-    store.insert(p2.clone(), DelayRecord { delay_mins: 0, recorded_at: t3 });
+    store.insert(p1.clone(), DelayRecord { delay_mins: 5, predicted_delay_mins: None, recorded_at: t1 });
+    store.insert(p1.clone(), DelayRecord { delay_mins: 10, predicted_delay_mins: None, recorded_at: t2 });
+    store.insert(p2.clone(), DelayRecord { delay_mins: 0, predicted_delay_mins: None, recorded_at: t3 });
 
     db::history::flush_history(&pool, &store)
         .await
@@ -147,7 +147,7 @@ async fn flush_history_is_idempotent(pool: sqlx::PgPool) {
     .expect("station seed must succeed");
 
     let store = Arc::new(HistoricalStore::new());
-    let record = DelayRecord { delay_mins: 3, recorded_at: Utc::now() };
+    let record = DelayRecord { delay_mins: 3, predicted_delay_mins: None, recorded_at: Utc::now() };
     store.insert(make_pattern("C12345"), record);
 
     db::history::flush_history(&pool, &store).await.expect("first flush must succeed");

@@ -41,6 +41,9 @@ pub struct ServicePattern {
 #[derive(Debug, Clone)]
 pub struct DelayRecord {
     pub delay_mins: i32,
+    /// What the engine predicted just before this observation was recorded.
+    /// `None` for records written before the prediction-capture feature was added.
+    pub predicted_delay_mins: Option<i32>,
     pub recorded_at: DateTime<Utc>,
 }
 
@@ -123,7 +126,7 @@ mod tests {
     use chrono::Utc;
 
     fn record(delay_mins: i32) -> DelayRecord {
-        DelayRecord { delay_mins, recorded_at: Utc::now() }
+        DelayRecord { delay_mins, predicted_delay_mins: None, recorded_at: Utc::now() }
     }
 
     fn pattern() -> ServicePattern {
@@ -247,8 +250,8 @@ mod tests {
         let p = pattern();
         let older = Utc::now() - Duration::days(10);
         let newer = Utc::now() - Duration::days(1);
-        store.insert(p.clone(), DelayRecord { delay_mins: 5, recorded_at: older });
-        store.insert(p.clone(), DelayRecord { delay_mins: 3, recorded_at: newer });
+        store.insert(p.clone(), DelayRecord { delay_mins: 5, predicted_delay_mins: None, recorded_at: older });
+        store.insert(p.clone(), DelayRecord { delay_mins: 3, predicted_delay_mins: None, recorded_at: newer });
         let most_recent = store.most_recent_recorded_at(&p).unwrap();
         // Within a millisecond of `newer` (clock precision in tests)
         assert!((most_recent - newer).num_milliseconds().abs() < 100);
