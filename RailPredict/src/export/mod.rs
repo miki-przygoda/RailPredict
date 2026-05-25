@@ -182,6 +182,7 @@ async fn query_summary(db: &Db, days: i32) -> anyhow::Result<ExportSummary> {
                  ELSE NULL END                                                  AS on_time_pct
         FROM delay_history
         WHERE recorded_at >= NOW() - $1::INT * INTERVAL '1 day'
+          AND delay_mins BETWEEN -120 AND 600
         "#,
     )
     .bind(days)
@@ -212,6 +213,7 @@ async fn query_daily(db: &Db, days: i32) -> anyhow::Result<Vec<DailyStat>> {
                  ELSE NULL END                                                 AS on_time_pct
         FROM delay_history
         WHERE recorded_at >= NOW() - $1::INT * INTERVAL '1 day'
+          AND delay_mins BETWEEN -120 AND 600
         GROUP BY recorded_at::DATE
         ORDER BY recorded_at::DATE ASC
         "#,
@@ -249,6 +251,7 @@ async fn query_services(db: &Db, days: i32) -> anyhow::Result<Vec<ServiceStat>> 
                  ELSE NULL END                                                  AS coverage_pct
         FROM delay_history
         WHERE recorded_at >= NOW() - $1::INT * INTERVAL '1 day'
+          AND delay_mins BETWEEN -120 AND 600
         GROUP BY uid, origin_crs, weekday, departure_hour
         ORDER BY observations DESC
         LIMIT 100
@@ -280,6 +283,7 @@ async fn query_hourly(db: &Db, days: i32) -> anyhow::Result<Vec<HourlyStat>> {
             AVG(delay_mins::FLOAT8)       AS mean_delay
         FROM delay_history
         WHERE recorded_at >= NOW() - $1::INT * INTERVAL '1 day'
+          AND delay_mins BETWEEN -120 AND 600
         GROUP BY departure_hour
         ORDER BY departure_hour
         "#,
