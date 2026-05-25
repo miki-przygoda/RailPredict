@@ -14,7 +14,7 @@ RailPredict is a Rust-based high-performance shadow system for UK Rail data. Its
 
 ## Working Principles
 
-- **Before writing any code**, check the relevant `TODOs/` file for that domain. Each file contains architectural decisions and recommendations that should be treated as constraints, not suggestions.
+- **Before writing any code**, check `docs/improvements.md` for that domain. It contains architectural decisions and recommendations that should be treated as constraints, not suggestions.
 - **Before modifying a file**, read its immediate neighbours in the module tree to understand the data flow context.
 - **If a file has not been touched in several sessions**, leave a short inline note at the top of the file (as a Rust doc comment `//!`) marking what the module does, what state it was last left in, and what the next expected change is.
 - **Never make a live GBR API call inside a hot path.** All external calls go through the networking layer with rate limiting and circuit-breaker logic.
@@ -50,11 +50,15 @@ RailPredict/                        ← repo root
 ├── CHANGELOG.md                    ← completed epics log; updated on minor version bumps
 ├── SECURITY.md                     ← secrets rotation procedure + security posture
 ├── deny.toml                       ← cargo-deny advisory/license config
-├── prometheus.yml                  ← Prometheus scrape config (used by docker-compose monitoring profile)
 ├── migrations/                     ← sqlx SQL migrations (run at startup via sqlx::migrate!)
 ├── .github/workflows/ci.yml        ← GitHub Actions CI (deny → clippy → test → release build)
-├── TODOs/
-│   └── Improvements.md             ← full item index + cross-reference; all epics complete at v1.7.0
+├── deploy/
+│   ├── prometheus.yml              ← Prometheus scrape config (docker compose --profile monitoring)
+│   └── docker-compose.prod.yml    ← production overrides (no exposed DB port, stricter limits)
+├── docs/
+│   ├── improvements.md             ← full item index + architectural decisions; all epics complete at v1.7.0
+│   ├── model-performance.md        ← ML model accuracy breakdown and evaluation data
+│   └── index.html                  ← generated static snapshot (make export); not hand-edited
 └── RailPredict/                    ← Rust crate root
     ├── Cargo.toml                  ← crate manifest; version must match project version
     ├── Cargo.lock                  ← committed; this is a binary application not a library
@@ -188,7 +192,7 @@ A separate Rust project (gitignored under `data/`) that solved similar concurren
 The pattern: `UnsafeCell<[T; N]>` for the backing array, `AtomicU64` write cursor, `Ordering::Release` on commit and `Ordering::Acquire` on read. Writer fills all struct fields first, then `fetch_add(1, Release)` to make the entry visible — never the other way around. This maps directly onto the Darwin ingestion pipeline: the STOMP receiver (writer) fills a parsed `TrainUpdate` slot, then commits; the state machine (reader) polls the cursor.
 
 **2. Sequence gap detection + dirty flag — `data/HFT-Engine/src/engine.rs`: `run_ingestor`**
-The ingestor tracks `last_ingest_seq` and on each received packet checks `recv_seq != last_ingest_seq + 1`. On a gap it sets a `dirty: AtomicBool` flag and increments `gap_count`. The consumer (trading strategy) skips processing while dirty and only clears it after `N` consecutive clean sequences. This is **exactly** the Darwin out-of-order / late-arrival problem described in `TODOs/DataIngestion.md`. Port this pattern verbatim into `src/ingestion/filter.rs`.
+The ingestor tracks `last_ingest_seq` and on each received packet checks `recv_seq != last_ingest_seq + 1`. On a gap it sets a `dirty: AtomicBool` flag and increments `gap_count`. The consumer (trading strategy) skips processing while dirty and only clears it after `N` consecutive clean sequences. This is **exactly** the Darwin out-of-order / late-arrival problem described in `docs/improvements.md`. Port this pattern verbatim into `src/ingestion/filter.rs`.
 
 **3. `LatencyHistogram` — `data/HFT-Engine/src/models.rs`**
 Fixed-bucket histogram covering 0–10,000 µs (one `u64` per bucket), overflow counter for values above the range, and an O(n) `percentile()` walk that requires zero allocation. Single-writer semantics (`UnsafeCell` + no lock). Directly useful for monitoring Darwin XML parse latency and state-machine poll timing. Copy this struct as-is into a `src/diagnostics/` module.
@@ -236,4 +240,4 @@ When starting a new session on this project, the recommended warm-up order is:
 1. Read `TODO.md` → understand current sprint
 2. Read this file (`CLAUDE.md`) → reload architecture context
 3. Check `git log --oneline -10` → see what changed recently
-4. Read any `TODOs/*.md` relevant to today's work
+4. Read `docs/improvements.md` if relevant to today's work
