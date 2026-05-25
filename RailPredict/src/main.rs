@@ -35,7 +35,7 @@ use railpredict::cache::TrainRegistry;
 use railpredict::cli::{Cli, Commands, IngestSource};
 use railpredict::config::{Config, LogFormat};
 use railpredict::db;
-use railpredict::ingestion::gtfs::{self, IngestStatus};
+use railpredict::ingestion::gtfs::{self, IngestPhase, IngestStatus, run_ingest_with_watch};
 use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
 use railpredict::networking::{CircuitBreaker, Coalescer, LiveGbrClient, RateLimiter};
@@ -241,6 +241,40 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(trains = count, "Pre-warmed registry from today's timetable");
         }
         Err(e) => tracing::warn!(error = %e, "Registry warm-up from timetable skipped"),
+    }
+
+    // --- Auto-ingest: seed stations on first run if GTFS_URL is configured ---
+    // If the stations table is empty AND GTFS_URL is set, kick off a background
+    // ingest so the departure board and autocomplete work immediately without
+    // any manual step from the operator.
+    let station_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stations")
+        .fetch_one(&db_pool)
+        .await
+        .unwrap_or(0);
+
+    if station_count == 0 {
+        if let Ok(gtfs_url) = std::env::var("GTFS_URL") {
+            if !gtfs_url.trim().is_empty() {
+                tracing::info!("Stations table empty — auto-ingesting from GTFS_URL on startup");
+                let auto_db = db_pool.clone();
+                let auto_tx = Arc::new(watch::Sender::new(IngestStatus::default()));
+                tokio::spawn(async move {
+                    auto_tx.send_modify(|s| {
+                        s.phase = IngestPhase::Downloading;
+                        s.started_at = Some(Utc::now());
+                        s.log.push(format!("Auto-ingest: {gtfs_url}"));
+                    });
+                    match run_ingest_with_watch(&auto_db, &gtfs_url, &auto_tx).await {
+                        Ok(_) => tracing::info!("Startup auto-ingest complete"),
+                        Err(e) => tracing::warn!(error = %e, "Startup auto-ingest failed"),
+                    }
+                });
+            }
+        } else {
+            tracing::warn!(
+                "Stations table is empty — set GTFS_URL or use /demo to ingest timetable data"
+            );
+        }
     }
 
     // Single broadcast channel shared by PollManager, IngestionPipeline, and SSE handlers.
