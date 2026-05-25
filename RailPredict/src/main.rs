@@ -31,7 +31,7 @@ use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use railpredict::api::{router, AppState};
-use railpredict::cache::TrainRegistry;
+use railpredict::cache::{StationIndex, TrainRegistry};
 use railpredict::cli::{Cli, Commands, IngestSource};
 use railpredict::export;
 use railpredict::config::{Config, LogFormat};
@@ -691,6 +691,18 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Push notification task started");
     }
 
+    // --- Station autocomplete index (in-memory, loaded once) ---
+    let station_index = {
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
+            .fetch_all(&db_pool)
+            .await
+            .unwrap_or_default();
+        let count = rows.len();
+        let idx = StationIndex::build(rows);
+        tracing::info!(stations = count, "Station autocomplete index built");
+        Arc::new(idx)
+    };
+
     // --- axum HTTP server ---
     let app_state = AppState {
         registry: Arc::clone(&registry),
@@ -700,6 +712,7 @@ async fn main() -> anyhow::Result<()> {
         cors_allowed_origins: config.cors_allowed_origins.clone(),
         http_rate_limit_per_sec: config.http_rate_limit_per_sec,
         ingest_status: Arc::clone(&ingest_tx),
+        station_index: Arc::clone(&station_index),
     };
     let app = router(app_state);
     let bind_addr: std::net::SocketAddr = config
@@ -769,6 +782,13 @@ async fn wait_for_shutdown(
     prometheus_handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
     ingest_tx: Arc<watch::Sender<IngestStatus>>,
 ) {
+    let station_index = {
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
+            .fetch_all(&db_pool)
+            .await
+            .unwrap_or_default();
+        Arc::new(StationIndex::build(rows))
+    };
     let app_state = AppState {
         registry,
         state_change_tx: sc_tx,
@@ -777,6 +797,7 @@ async fn wait_for_shutdown(
         cors_allowed_origins: config.cors_allowed_origins.clone(),
         http_rate_limit_per_sec: config.http_rate_limit_per_sec,
         ingest_status: ingest_tx,
+        station_index,
     };
     let app = router(app_state);
 
