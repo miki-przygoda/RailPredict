@@ -2,7 +2,52 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.8.0" -- 25/05/2026**
+**version = "1.9.0" -- 25/05/2026**
+
+---
+
+## v1.9.0 — 25/05/2026 — ML delay prediction (LightGBM → ONNX → Rust inference)
+
+Two LightGBM models trained from `delay_history`, exported as ONNX, and loaded at
+startup for in-process inference via `ort` (ONNX Runtime). Prediction engine tries
+ONNX first, falls back to statistical trimmed-mean.
+
+**Python training pipeline — `scripts/`**
+- `scripts/train_models.py` — loads all `delay_history` from Postgres, engineers
+  rolling 7-day features per service pattern (no data leakage), trains two
+  `LGBMRegressor` models, exports `day_ahead.onnx` (10 features) and
+  `realtime.onnx` (15 features) via `onnxmltools.convert_lightgbm`.
+  Day-ahead MAE: 12.0 min vs 27.5 min trimmed-mean baseline (56% improvement).
+  Real-time MAE: 3.8 min with live Darwin delay signal.
+- `scripts/requirements.txt` — pinned deps for `lightgbm`, `scikit-learn`,
+  `onnxmltools`, `skl2onnx`, `sqlalchemy`, `python-dotenv`.
+- `Makefile` — `make train` creates/reuses `scripts/.venv`, installs deps, runs training.
+- `.gitignore` — `models/*.onnx`, `models/feature_meta.json`, `scripts/.venv/`.
+
+**Rust inference — `src/prediction/onnx_engine.rs`**
+- `OnnxEngine` struct: two optional `Mutex<Session>` (day-ahead and real-time),
+  `crs_map` and `uid_prefix_map` loaded from `models/feature_meta.json`.
+- `load()` silently skips missing model files; logs INFO on load, WARN if absent.
+- `predict_day_ahead()` — 10-feature vector, clamps output to `[-120, 600]`.
+- `predict_realtime()` — extends day-ahead vector with 5 live Darwin/weather features.
+- Sessions wrapped in `Mutex` because `Session::run` requires `&mut self`.
+
+**New types — `src/prediction/types.rs`**
+- `RollingStats` — `mean_delay`, `std_delay`, `on_time_pct`, `sample_count_log`.
+- `LiveFeatures` — `current_delay_mins`, `preceding_delay_mins`, `wind_mph`,
+  `volatility_score`, `mins_until_departure`.
+- `HistoricalStore::rolling_stats_7d()` — computes 7-day rolling window from
+  in-memory store; returns zero-filled `RollingStats` when no data (cold start safe).
+
+**Prediction engine wiring — `src/prediction/engine.rs`**
+- `PredictionEngine` gains `onnx: Arc<OnnxEngine>` field.
+- `with_store_and_onnx()` constructor; `with_store()` defaults to empty `OnnxEngine`.
+- `predict_and_update_with_correlation` tries real-time ONNX (when `reported_delay_mins`
+  is known), then day-ahead ONNX, then statistical trimmed-mean fallback.
+
+**Dependencies — `RailPredict/Cargo.toml`**
+- `ort = "=2.0.0-rc.12"` with `features = ["ndarray"]` (statically linked ORT binary).
+- `ndarray = "0.17"` (must match ort's transitive dependency version).
 
 ---
 
