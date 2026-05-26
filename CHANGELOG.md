@@ -2,16 +2,21 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.9.0" -- 26/05/2026**
+**version = "1.10.0" -- 26/05/2026**
 
 ---
 
-## v1.9.0 — 26/05/2026 — Per-train prediction tracking + dev/ML console panel
+## v1.10.0 — 26/05/2026 — Per-train prediction tracking + dev/ML console panel
 
 Adds a per-RID predicted-vs-actual ledger and surfaces it across the developer
-console and the public train detail page. The pattern-aggregated `delay_history`
-table that feeds the model is unchanged — this is a separate ledger that tracks
-"what did we predict for this specific train, and what actually happened?"
+console and the public train detail page. Layered on top of the v1.9.0 ONNX
+engine — whatever the engine produces (ONNX real-time, ONNX day-ahead, or the
+statistical fallback) is captured at first sighting, then compared to the
+actual outcome when each train deactivates.
+
+The pattern-aggregated `delay_history` table that feeds the model is unchanged.
+This is a separate, per-train-instance ledger answering "what did we predict
+for *this specific train* and what actually happened?"
 
 **New table — `prediction_outcomes`**
 - `migrations/20240417120010_create_prediction_outcomes.sql` — keyed on `rid`,
@@ -42,26 +47,26 @@ table that feeds the model is unchanged — this is a separate ledger that track
   the dedup set so memory stays bounded.
 
 **DTO surface — `src/api/types.rs`**
-- `TrainSummary` and `LiveUpdateEvent` gain `predicted_delay_mins: Option<i32>`
-  and `prediction_confidence: Option<f32>`. Both use `#[serde(default)]` so
-  older clients don't break.
+- `TrainSummary` and `LiveUpdateEvent` gain `prediction_confidence: Option<f32>`
+  alongside the `predicted_delay_mins` field added in v1.9.0. Both use
+  `#[serde(default)]` so older clients don't break.
 - `train_handler`, JSON `live_handler`, and the HTML SSE `ui_live_handler`
-  all populate the new fields from `TrainStatus`.
+  populate the new field from `TrainStatus.volatility.historical_reliability`.
 
 **Train detail page — `src/frontend/detail.rs`**
 - New `prediction_card` section between the header and live updates: shows
   the live engine prediction (with High/Medium/Low confidence label), the
-  persisted "First prediction" snapshot, and once finalised the actual
-  outcome with absolute error.
+  persisted "First prediction" snapshot from `prediction_outcomes`, and
+  once finalised the actual outcome with absolute error.
 - Correlation footer surfaces the preceding-RID signal when one is present.
-- Live SSE fragment now includes an inline "Predicted X min · High/Med/Low"
-  chip alongside the delay badge.
 
 **Dev console — `src/frontend/demo.rs`**
 - New full-width "Predicted vs Actual" section above the existing grid.
 - `/ui/demo/predictions` fragment: 5 summary cards (24h MAE, mean predicted,
   mean actual, finalised count, recent rows) + a 30-row live ledger table
   with In flight / Finalised status pills. Auto-refreshes every 10s.
+  Complements the public `/predictions` analytics page added in v1.9.0:
+  `/predictions` is for visitors; `/demo/predictions` is for operators.
 
 **CSS**
 - `.prediction-card`, `.prediction-grid`, `.prediction-cell`, `.prediction-value`,
@@ -70,6 +75,51 @@ table that feeds the model is unchanged — this is a separate ledger that track
 
 201 unit tests passing, clippy clean. No API breaks; new DTO fields are
 optional with `#[serde(default)]`.
+
+---
+
+## v1.9.0 — 25/05/2026 — ML delay prediction (LightGBM → ONNX → Rust inference)
+
+Two LightGBM models trained from `delay_history`, exported as ONNX, and loaded at
+startup for in-process inference via `ort` (ONNX Runtime). Prediction engine tries
+ONNX first, falls back to statistical trimmed-mean.
+
+**Python training pipeline — `scripts/`**
+- `scripts/train_models.py` — loads all `delay_history` from Postgres, engineers
+  rolling 7-day features per service pattern (no data leakage), trains two
+  `LGBMRegressor` models, exports `day_ahead.onnx` (10 features) and
+  `realtime.onnx` (15 features) via `onnxmltools.convert_lightgbm`.
+  Day-ahead MAE: 12.0 min vs 27.5 min trimmed-mean baseline (56% improvement).
+  Real-time MAE: 3.8 min with live Darwin delay signal.
+- `scripts/requirements.txt` — pinned deps for `lightgbm`, `scikit-learn`,
+  `onnxmltools`, `skl2onnx`, `sqlalchemy`, `python-dotenv`.
+- `Makefile` — `make train` creates/reuses `scripts/.venv`, installs deps, runs training.
+- `.gitignore` — `models/*.onnx`, `models/feature_meta.json`, `scripts/.venv/`.
+
+**Rust inference — `src/prediction/onnx_engine.rs`**
+- `OnnxEngine` struct: two optional `Mutex<Session>` (day-ahead and real-time),
+  `crs_map` and `uid_prefix_map` loaded from `models/feature_meta.json`.
+- `load()` silently skips missing model files; logs INFO on load, WARN if absent.
+- `predict_day_ahead()` — 10-feature vector, clamps output to `[-120, 600]`.
+- `predict_realtime()` — extends day-ahead vector with 5 live Darwin/weather features.
+- Sessions wrapped in `Mutex` because `Session::run` requires `&mut self`.
+
+**New types — `src/prediction/types.rs`**
+- `RollingStats` — `mean_delay`, `std_delay`, `on_time_pct`, `sample_count_log`.
+- `LiveFeatures` — `current_delay_mins`, `preceding_delay_mins`, `wind_mph`,
+  `volatility_score`, `mins_until_departure`.
+- `HistoricalStore::rolling_stats_7d()` — computes 7-day rolling window from
+  in-memory store; returns zero-filled `RollingStats` when no data (cold start safe).
+
+**Prediction engine wiring — `src/prediction/engine.rs`**
+- `PredictionEngine` gains `onnx: Arc<OnnxEngine>` field.
+- `with_store_and_onnx()` constructor; `with_store()` defaults to empty `OnnxEngine`.
+- `predict_and_update_with_correlation` tries real-time ONNX (when `reported_delay_mins`
+  is known), then day-ahead ONNX, then statistical trimmed-mean fallback.
+
+**Dependencies — `RailPredict/Cargo.toml`**
+- `ort = "=2.0.0-rc.12"` with `features = ["ndarray"]` (statically linked ORT binary).
+- `ndarray = "0.17"` (must match ort's transitive dependency version).
 
 ---
 

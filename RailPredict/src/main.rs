@@ -40,7 +40,7 @@ use railpredict::ingestion::gtfs::{self, IngestPhase, IngestStatus, run_ingest_w
 use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
 use railpredict::networking::{CircuitBreaker, Coalescer, LiveGbrClient, RateLimiter};
-use railpredict::prediction::PredictionEngine;
+use railpredict::prediction::{OnnxEngine, PredictionEngine};
 use railpredict::state_machine::PollManager;
 use railpredict::types::{TrainId, TrainStatus};
 
@@ -215,7 +215,18 @@ async fn main() -> anyhow::Result<()> {
     // Load Tier B history from DB into in-memory store.
     let history_store = db::history::load_history(&db_pool).await?;
     let history_store = Arc::new(history_store);
-    let prediction_engine = PredictionEngine::with_store(Arc::clone(&history_store));
+
+    // Load ONNX ML models (optional — gracefully falls back to statistical engine).
+    let onnx_engine = Arc::new(
+        OnnxEngine::load(std::path::Path::new("models")).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "ONNX engine failed to load — using statistical fallback");
+            OnnxEngine::default()
+        }),
+    );
+    let prediction_engine = PredictionEngine::with_store_and_onnx(
+        Arc::clone(&history_store),
+        Arc::clone(&onnx_engine),
+    );
 
     let registry = Arc::new(TrainRegistry::new());
     let volatility_store: railpredict::weather::VolatilityStore = Arc::new(dashmap::DashMap::new());

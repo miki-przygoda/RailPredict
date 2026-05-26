@@ -5,6 +5,8 @@
 //! `reported_delay_mins` values via `PredictionEngine::record_outcome`.
 
 pub mod engine;
+pub mod onnx_engine;
 pub mod types;
 
 pub use engine::PredictionEngine;
+pub use onnx_engine::OnnxEngine;

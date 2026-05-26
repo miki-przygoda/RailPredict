@@ -21,6 +21,33 @@ pub fn delay_badge(delay_mins: Option<i32>, is_cancelled: bool) -> Markup {
     }
 }
 
+/// ML prediction chip: shows predicted delay and, when `actual` is also known,
+/// the accuracy delta (predicted − actual).
+pub fn prediction_chip(predicted: Option<i32>, actual: Option<i32>) -> Markup {
+    let Some(pred) = predicted else {
+        return html! {};
+    };
+    html! {
+        span .pred-chip {
+            @if pred <= 0 {
+                span .pred-value.pred-ontime { "Pred: on time" }
+            } @else {
+                span .pred-value { "Pred: " (pred) " min" }
+            }
+            @if let Some(act) = actual {
+                @let delta = pred - act;
+                @if delta == 0 {
+                    span .pred-delta.pred-delta-exact { "Δ 0" }
+                } @else if delta > 0 {
+                    span .pred-delta.pred-delta-over { "Δ +" (delta) }
+                } @else {
+                    span .pred-delta.pred-delta-under { "Δ " (delta) }
+                }
+            }
+        }
+    }
+}
+
 /// Large-type platform indicator — Uber-style "your platform is X" moment.
 /// `is_planned = true` renders a muted chip with a "Planned" label when the platform
 /// comes from the static timetable and has not yet been confirmed by a live source.
