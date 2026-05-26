@@ -130,6 +130,26 @@ pub async fn demo_page() -> Markup {
                 }
             }
 
+            // ── Predicted vs Actual — full-width, the headline ML view ────
+            div .demo-status-section {
+                div .demo-section-title {
+                    "Predicted vs Actual"
+                    span .demo-badge .badge-tier-a style="background:rgba(120,140,200,0.15);color:#a4b8e8;" { "Tier B" }
+                }
+                p .demo-hint {
+                    "Per-train predictions captured at first sighting, and the actual "
+                    "delay outcome recorded when each train deactivates. Rolling 24h "
+                    "accuracy summary plus the 30 most recent entries."
+                }
+                div
+                    hx-get="/ui/demo/predictions"
+                    hx-trigger="load, every 10s"
+                    hx-swap="innerHTML"
+                {
+                    p .demo-loading { "Loading predictions…" }
+                }
+            }
+
             div .demo-grid {
 
                 // ══════════════════════════════════════════════════════════
@@ -467,6 +487,131 @@ pub async fn demo_status_fragment(State(state): State<AppState>) -> Markup {
                     @if let Some(n) = history_count { (n) } @else { "—" }
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Predictions panel fragment — GET /ui/demo/predictions
+//
+// Rolling accuracy + a live table of recent predicted-vs-actual outcomes.
+// Reads from the prediction_outcomes ledger; no registry access here so the
+// data survives train deactivations and process restarts.
+// ---------------------------------------------------------------------------
+
+pub async fn demo_predictions_fragment(State(state): State<AppState>) -> Markup {
+    let recent = crate::db::predictions::recent_predictions(&state.db, 30)
+        .await
+        .unwrap_or_default();
+    let summary = crate::db::predictions::accuracy_summary(&state.db, 24)
+        .await
+        .ok();
+
+    let mae_str = summary
+        .as_ref()
+        .and_then(|s| s.mean_abs_error_mins)
+        .map(|v| format!("{v:.1} min"))
+        .unwrap_or_else(|| "—".to_string());
+    let mean_pred_str = summary
+        .as_ref()
+        .and_then(|s| s.mean_predicted_mins)
+        .map(|v| format!("{v:.1} min"))
+        .unwrap_or_else(|| "—".to_string());
+    let mean_actual_str = summary
+        .as_ref()
+        .and_then(|s| s.mean_actual_mins)
+        .map(|v| format!("{v:.1} min"))
+        .unwrap_or_else(|| "—".to_string());
+    let finalised_count = summary.as_ref().map(|s| s.finalised_count).unwrap_or(0);
+
+    html! {
+        div .demo-status-grid {
+            div .demo-status-card {
+                span .demo-status-label { "Mean abs error · 24h" }
+                span .demo-status-value { (mae_str) }
+            }
+            div .demo-status-card {
+                span .demo-status-label { "Mean predicted · 24h" }
+                span .demo-status-value { (mean_pred_str) }
+            }
+            div .demo-status-card {
+                span .demo-status-label { "Mean actual · 24h" }
+                span .demo-status-value { (mean_actual_str) }
+            }
+            div .demo-status-card {
+                span .demo-status-label { "Finalised · 24h" }
+                span .demo-status-value { (finalised_count) }
+            }
+            div .demo-status-card {
+                span .demo-status-label { "Recent rows" }
+                span .demo-status-value { (recent.len()) }
+            }
+        }
+
+        @if recent.is_empty() {
+            p .demo-hint style="margin-top:1rem;" {
+                "No prediction outcomes recorded yet. Waiting for Darwin TS messages "
+                "to drive the engine."
+            }
+        } @else {
+            div .demo-pred-table-wrap {
+                table .demo-pred-table {
+                    thead {
+                        tr {
+                            th { "RID" }
+                            th { "UID" }
+                            th { "From" }
+                            th { "Departs" }
+                            th { "Predicted" }
+                            th { "Conf" }
+                            th { "Actual" }
+                            th { "Error" }
+                            th { "Status" }
+                        }
+                    }
+                    tbody {
+                        @for row in &recent {
+                            (prediction_row(row))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn prediction_row(o: &crate::db::predictions::PredictionOutcome) -> Markup {
+    let (status_label, status_cls) = match o.final_delay_mins {
+        Some(_) => ("Finalised", "status-ok"),
+        None    => ("In flight", "status-warn"),
+    };
+    let actual = o.final_delay_mins.map(|v| format!("{v} min"));
+    let err = o.abs_error_mins().map(|v| format!("{v} min"));
+    let conf = o.prediction_confidence
+        .map(|c| format!("{:.0}%", c * 100.0))
+        .unwrap_or_else(|| "—".to_string());
+
+    html! {
+        tr {
+            td { code { (o.rid) } }
+            td { (o.uid) }
+            td { (o.origin_crs) }
+            td { (o.scheduled_departure.format("%H:%M")) }
+            td { (o.predicted_delay_mins) " min" }
+            td .dim { (conf) }
+            td {
+                @match actual {
+                    Some(a) => (a),
+                    None    => span .dim { "—" },
+                }
+            }
+            td {
+                @match err {
+                    Some(e) => (e),
+                    None    => span .dim { "—" },
+                }
+            }
+            td { span .demo-status-value .(status_cls) { (status_label) } }
         }
     }
 }
