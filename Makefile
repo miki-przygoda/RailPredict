@@ -1,4 +1,4 @@
-.PHONY: up down build rebuild logs db ingest export
+.PHONY: up down build rebuild logs db ingest export train
 
 # Start all services, rebuilding the app image from current source.
 up:
@@ -32,3 +32,12 @@ ingest:
 DAYS ?= 7
 export:
 	cd RailPredict && cargo run --release -- export-site --output ../docs/index.html --days $(DAYS)
+
+# Train ML delay prediction models and export them as ONNX.
+# Reads DATABASE_URL from .env (swaps @db: → @localhost: automatically).
+# Outputs: models/day_ahead.onnx, models/realtime.onnx, models/feature_meta.json
+# Restart the server after training to pick up the new models.
+train:
+	@test -d scripts/.venv || python3 -m venv scripts/.venv
+	scripts/.venv/bin/pip install -q -r scripts/requirements.txt
+	scripts/.venv/bin/python scripts/train_models.py

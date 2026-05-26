@@ -489,6 +489,86 @@ main {
 .badge.cancelled { background: var(--red-dim);    color: var(--red); }
 
 /* ============================================================
+   Prediction chip
+   ============================================================ */
+
+.pred-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(77, 142, 247, 0.08);
+  border: 1px solid rgba(77, 142, 247, 0.2);
+  border-radius: var(--r-sm);
+  padding: 0.25rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pred-value {
+  color: var(--blue);
+}
+
+.pred-value.pred-ontime {
+  color: var(--green);
+}
+
+.pred-delta {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+
+.pred-delta-exact { background: var(--surface-3); color: var(--text-muted); }
+.pred-delta-over  { background: var(--red-dim);   color: var(--red); }
+.pred-delta-under { background: var(--green-dim); color: var(--green); }
+
+/* ============================================================
+   Prediction filter bar (departure board)
+   ============================================================ */
+
+.pred-filter-bar {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.pred-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.pred-filter-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.pred-filter-btn.active {
+  background: rgba(77, 142, 247, 0.12);
+  border-color: rgba(77, 142, 247, 0.35);
+  color: var(--blue);
+}
+
+.pred-filter-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+/* ============================================================
    Platform chip
    ============================================================ */
 
@@ -1599,6 +1679,220 @@ details[open].checkout-dev-info summary::before   { content: "▼ "; }
 }
 
 /* ============================================================
+   Predictions page
+   ============================================================ */
+
+.pred-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.pred-page-header h1 {
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.pred-page-subtitle {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-top: 0.3rem;
+}
+
+.pred-no-data {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Summary stat cards */
+.pred-summary-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.75rem;
+}
+
+.pred-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 1.1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.pred-stat-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.pred-stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+/* Sections */
+.pred-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.pred-section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.pred-section-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.pred-section-sub {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin-top: -0.5rem;
+}
+
+/* Hour chart */
+.pred-hour-chart {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 1.25rem 1rem 0.5rem;
+  overflow-x: auto;
+}
+
+/* Sort bar */
+.pred-sort-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.pred-sort-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-right: 0.2rem;
+}
+
+.pred-sort-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.28rem 0.8rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.pred-sort-btn:hover { background: var(--surface-3); color: var(--text); }
+
+.pred-sort-btn.active {
+  background: rgba(77,142,247,0.12);
+  border-color: rgba(77,142,247,0.35);
+  color: var(--blue);
+}
+
+/* Table */
+.pred-table-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pred-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.pred-table thead th {
+  padding: 0.7rem 1rem;
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+  font-weight: 600;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.pred-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.pred-table tbody tr:last-child { border-bottom: none; }
+
+.pred-table tbody tr:hover { background: var(--surface-2); }
+
+.pred-table td {
+  padding: 0.65rem 1rem;
+  vertical-align: middle;
+}
+
+.pred-table code {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-family: "SF Mono", "Fira Code", monospace;
+  background: var(--surface-3);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+/* MAE colours */
+.pred-mae-good  { color: var(--green); font-weight: 600; }
+.pred-mae-ok    { color: var(--amber); font-weight: 600; }
+.pred-mae-bad   { color: var(--red);   font-weight: 600; }
+
+/* Bias colours */
+.pred-bias-over  { color: var(--red); }
+.pred-bias-under { color: var(--green); }
+
+/* Error colours */
+.pred-error-over  { color: var(--red);   font-weight: 600; }
+.pred-error-under { color: var(--green); font-weight: 600; }
+
+/* Progress bar */
+.pred-bar-track {
+  width: 100%;
+  height: 6px;
+  background: var(--surface-3);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 60px;
+}
+
+.pred-bar-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+/* Errors table */
+.pred-errors-table { margin-top: 0; }
+
+/* ============================================================
    Responsive
    ============================================================ */
 
@@ -1609,4 +1903,5 @@ details[open].checkout-dev-info summary::before   { content: "▼ "; }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .nav-grid { grid-template-columns: 1fr; }
   .prediction-value { font-size: 1.3rem; }
+  .pred-summary-row { grid-template-columns: repeat(2, 1fr); }
 }

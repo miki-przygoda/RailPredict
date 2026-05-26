@@ -20,7 +20,7 @@ use crate::{
     types::TrainId,
 };
 
-use super::components::{delay_badge, platform_chip};
+use super::components::{delay_badge, platform_chip, prediction_chip};
 use super::layout::base;
 
 fn pence_to_pounds(pence: i32) -> String {
@@ -256,14 +256,7 @@ async fn enrich_to_html(
             div .train-header-badges {
                 (delay_badge(live.delay_mins, live.is_cancelled.unwrap_or(false)))
                 (platform_chip(live.platform.as_deref(), false))
-                @if let Some(pred) = live.predicted_delay_mins {
-                    span .prediction-inline-chip {
-                        "Predicted " (pred) " min"
-                        @if let Some(c) = live.prediction_confidence {
-                            span .dim { " · " (confidence_label(c)) }
-                        }
-                    }
-                }
+                (prediction_chip(live.predicted_delay_mins, live.delay_mins))
             }
             p .train-meta { "State: " (live.state) }
             p .last-updated {
