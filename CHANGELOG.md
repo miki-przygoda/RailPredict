@@ -2,7 +2,74 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.8.1" -- 26/05/2026**
+**version = "1.9.0" -- 26/05/2026**
+
+---
+
+## v1.9.0 — 26/05/2026 — Per-train prediction tracking + dev/ML console panel
+
+Adds a per-RID predicted-vs-actual ledger and surfaces it across the developer
+console and the public train detail page. The pattern-aggregated `delay_history`
+table that feeds the model is unchanged — this is a separate ledger that tracks
+"what did we predict for this specific train, and what actually happened?"
+
+**New table — `prediction_outcomes`**
+- `migrations/20240417120010_create_prediction_outcomes.sql` — keyed on `rid`,
+  carries the first prediction we made (`predicted_delay_mins`,
+  `prediction_confidence`, correlation signal), then `final_delay_mins` /
+  `finalised_at` are filled in on deactivation. Indexes on `predicted_at DESC`
+  (recent feed), partial on `finalised_at` (recent outcomes), and on `uid`.
+
+**`src/db/predictions.rs`**
+- `insert_first_prediction(db, &TrainStatus)` — `ON CONFLICT DO NOTHING` keeps
+  the first prediction we made, so the eventual comparison is fair.
+- `finalise_outcome(db, rid, final_delay_mins)` — guarded by `finalised_at IS NULL`.
+- `recent_predictions(db, limit)` and `prediction_for_rid(db, rid)` for reads.
+- `accuracy_summary(db, window_hours)` — rolling 24h MAE + mean predicted +
+  mean actual + finalised count for the dev panel cards.
+- `PredictionOutcome::abs_error_mins()` helper.
+
+**Ingestion write path**
+- `PipelineContext` gains `db: Option<Db>` and `persisted_predictions:
+  Arc<DashSet<String>>`. `None` keeps tests / the `passthrough` constructor
+  database-free.
+- On every TS message: after `engine.predict_and_update`, if the registry
+  now holds a `Some(predicted)` and the RID isn't in the dedup set, spawn a
+  fire-and-forget `insert_first_prediction`. Closure is sync, DB call runs in
+  a detached task — never blocks the registry lock.
+- On Deactivated: snapshot `reported_delay_mins.value` before removing the
+  registry entry, then spawn `finalise_outcome`. RID is also dropped from
+  the dedup set so memory stays bounded.
+
+**DTO surface — `src/api/types.rs`**
+- `TrainSummary` and `LiveUpdateEvent` gain `predicted_delay_mins: Option<i32>`
+  and `prediction_confidence: Option<f32>`. Both use `#[serde(default)]` so
+  older clients don't break.
+- `train_handler`, JSON `live_handler`, and the HTML SSE `ui_live_handler`
+  all populate the new fields from `TrainStatus`.
+
+**Train detail page — `src/frontend/detail.rs`**
+- New `prediction_card` section between the header and live updates: shows
+  the live engine prediction (with High/Medium/Low confidence label), the
+  persisted "First prediction" snapshot, and once finalised the actual
+  outcome with absolute error.
+- Correlation footer surfaces the preceding-RID signal when one is present.
+- Live SSE fragment now includes an inline "Predicted X min · High/Med/Low"
+  chip alongside the delay badge.
+
+**Dev console — `src/frontend/demo.rs`**
+- New full-width "Predicted vs Actual" section above the existing grid.
+- `/ui/demo/predictions` fragment: 5 summary cards (24h MAE, mean predicted,
+  mean actual, finalised count, recent rows) + a 30-row live ledger table
+  with In flight / Finalised status pills. Auto-refreshes every 10s.
+
+**CSS**
+- `.prediction-card`, `.prediction-grid`, `.prediction-cell`, `.prediction-value`,
+  `.prediction-sub`, `.prediction-correlation`, `.prediction-inline-chip`, `.dim`.
+- `.demo-pred-table-wrap`, `.demo-pred-table` for the dev panel ledger.
+
+201 unit tests passing, clippy clean. No API breaks; new DTO fields are
+optional with `#[serde(default)]`.
 
 ---
 

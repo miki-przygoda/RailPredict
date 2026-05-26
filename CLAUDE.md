@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.8.1" -- 26/05/2026**
+**version = "1.9.0" -- 26/05/2026**
 
 ---
 
@@ -97,7 +97,8 @@ RailPredict/                        ← repo root
         ├── db/
         │   ├── mod.rs              ← connect(); type Db = PgPool; runs migrations at startup
         │   ├── static_data.rs      ← get_station, departures_from, cheapest_fare
-        │   └── history.rs          ← load_history (window fn); flush_history (500-row chunks, idempotent)
+        │   ├── history.rs          ← load_history (window fn); flush_history (500-row chunks, idempotent)
+        │   └── predictions.rs      ← per-RID prediction_outcomes ledger; insert/finalise/recent/by-rid
         ├── weather/
         │   └── mod.rs              ← VolatilityStore; WeatherAnchor; fetch_wind_mph (Open-Meteo); run_weather_task (10min)
         ├── api/
