@@ -2,7 +2,33 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.8.0" -- 25/05/2026**
+**version = "1.8.1" -- 26/05/2026**
+
+---
+
+## v1.8.1 — 26/05/2026 — Export-site hardening
+
+Tightens the v1.8.0 static export against script-tag injection, fixes a colour-class
+bug for missing on-time data, and parallelises the four DB queries.
+
+**`src/export/mod.rs`**
+- `gather()` now runs `query_summary`, `query_daily`, `query_services`, `query_hourly`
+  concurrently via `tokio::try_join!` instead of awaiting each one sequentially.
+  Wall-time drops roughly 3–4× on the same connection pool.
+- The serialised JSON has `</` escaped to `<\/` before substitution into the host
+  `<script>` tag. `\/` is a valid JSON escape for `/`, so parsed values are unchanged,
+  but a stray `</script>` in a string field can no longer terminate the tag.
+- Collapsed a nested `if let … { if … }` into a single let-chain (clippy fix).
+
+**`src/export/template.html`**
+- Added an `esc()` helper that HTML-escapes `& < > " '`. The service-breakdown table
+  now passes `s.uid` and `s.origin_crs` through it before interpolating into the
+  row template — previously they were dropped into `innerHTML` raw.
+- New `cardPctCls()` helper handles a null `on_time_pct` correctly. Previously
+  `null >= 70` evaluated to `false`, so the summary card for a service with no
+  on-time data rendered as red ("c-red") instead of unstyled.
+
+No schema, no migration, no API change. 201 tests, all passing.
 
 ---
 
