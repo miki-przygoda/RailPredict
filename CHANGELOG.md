@@ -2,7 +2,57 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.10.0" -- 26/05/2026**
+**version = "1.11.0" -- 26/05/2026**
+
+---
+
+## v1.11.0 — 26/05/2026 — Dashboard redesign + in-memory station index + seeds
+
+Merges the `ui/dashboard-redesign` branch. Three independent threads:
+
+**Dashboard redesign — `src/frontend/dashboard.rs` + `static/style.css`**
+- Plain status page replaced with a two-column hero, 7-card metrics grid
+  (including ML accuracy cards — median AE, % within ±5 min, bias —
+  with green-tinted borders when prediction data is present), and a
+  3-card navigation section.
+- Adds `PredStats` query via `tokio::join!` to avoid sequential DB
+  round-trips on dashboard load.
+
+**In-memory station index — `src/cache/station_index.rs`**
+- New module: word-prefix tree built once at startup from the `stations`
+  table. Replaces the SQL full-text query (`to_tsvector`) for
+  `/ui/stations/search` autocomplete.
+- Wired into `AppState` via `main.rs`; `handlers::station_search_handler`
+  and `search::station_suggestions_fragment` now query the index instead
+  of the DB. Cold lookups drop from ~12 ms (DB round-trip) to sub-ms.
+
+**Registry fix — `src/cache/train_registry.rs`**
+- `departure_snapshot` now takes both CRS and TIPLOC so Darwin entries
+  stored under a TIPLOC (e.g. `WATRLMN`) match queries for the CRS
+  (e.g. `WAT`). Fixes empty departure boards for stations where Darwin
+  uses TIPLOC keys.
+- `rid` field stringification no longer prepends `RID:` (was breaking
+  `/trains/<id>/view` with 404s).
+
+**Seed scripts + docs**
+- `scripts/seed_stations.py` — OSM-based station seed (~120 TIPLOCs).
+- `scripts/seed_history.py` — synthetic delay history (~1.7M rows over
+  90 days; per-hour, per-station, weekend multipliers).
+- `Makefile` — `make seed-stations`, `make seed-history` targets.
+- `docs/model-performance.md` — ML model evaluation: 5.3 min MAE,
+  77% within ±5 min on 1,485 real UK trains (25 May 2026 Darwin feed).
+
+**Infra reshuffle**
+- `deploy/prometheus.yml` (moved from root)
+- `deploy/docker-compose.prod.yml` (moved from root)
+- `docs/improvements.md` (moved from `TODOs/Improvements.md`; old dir removed)
+- `docker-compose.yml` — volume mount paths updated for the deploy/ move.
+- `logs/.gitkeep` — ensures directory survives clones.
+- `.gitignore` — broaden `**/.DS_Store`; `/logs/*` + `!logs/.gitkeep`.
+
+`prediction_outcomes` (v1.10.0) is untouched — the dashboard's ML metrics
+read from `delay_history` (which feeds the model), while the detail page
+and `/demo/predictions` continue to surface the per-train ledger.
 
 ---
 

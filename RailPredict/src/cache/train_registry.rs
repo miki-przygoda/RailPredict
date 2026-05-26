@@ -99,18 +99,26 @@ impl TrainRegistry {
 
     /// Build a pre-filtered departure board snapshot for the given CRS code.
     ///
-    /// Iterates the registry once, filters to trains whose `origin_crs` matches `crs`
-    /// (case-insensitive), and returns a sorted `Vec<DepartureBoardEntry>` without the
-    /// caller needing to acquire per-train locks.
-    pub async fn departure_snapshot(&self, crs: &str) -> Vec<crate::api::types::DepartureBoardEntry> {
+    /// Iterates the registry once, filters to trains whose `origin_crs` matches any of
+    /// `codes` (case-insensitive). Pass both the 3-letter CRS and its TIPLOC so that
+    /// Darwin-sourced entries (which store TIPLOCs) are matched correctly.
+    pub async fn departure_snapshot(&self, codes: &[&str]) -> Vec<crate::api::types::DepartureBoardEntry> {
         use chrono::Utc;
 
-        let crs_upper = crs.to_uppercase();
+        let codes_upper: Vec<String> = codes.iter()
+            .filter(|c| !c.is_empty())
+            .map(|c| c.to_uppercase())
+            .collect();
+
         let mut entries: Vec<crate::api::types::DepartureBoardEntry> = Vec::new();
 
         for entry in self.trains.iter() {
             let status = entry.value().read().await;
-            if status.origin_crs.as_deref().map(str::to_uppercase).as_deref() != Some(&crs_upper) {
+            let origin = match status.origin_crs.as_deref() {
+                Some(o) => o.to_uppercase(),
+                None => continue,
+            };
+            if !codes_upper.iter().any(|c| *c == origin) {
                 continue;
             }
 
@@ -128,7 +136,7 @@ impl TrainRegistry {
             });
 
             entries.push(crate::api::types::DepartureBoardEntry {
-                rid: status.id.to_string(),
+                rid: status.id.as_str().to_string(),
                 scheduled_departure: status.scheduled_departure.value.to_rfc3339(),
                 estimated_departure: status
                     .actual_estimated_departure
