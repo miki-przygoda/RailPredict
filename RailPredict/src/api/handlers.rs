@@ -263,6 +263,8 @@ pub async fn train_handler(
             .value
             .map(|dt| dt.to_rfc3339()),
         delay_mins: status.best_delay_mins(),
+        predicted_delay_mins: status.predicted_delay_mins.value,
+        prediction_confidence: status.volatility.historical_reliability,
         platform: status.best_platform().map(str::to_string),
         is_cancelled: status.is_cancelled.value,
         last_updated: last_updated.to_rfc3339(),

@@ -61,23 +61,28 @@ async fn enrich(
     registry: &crate::cache::TrainRegistry,
     event: &StateChangeEvent,
 ) -> LiveUpdateEvent {
-    let (delay_mins, platform, is_cancelled) = match registry.get(&event.train_id) {
-        Some(arc) => {
-            let s = arc.read().await;
-            (
-                s.best_delay_mins(),
-                s.best_platform().map(str::to_string),
-                s.is_cancelled.value,
-            )
-        }
-        None => (None, None, None),
-    };
+    let (delay_mins, predicted_delay_mins, prediction_confidence, platform, is_cancelled) =
+        match registry.get(&event.train_id) {
+            Some(arc) => {
+                let s = arc.read().await;
+                (
+                    s.best_delay_mins(),
+                    s.predicted_delay_mins.value,
+                    s.volatility.historical_reliability,
+                    s.best_platform().map(str::to_string),
+                    s.is_cancelled.value,
+                )
+            }
+            None => (None, None, None, None, None),
+        };
 
     LiveUpdateEvent {
         rid: event.train_id.to_string(),
         state: format!("{:?}", event.new_state),
         is_cancelled,
         delay_mins,
+        predicted_delay_mins,
+        prediction_confidence,
         platform,
         timestamp: Utc::now().to_rfc3339(),
     }
