@@ -326,6 +326,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&registry),
         sc_tx.clone(),
         prediction_engine,
+        Some(db_pool.clone()),
     );
 
     let pipeline_token = token.clone();
