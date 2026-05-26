@@ -1553,6 +1553,52 @@ details[open].checkout-dev-info summary::before   { content: "▼ "; }
 .dim { color: var(--text-muted); }
 
 /* ============================================================
+   Dev console — predictions table
+   ============================================================ */
+
+.demo-pred-table-wrap {
+  margin-top: 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 6px);
+}
+
+.demo-pred-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.demo-pred-table th {
+  background: rgba(255,255,255,0.03);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.demo-pred-table td {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.demo-pred-table tr:hover td {
+  background: rgba(255,255,255,0.02);
+}
+
+.demo-pred-table code {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.85em;
+  color: var(--text);
+}
+
+/* ============================================================
    Responsive
    ============================================================ */
 
