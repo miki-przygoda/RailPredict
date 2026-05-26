@@ -42,9 +42,11 @@ pub mod stomp_client;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use dashmap::DashSet;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::cache::TrainRegistry;
+use crate::db::Db;
 use crate::prediction::PredictionEngine;
 use crate::state_machine::poll_manager::StateChangeEvent;
 use crate::state_machine::train_state::{PromotionReason, TrainState};
@@ -83,6 +85,14 @@ pub struct PipelineContext {
     pub registry: Arc<TrainRegistry>,
     pub state_change_tx: broadcast::Sender<StateChangeEvent>,
     pub prediction_engine: PredictionEngine,
+    /// DB pool for the per-RID `prediction_outcomes` ledger. `None` in tests and
+    /// in the `passthrough` constructor — when absent, prediction persistence
+    /// is silently skipped.
+    pub db: Option<Db>,
+    /// RIDs we've already written a `prediction_outcomes` row for. Survives
+    /// STOMP reconnects (lives on the shared context). On train deactivation
+    /// the entry is removed so memory stays bounded.
+    pub persisted_predictions: Arc<DashSet<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -101,12 +111,15 @@ impl IngestionPipeline {
         registry: Arc<TrainRegistry>,
         state_change_tx: broadcast::Sender<StateChangeEvent>,
         prediction_engine: PredictionEngine,
+        db: Option<Db>,
     ) -> Self {
         let ctx = PipelineContext {
             filter: Arc::new(Filter::new(watched_routes)),
             registry,
             state_change_tx,
             prediction_engine,
+            db,
+            persisted_predictions: Arc::new(DashSet::new()),
         };
         Self { stomp, ctx }
     }
@@ -116,7 +129,7 @@ impl IngestionPipeline {
         registry: Arc<TrainRegistry>,
         state_change_tx: broadcast::Sender<StateChangeEvent>,
     ) -> Self {
-        Self::new(stomp, HashSet::new(), registry, state_change_tx, PredictionEngine::new())
+        Self::new(stomp, HashSet::new(), registry, state_change_tx, PredictionEngine::new(), None)
     }
 
     /// Clone the shared pipeline context (filter state, registry, broadcast channel).
@@ -251,6 +264,8 @@ impl IngestionPipeline {
                     let ts_uid = ts_update.uid.clone();
                     let ts_destination_crs = ts_update.destination_crs.clone();
                     let engine = self.ctx.prediction_engine.clone();
+                    let db_for_persist = self.ctx.db.clone();
+                    let persisted_set = Arc::clone(&self.ctx.persisted_predictions);
 
                     // Apply live fields to registry (works whether just registered or pre-existing).
                     self.ctx.registry
@@ -287,6 +302,29 @@ impl IngestionPipeline {
                             // Feed confirmed delay into historical store, then refresh prediction.
                             engine.record_outcome(status);
                             engine.predict_and_update(status);
+
+                            // Persist the first prediction we ever produce for this RID into
+                            // the prediction_outcomes ledger. The DashSet ensures we attempt
+                            // the insert exactly once per RID; the SQL still has ON CONFLICT
+                            // DO NOTHING as a belt-and-braces guard against process restarts.
+                            if status.predicted_delay_mins.value.is_some()
+                                && let Some(db) = db_for_persist.as_ref()
+                                && persisted_set.insert(status.id.as_str().to_string())
+                            {
+                                let db_clone = db.clone();
+                                let status_snapshot = status.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = crate::db::predictions::insert_first_prediction(
+                                        &db_clone, &status_snapshot,
+                                    ).await {
+                                        tracing::warn!(
+                                            error = %e,
+                                            rid = %status_snapshot.id,
+                                            "Failed to persist first prediction"
+                                        );
+                                    }
+                                });
+                            }
                         })
                         .await;
 
@@ -318,9 +356,36 @@ impl IngestionPipeline {
                     let rid = deact.rid.clone();
                     tracing::info!(rid = %rid, "Train deactivated — removing from registry");
 
+                    // Capture the final delay before removing the entry — needed to
+                    // close out the prediction_outcomes row for this RID.
+                    let final_delay = if let Some(arc) = self.ctx.registry.get(&rid) {
+                        let s = arc.read().await;
+                        s.reported_delay_mins.value
+                    } else {
+                        None
+                    };
+
                     // Remove from registry and forget sequence state.
                     self.ctx.registry.remove(&rid);
                     self.ctx.filter.forget(&rid);
+                    self.ctx.persisted_predictions.remove(rid.as_str());
+
+                    // Finalise the prediction_outcomes row (best-effort, fire-and-forget).
+                    if let (Some(db), Some(final_d)) = (self.ctx.db.as_ref(), final_delay) {
+                        let db_clone = db.clone();
+                        let rid_str = rid.as_str().to_string();
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::db::predictions::finalise_outcome(
+                                &db_clone, &rid_str, final_d,
+                            ).await {
+                                tracing::warn!(
+                                    error = %e,
+                                    rid = %rid_str,
+                                    "Failed to finalise prediction outcome"
+                                );
+                            }
+                        });
+                    }
 
                     let event = StateChangeEvent {
                         train_id: rid,
