@@ -15,6 +15,7 @@ use crate::{
         types::LiveUpdateEvent,
         AppState,
     },
+    db::predictions::{prediction_for_rid, PredictionOutcome},
     state_machine::{poll_manager::StateChangeEvent, TrainState},
     types::TrainId,
 };
@@ -24,6 +25,89 @@ use super::layout::base;
 
 fn pence_to_pounds(pence: i32) -> String {
     format!("£{:.2}", pence as f64 / 100.0)
+}
+
+/// Bucket a confidence value (0.0–1.0) into a coarse label for UI display.
+fn confidence_label(c: f32) -> &'static str {
+    match c {
+        c if c >= 0.66 => "High",
+        c if c >= 0.33 => "Medium",
+        _ => "Low",
+    }
+}
+
+/// Render the prediction snapshot + outcome card for the detail page.
+fn prediction_card(
+    live_predicted: Option<i32>,
+    live_confidence: Option<f32>,
+    outcome: Option<&PredictionOutcome>,
+) -> Markup {
+    html! {
+        section .prediction-card {
+            h2 { "Prediction" }
+            div .prediction-grid {
+                // Live prediction (from registry)
+                div .prediction-cell {
+                    div .prediction-label { "Live prediction" }
+                    div .prediction-value {
+                        @match live_predicted {
+                            Some(mins) => { (mins) " min" }
+                            None       => { span .dim { "—" } }
+                        }
+                    }
+                    @if let Some(c) = live_confidence {
+                        div .prediction-sub {
+                            "Confidence " (confidence_label(c)) " "
+                            span .dim { "(" (format!("{:.0}%", c * 100.0)) ")" }
+                        }
+                    }
+                }
+
+                // Persisted "first prediction" snapshot from prediction_outcomes
+                @if let Some(o) = outcome {
+                    div .prediction-cell {
+                        div .prediction-label { "First prediction" }
+                        div .prediction-value {
+                            (o.predicted_delay_mins) " min"
+                        }
+                        div .prediction-sub {
+                            "Locked in at "
+                            (o.predicted_at.format("%H:%M UTC"))
+                        }
+                    }
+                }
+
+                // Outcome (only if finalised)
+                @if let Some(o) = outcome
+                    && let (Some(actual), Some(err)) = (o.final_delay_mins, o.abs_error_mins())
+                {
+                    div .prediction-cell {
+                        div .prediction-label { "Actual outcome" }
+                        div .prediction-value { (actual) " min" }
+                        div .prediction-sub {
+                            "Error " (err) " min · finalised "
+                            @if let Some(ts) = o.finalised_at {
+                                (ts.format("%H:%M UTC"))
+                            } @else { "—" }
+                        }
+                    }
+                }
+            }
+
+            // Correlation signal (if any was recorded)
+            @if let Some(o) = outcome
+                && let Some(corr_rid) = o.correlation_preceding_rid.as_deref()
+            {
+                p .prediction-correlation {
+                    "Adjusted because preceding service "
+                    code { (corr_rid) }
+                    @if let Some(d) = o.correlation_preceding_delay_mins {
+                        " was running " (d) " min late."
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>) -> Markup {
@@ -37,12 +121,14 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                 s.best_platform().map(str::to_string),
                 s.is_cancelled.value.unwrap_or(false),
                 s.destination_crs.clone(),
+                s.predicted_delay_mins.value,
+                s.volatility.historical_reliability,
             ))
         }
         None => None,
     };
 
-    let fare_pence: Option<i32> = if let Some((ref origin, _, _, _, _, ref dest)) = snapshot {
+    let fare_pence: Option<i32> = if let Some((ref origin, _, _, _, _, ref dest, _, _)) = snapshot {
         if let (Some(o), Some(d)) = (origin, dest) {
             let today = Local::now().date_naive();
             crate::db::static_data::cheapest_fare(&state.db, o, d, today)
@@ -57,10 +143,13 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
         None
     };
 
+    // Persisted first-prediction snapshot + (optional) finalised outcome.
+    let outcome = prediction_for_rid(&state.db, &rid).await.ok().flatten();
+
     base(
         &format!("Train {rid}"),
         html! {
-            @if let Some((origin, scheduled, delay, platform, cancelled, _dest)) = snapshot {
+            @if let Some((origin, scheduled, delay, platform, cancelled, _dest, pred, conf)) = snapshot {
                 div .train-header {
                     h1 { "Train " (rid) }
                     @if let Some(o) = &origin {
@@ -77,6 +166,9 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                         }
                     }
                 }
+
+                (prediction_card(pred, conf, outcome.as_ref()))
+
                 div .live-section hx-ext="sse" sse-connect={ "/ui/trains/" (rid) "/live" } {
                     h2 { "Live updates" }
                     div # "live-status" sse-swap="update" hx-swap="outerHTML" {
@@ -133,22 +225,30 @@ async fn enrich_to_html(
     registry: &crate::cache::TrainRegistry,
     event: &StateChangeEvent,
 ) -> Markup {
-    let (delay_mins, platform, is_cancelled, predicted_delay_mins) = match registry.get(&event.train_id) {
-        Some(arc) => {
-            let s = arc.read().await;
-            (s.best_delay_mins(), s.best_platform().map(str::to_string), s.is_cancelled.value.unwrap_or(false), s.predicted_delay_mins.value)
-        }
-        None => (None, None, false, None),
-    };
+    let (delay_mins, predicted_delay_mins, prediction_confidence, platform, is_cancelled) =
+        match registry.get(&event.train_id) {
+            Some(arc) => {
+                let s = arc.read().await;
+                (
+                    s.best_delay_mins(),
+                    s.predicted_delay_mins.value,
+                    s.volatility.historical_reliability,
+                    s.best_platform().map(str::to_string),
+                    s.is_cancelled.value.unwrap_or(false),
+                )
+            }
+            None => (None, None, None, None, false),
+        };
 
     let live = LiveUpdateEvent {
         rid: event.train_id.to_string(),
         state: format!("{:?}", event.new_state),
         is_cancelled: Some(is_cancelled),
         delay_mins,
+        predicted_delay_mins,
+        prediction_confidence,
         platform: platform.clone(),
         timestamp: Utc::now().to_rfc3339(),
-        predicted_delay_mins,
     };
 
     html! {

@@ -1,4 +1,4 @@
-.PHONY: up down build rebuild logs db ingest export train
+.PHONY: up down build rebuild logs db ingest export train seed-stations seed-history
 
 # Start all services, rebuilding the app image from current source.
 up:
@@ -32,6 +32,29 @@ ingest:
 DAYS ?= 7
 export:
 	cd RailPredict && cargo run --release -- export-site --output ../docs/index.html --days $(DAYS)
+
+# Backfill delay_history with 90 days of synthetic historical data.
+# Uses the top TIPLOCs already seen in the live Darwin feed, so the training
+# set covers exactly the routes the model will be asked to predict on.
+# Safe to re-run: ON CONFLICT DO NOTHING skips any duplicate rows.
+# After running: make train → restart server → open /predictions to see accuracy.
+SEED_DAYS    ?= 90
+SEED_STATIONS?= 120
+seed-history:
+	@test -d scripts/.venv || python3 -m venv scripts/.venv
+	scripts/.venv/bin/pip install -q psycopg2-binary
+	DATABASE_URL=$$(grep DATABASE_URL .env | cut -d= -f2- | sed 's/@db:/@localhost:/') \
+	  scripts/.venv/bin/python scripts/seed_history.py \
+	    --days $(SEED_DAYS) --stations $(SEED_STATIONS)
+
+# Seed the stations table from OpenStreetMap (Overpass API — no auth required).
+# Fetches every UK National Rail station with a CRS code, including TIPLOC mappings.
+# Safe to re-run: uses ON CONFLICT DO UPDATE so existing rows are refreshed.
+seed-stations:
+	@test -d scripts/.venv || python3 -m venv scripts/.venv
+	scripts/.venv/bin/pip install -q psycopg2-binary
+	DATABASE_URL=$$(grep DATABASE_URL .env | cut -d= -f2- | sed 's/@db:/@localhost:/') \
+	  scripts/.venv/bin/python scripts/seed_stations.py
 
 # Train ML delay prediction models and export them as ONNX.
 # Reads DATABASE_URL from .env (swaps @db: → @localhost: automatically).

@@ -63,6 +63,9 @@ const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const fmt1 = v => v != null ? v.toFixed(1) : '—';
 const fmtPct = v => v != null ? v.toFixed(1) + '%' : '—';
 const pctCls = v => v == null ? '' : v >= 70 ? 'bg' : v >= 50 ? 'ba' : 'br';
+const cardPctCls = v => v == null ? '' : v >= 70 ? 'c-green' : v >= 50 ? 'c-amber' : 'c-red';
+const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const esc = s => String(s).replace(/[&<>"']/g, c => ESC_MAP[c]);
 
 // ── Meta line ────────────────────────────────────────────────────────────────
 document.getElementById('meta-line').textContent =
@@ -107,7 +110,7 @@ function renderDashboard() {
     { val: s.total_services.toLocaleString(),     lbl: 'Services tracked', cls: '' },
     { val: fmt1(s.mean_actual_mins) + (s.mean_actual_mins != null ? ' min' : ''), lbl: 'Mean actual delay', cls: 'c-amber' },
     { val: fmt1(s.mean_abs_error_mins) + (s.mean_abs_error_mins != null ? ' min' : ''), lbl: 'Mean prediction error', cls: 'c-green' },
-    { val: fmtPct(s.on_time_pct), lbl: 'On time (≤ 0 min)', cls: s.on_time_pct >= 70 ? 'c-green' : s.on_time_pct >= 50 ? 'c-amber' : 'c-red' },
+    { val: fmtPct(s.on_time_pct), lbl: 'On time (≤ 0 min)', cls: cardPctCls(s.on_time_pct) },
     { val: fmtPct(s.prediction_coverage_pct), lbl: 'Predictions captured', cls: '' },
   ];
   document.getElementById('cards').innerHTML = cards.map(c =>
@@ -175,9 +178,9 @@ function renderDashboard() {
     const oc = pctCls(s.on_time_pct);
     const cov = fmtPct(s.coverage_pct);
     return `<tr>
-      <td><code>${s.uid}</code></td>
-      <td>${s.origin_crs}</td>
-      <td>${DAYS[s.weekday] ?? s.weekday}</td>
+      <td><code>${esc(s.uid)}</code></td>
+      <td>${esc(s.origin_crs)}</td>
+      <td>${DAYS[s.weekday] ?? esc(s.weekday)}</td>
       <td>${String(s.departure_hour).padStart(2,'0')}:xx</td>
       <td>${s.observations}</td>
       <td class="${s.mean_actual>5?'c-amber':''}">${fmt1(s.mean_actual)} min</td>

@@ -122,14 +122,17 @@ pub async fn export_site(db: &Db, output_path: &Path, days: u32) -> anyhow::Resu
 
     let total_obs = data.summary.total_observations;
     let total_svcs = data.summary.total_services;
-    let json = serde_json::to_string(&data)?;
+    // Escape `</` so a stray `</script>` in a string field can't terminate the
+    // host <script> tag. `\/` is a valid JSON escape for `/`, so the parsed
+    // values are unchanged.
+    let json = serde_json::to_string(&data)?.replace("</", "<\\/");
 
     let html = TEMPLATE.replace("__EXPORT_DATA__", &json);
 
-    if let Some(parent) = output_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     std::fs::write(output_path, html)?;
 
@@ -157,10 +160,12 @@ async fn gather(db: &Db, days: u32) -> anyhow::Result<ExportData> {
     let days_i = days as i32;
     let generated_at = Utc::now().format("%d %b %Y %H:%M UTC").to_string();
 
-    let summary = query_summary(db, days_i).await?;
-    let daily   = query_daily(db, days_i).await?;
-    let services = query_services(db, days_i).await?;
-    let hourly  = query_hourly(db, days_i).await?;
+    let (summary, daily, services, hourly) = tokio::try_join!(
+        query_summary(db, days_i),
+        query_daily(db, days_i),
+        query_services(db, days_i),
+        query_hourly(db, days_i),
+    )?;
 
     Ok(ExportData { generated_at, days_window: days, summary, daily, services, hourly })
 }
