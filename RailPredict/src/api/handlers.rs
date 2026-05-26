@@ -101,8 +101,24 @@ pub async fn build_departure_board(
         .await
         .unwrap_or_default();
 
+    // Look up the station's TIPLOC so the registry snapshot can match Darwin entries
+    // (which store TIPLOCs like "WATRLMN" rather than the 3-letter CRS "WAT").
+    let tiploc: Option<String> = sqlx::query_scalar(
+        "SELECT tiploc FROM stations WHERE UPPER(crs) = $1 AND tiploc IS NOT NULL",
+    )
+    .bind(crs.to_uppercase())
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
+    let crs_codes: Vec<&str> = std::iter::once(crs)
+        .chain(tiploc.as_deref())
+        .collect();
+
     // Fetch live registry snapshot (Tier C / B).
-    let registry_entries = state.registry.departure_snapshot(crs).await;
+    let registry_entries = state.registry.departure_snapshot(&crs_codes).await;
 
     // If no DB timetable data yet, degrade gracefully to registry-only.
     if db_rows.is_empty() {
@@ -265,6 +281,8 @@ pub async fn train_handler(
             .value
             .map(|dt| dt.to_rfc3339()),
         delay_mins: status.best_delay_mins(),
+        predicted_delay_mins: status.predicted_delay_mins.value,
+        prediction_confidence: status.volatility.historical_reliability,
         platform: status.best_platform().map(str::to_string),
         is_cancelled: status.is_cancelled.value,
         last_updated: last_updated.to_rfc3339(),
@@ -376,7 +394,7 @@ pub struct StationResult {
 
 /// `GET /stations/search?q=<term>`
 ///
-/// Returns up to 10 stations whose names match a full-text search on the query term.
+/// Returns up to 10 stations matching the query via the in-memory prefix index.
 /// Returns an empty array when `q` is shorter than 2 characters.
 pub async fn station_search_handler(
     Query(params): Query<StationSearchQuery>,
@@ -386,25 +404,10 @@ pub async fn station_search_handler(
     if q.len() < 2 {
         return Ok(Json(vec![]));
     }
-
-    let rows: Vec<StationResult> = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT s.crs, s.name, COALESCE(t.cnt, 0) AS trains_today \
-         FROM stations s \
-         LEFT JOIN LATERAL ( \
-             SELECT COUNT(*) AS cnt FROM timetable_calls tc \
-             WHERE tc.location_crs = s.crs AND tc.operating_date = CURRENT_DATE \
-         ) t ON true \
-         WHERE to_tsvector('english', s.name) @@ plainto_tsquery('english', $1) \
-         ORDER BY t.cnt DESC NULLS LAST, s.name \
-         LIMIT 10",
-    )
-    .bind(&q)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| ApiError::internal(format!("DB error: {e}")))?
-    .into_iter()
-    .map(|(crs, name, trains_today)| StationResult { crs, name, trains_today })
-    .collect();
-
-    Ok(Json(rows))
+    let hits = state.station_index.search(&q, 10);
+    let results: Vec<StationResult> = hits
+        .into_iter()
+        .map(|h| StationResult { crs: h.crs, name: h.name, trains_today: 0 })
+        .collect();
+    Ok(Json(results))
 }

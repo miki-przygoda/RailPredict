@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "RailPredict"
-version = "1.9.0"
+version = "1.11.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2281,7 +2281,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2856,7 +2856,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

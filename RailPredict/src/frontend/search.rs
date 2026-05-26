@@ -245,18 +245,9 @@ pub async fn departures_fragment(
                 p .no-results { "Start typing a station name and select one from the list." }
             };
         }
-        let row: Option<String> = sqlx::query_scalar(
-            "SELECT crs FROM stations \
-             WHERE to_tsvector('english', name) @@ plainto_tsquery('english', $1) \
-             ORDER BY name LIMIT 1",
-        )
-        .bind(&name)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-        match row {
-            Some(crs) => crs,
+        let mut hits = state.station_index.search(&name, 1);
+        match hits.pop() {
+            Some(h) => h.crs,
             None => {
                 let typed = name.as_str();
                 return html! {
@@ -404,24 +395,11 @@ pub async fn station_suggestions_fragment(
         q_id.replace("-q", "-suggestions")
     };
 
-    let results: Vec<StationResult> = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT s.crs, s.name, COALESCE(t.cnt, 0) AS trains_today \
-         FROM stations s \
-         LEFT JOIN LATERAL ( \
-             SELECT COUNT(*) AS cnt FROM timetable_calls tc \
-             WHERE tc.location_crs = s.crs AND tc.operating_date = CURRENT_DATE \
-         ) t ON true \
-         WHERE to_tsvector('english', s.name) @@ plainto_tsquery('english', $1) \
-         ORDER BY t.cnt DESC NULLS LAST, s.name \
-         LIMIT 10",
-    )
-    .bind(&q)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(crs, name, trains_today)| StationResult { crs, name, trains_today })
-    .collect();
+    let hits = state.station_index.search(&q, 10);
+    let results: Vec<StationResult> = hits
+        .into_iter()
+        .map(|h| StationResult { crs: h.crs, name: h.name, trains_today: 0 })
+        .collect();
 
     render_suggestion_list(&results, &crs_id, &q_id, &suggestions_id)
 }

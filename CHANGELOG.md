@@ -2,7 +2,129 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.9.0" -- 25/05/2026**
+**version = "1.11.0" -- 26/05/2026**
+
+---
+
+## v1.11.0 — 26/05/2026 — Dashboard redesign + in-memory station index + seeds
+
+Merges the `ui/dashboard-redesign` branch. Three independent threads:
+
+**Dashboard redesign — `src/frontend/dashboard.rs` + `static/style.css`**
+- Plain status page replaced with a two-column hero, 7-card metrics grid
+  (including ML accuracy cards — median AE, % within ±5 min, bias —
+  with green-tinted borders when prediction data is present), and a
+  3-card navigation section.
+- Adds `PredStats` query via `tokio::join!` to avoid sequential DB
+  round-trips on dashboard load.
+
+**In-memory station index — `src/cache/station_index.rs`**
+- New module: word-prefix tree built once at startup from the `stations`
+  table. Replaces the SQL full-text query (`to_tsvector`) for
+  `/ui/stations/search` autocomplete.
+- Wired into `AppState` via `main.rs`; `handlers::station_search_handler`
+  and `search::station_suggestions_fragment` now query the index instead
+  of the DB. Cold lookups drop from ~12 ms (DB round-trip) to sub-ms.
+
+**Registry fix — `src/cache/train_registry.rs`**
+- `departure_snapshot` now takes both CRS and TIPLOC so Darwin entries
+  stored under a TIPLOC (e.g. `WATRLMN`) match queries for the CRS
+  (e.g. `WAT`). Fixes empty departure boards for stations where Darwin
+  uses TIPLOC keys.
+- `rid` field stringification no longer prepends `RID:` (was breaking
+  `/trains/<id>/view` with 404s).
+
+**Seed scripts + docs**
+- `scripts/seed_stations.py` — OSM-based station seed (~120 TIPLOCs).
+- `scripts/seed_history.py` — synthetic delay history (~1.7M rows over
+  90 days; per-hour, per-station, weekend multipliers).
+- `Makefile` — `make seed-stations`, `make seed-history` targets.
+- `docs/model-performance.md` — ML model evaluation: 5.3 min MAE,
+  77% within ±5 min on 1,485 real UK trains (25 May 2026 Darwin feed).
+
+**Infra reshuffle**
+- `deploy/prometheus.yml` (moved from root)
+- `deploy/docker-compose.prod.yml` (moved from root)
+- `docs/improvements.md` (moved from `TODOs/Improvements.md`; old dir removed)
+- `docker-compose.yml` — volume mount paths updated for the deploy/ move.
+- `logs/.gitkeep` — ensures directory survives clones.
+- `.gitignore` — broaden `**/.DS_Store`; `/logs/*` + `!logs/.gitkeep`.
+
+`prediction_outcomes` (v1.10.0) is untouched — the dashboard's ML metrics
+read from `delay_history` (which feeds the model), while the detail page
+and `/demo/predictions` continue to surface the per-train ledger.
+
+---
+
+## v1.10.0 — 26/05/2026 — Per-train prediction tracking + dev/ML console panel
+
+Adds a per-RID predicted-vs-actual ledger and surfaces it across the developer
+console and the public train detail page. Layered on top of the v1.9.0 ONNX
+engine — whatever the engine produces (ONNX real-time, ONNX day-ahead, or the
+statistical fallback) is captured at first sighting, then compared to the
+actual outcome when each train deactivates.
+
+The pattern-aggregated `delay_history` table that feeds the model is unchanged.
+This is a separate, per-train-instance ledger answering "what did we predict
+for *this specific train* and what actually happened?"
+
+**New table — `prediction_outcomes`**
+- `migrations/20240417120010_create_prediction_outcomes.sql` — keyed on `rid`,
+  carries the first prediction we made (`predicted_delay_mins`,
+  `prediction_confidence`, correlation signal), then `final_delay_mins` /
+  `finalised_at` are filled in on deactivation. Indexes on `predicted_at DESC`
+  (recent feed), partial on `finalised_at` (recent outcomes), and on `uid`.
+
+**`src/db/predictions.rs`**
+- `insert_first_prediction(db, &TrainStatus)` — `ON CONFLICT DO NOTHING` keeps
+  the first prediction we made, so the eventual comparison is fair.
+- `finalise_outcome(db, rid, final_delay_mins)` — guarded by `finalised_at IS NULL`.
+- `recent_predictions(db, limit)` and `prediction_for_rid(db, rid)` for reads.
+- `accuracy_summary(db, window_hours)` — rolling 24h MAE + mean predicted +
+  mean actual + finalised count for the dev panel cards.
+- `PredictionOutcome::abs_error_mins()` helper.
+
+**Ingestion write path**
+- `PipelineContext` gains `db: Option<Db>` and `persisted_predictions:
+  Arc<DashSet<String>>`. `None` keeps tests / the `passthrough` constructor
+  database-free.
+- On every TS message: after `engine.predict_and_update`, if the registry
+  now holds a `Some(predicted)` and the RID isn't in the dedup set, spawn a
+  fire-and-forget `insert_first_prediction`. Closure is sync, DB call runs in
+  a detached task — never blocks the registry lock.
+- On Deactivated: snapshot `reported_delay_mins.value` before removing the
+  registry entry, then spawn `finalise_outcome`. RID is also dropped from
+  the dedup set so memory stays bounded.
+
+**DTO surface — `src/api/types.rs`**
+- `TrainSummary` and `LiveUpdateEvent` gain `prediction_confidence: Option<f32>`
+  alongside the `predicted_delay_mins` field added in v1.9.0. Both use
+  `#[serde(default)]` so older clients don't break.
+- `train_handler`, JSON `live_handler`, and the HTML SSE `ui_live_handler`
+  populate the new field from `TrainStatus.volatility.historical_reliability`.
+
+**Train detail page — `src/frontend/detail.rs`**
+- New `prediction_card` section between the header and live updates: shows
+  the live engine prediction (with High/Medium/Low confidence label), the
+  persisted "First prediction" snapshot from `prediction_outcomes`, and
+  once finalised the actual outcome with absolute error.
+- Correlation footer surfaces the preceding-RID signal when one is present.
+
+**Dev console — `src/frontend/demo.rs`**
+- New full-width "Predicted vs Actual" section above the existing grid.
+- `/ui/demo/predictions` fragment: 5 summary cards (24h MAE, mean predicted,
+  mean actual, finalised count, recent rows) + a 30-row live ledger table
+  with In flight / Finalised status pills. Auto-refreshes every 10s.
+  Complements the public `/predictions` analytics page added in v1.9.0:
+  `/predictions` is for visitors; `/demo/predictions` is for operators.
+
+**CSS**
+- `.prediction-card`, `.prediction-grid`, `.prediction-cell`, `.prediction-value`,
+  `.prediction-sub`, `.prediction-correlation`, `.prediction-inline-chip`, `.dim`.
+- `.demo-pred-table-wrap`, `.demo-pred-table` for the dev panel ledger.
+
+201 unit tests passing, clippy clean. No API breaks; new DTO fields are
+optional with `#[serde(default)]`.
 
 ---
 
@@ -48,6 +170,32 @@ ONNX first, falls back to statistical trimmed-mean.
 **Dependencies — `RailPredict/Cargo.toml`**
 - `ort = "=2.0.0-rc.12"` with `features = ["ndarray"]` (statically linked ORT binary).
 - `ndarray = "0.17"` (must match ort's transitive dependency version).
+
+---
+
+## v1.8.1 — 26/05/2026 — Export-site hardening
+
+Tightens the v1.8.0 static export against script-tag injection, fixes a colour-class
+bug for missing on-time data, and parallelises the four DB queries.
+
+**`src/export/mod.rs`**
+- `gather()` now runs `query_summary`, `query_daily`, `query_services`, `query_hourly`
+  concurrently via `tokio::try_join!` instead of awaiting each one sequentially.
+  Wall-time drops roughly 3–4× on the same connection pool.
+- The serialised JSON has `</` escaped to `<\/` before substitution into the host
+  `<script>` tag. `\/` is a valid JSON escape for `/`, so parsed values are unchanged,
+  but a stray `</script>` in a string field can no longer terminate the tag.
+- Collapsed a nested `if let … { if … }` into a single let-chain (clippy fix).
+
+**`src/export/template.html`**
+- Added an `esc()` helper that HTML-escapes `& < > " '`. The service-breakdown table
+  now passes `s.uid` and `s.origin_crs` through it before interpolating into the
+  row template — previously they were dropped into `innerHTML` raw.
+- New `cardPctCls()` helper handles a null `on_time_pct` correctly. Previously
+  `null >= 70` evaluated to `false`, so the summary card for a service with no
+  on-time data rendered as red ("c-red") instead of unstyled.
+
+No schema, no migration, no API change. 201 tests, all passing.
 
 ---
 

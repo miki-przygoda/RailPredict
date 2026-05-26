@@ -9,6 +9,7 @@
 
 pub mod history;
 pub mod maintenance;
+pub mod predictions;
 pub mod static_data;
 
 use sqlx::postgres::PgPoolOptions;
