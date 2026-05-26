@@ -20,6 +20,14 @@ pub struct TrainSummary {
     /// ISO 8601 best estimated departure (actual or estimated).
     pub estimated_departure: Option<String>,
     pub delay_mins: Option<i32>,
+    /// Tier B prediction: what the model expects the delay to be in minutes.
+    /// `None` until the prediction engine has enough history for this pattern.
+    #[serde(default)]
+    pub predicted_delay_mins: Option<i32>,
+    /// Confidence in `predicted_delay_mins`, in [0.0, 1.0]. Drives the
+    /// "high/medium/low" badge on the UI. `None` when no prediction is available.
+    #[serde(default)]
+    pub prediction_confidence: Option<f32>,
     pub platform: Option<String>,
     pub is_cancelled: Option<bool>,
     /// ISO 8601 timestamp of the last registry update.
@@ -60,6 +68,12 @@ pub struct LiveUpdateEvent {
     pub state: String,
     pub is_cancelled: Option<bool>,
     pub delay_mins: Option<i32>,
+    /// Tier B prediction at the moment this event was generated.
+    #[serde(default)]
+    pub predicted_delay_mins: Option<i32>,
+    /// Confidence in the prediction (0.0–1.0).
+    #[serde(default)]
+    pub prediction_confidence: Option<f32>,
     pub platform: Option<String>,
     /// ISO 8601 timestamp when this event was generated.
     pub timestamp: String,
@@ -160,6 +174,8 @@ mod tests {
             scheduled_departure: "2024-04-17T12:00:00Z".to_string(),
             estimated_departure: None,
             delay_mins: Some(5),
+            predicted_delay_mins: Some(4),
+            prediction_confidence: Some(0.72),
             platform: Some("3".to_string()),
             is_cancelled: Some(false),
             last_updated: "2024-04-17T12:01:00Z".to_string(),
@@ -168,6 +184,7 @@ mod tests {
         let back: TrainSummary = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rid, s.rid);
         assert_eq!(back.delay_mins, Some(5));
+        assert_eq!(back.predicted_delay_mins, Some(4));
         assert_eq!(back.is_cancelled, Some(false));
     }
 
@@ -205,6 +222,8 @@ mod tests {
             state: "Critical".to_string(),
             is_cancelled: Some(false),
             delay_mins: Some(3),
+            predicted_delay_mins: Some(2),
+            prediction_confidence: Some(0.55),
             platform: Some("4A".to_string()),
             timestamp: "2024-04-17T12:00:00Z".to_string(),
         };
@@ -212,5 +231,6 @@ mod tests {
         let back: LiveUpdateEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back.state, "Critical");
         assert_eq!(back.delay_mins, Some(3));
+        assert_eq!(back.predicted_delay_mins, Some(2));
     }
 }
