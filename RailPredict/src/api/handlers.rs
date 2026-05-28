@@ -127,21 +127,34 @@ pub async fn build_departure_board(
 
     // Batch-resolve destination names for all registry entries that carry a CRS code.
     // `destination_name` on a registry entry holds the raw CRS code (set from Darwin XML).
-    let unique_dest_crs: Vec<String> = {
+    let unique_dest_codes: Vec<String> = {
         let mut seen = std::collections::HashSet::new();
         registry_entries
             .iter()
             .filter_map(|e| e.destination_name.clone())
-            .filter(|d| d.len() == 3 && seen.insert(d.clone()))
+            .filter(|d| (3..=7).contains(&d.len()) && seen.insert(d.clone()))
             .collect()
     };
 
     let mut dest_name_map: HashMap<String, String> = HashMap::new();
-    for dest_crs in &unique_dest_crs {
-        if let Ok(Some(station)) =
-            crate::db::static_data::get_station(&state.db, dest_crs).await
-        {
-            dest_name_map.insert(dest_crs.clone(), station.name);
+    for dest_code in &unique_dest_codes {
+        if dest_code.len() == 3 {
+            if let Ok(Some(station)) =
+                crate::db::static_data::get_station(&state.db, dest_code).await
+            {
+                dest_name_map.insert(dest_code.clone(), station.name);
+            }
+        } else {
+            // TIPLOC (4–7 chars) — look up via stations table tiploc column.
+            if let Ok(Some(name)) = sqlx::query_scalar::<_, String>(
+                "SELECT name FROM stations WHERE UPPER(tiploc) = $1",
+            )
+            .bind(dest_code.to_uppercase())
+            .fetch_optional(&state.db)
+            .await
+            {
+                dest_name_map.insert(dest_code.clone(), name);
+            }
         }
     }
 

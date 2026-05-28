@@ -99,6 +99,30 @@ const SEARCH_JS: &str = r#"
 })();
 "#;
 
+const COUNTDOWN_JS: &str = r#"
+(function () {
+    function updateCountdowns() {
+        var now = Date.now();
+        document.querySelectorAll('.train-card[data-scheduled]').forEach(function (card) {
+            var iso = card.dataset.scheduled;
+            var el  = card.querySelector('.train-countdown');
+            if (!el || !iso) return;
+            var dep     = new Date(iso).getTime();
+            var diffMin = Math.round((dep - now) / 60000);
+            if (diffMin > 5 && diffMin <= 180) {
+                el.textContent = 'in ' + diffMin + ' min';
+            } else if (diffMin > -5 && diffMin <= 5) {
+                el.textContent = 'now';
+            } else {
+                el.textContent = '';
+            }
+        });
+    }
+    updateCountdowns();
+    setInterval(updateCountdowns, 60000);
+})();
+"#;
+
 const PRED_FILTER_JS: &str = r#"
 (function () {
     window.setPredFilter = function (filter, btn) {
@@ -261,13 +285,21 @@ pub async fn departures_fragment(
         crs_upper
     };
 
+    let station_name = state
+        .station_index
+        .search(&resolved_crs, 1)
+        .into_iter()
+        .next()
+        .map(|h| h.name)
+        .unwrap_or_else(|| resolved_crs.clone());
+
     let entries = crate::api::handlers::build_departure_board(&state, &resolved_crs).await;
-    departure_board_fragment(&resolved_crs, &entries)
+    departure_board_fragment(&station_name, &entries)
 }
 
-pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> Markup {
+pub fn departure_board_fragment(heading: &str, entries: &[DepartureBoardEntry]) -> Markup {
     if entries.is_empty() {
-        return html! { p .no-results { "No departures found for " (crs) "." } };
+        return html! { p .no-results { "No departures found for " (heading) "." } };
     }
 
     let ml_count  = entries.iter().filter(|e| e.predicted_delay_mins.is_some()).count();
@@ -276,7 +308,7 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
     html! {
         div .departure-board {
             div .departure-board-header {
-                h2 { "Departures from " (crs) }
+                h2 { "Departures from " (heading) }
                 span .departure-count { (entries.len()) " service" (if entries.len() == 1 { "" } else { "s" }) }
             }
 
@@ -305,16 +337,22 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
             @for entry in entries {
                 @let stale      = entry.last_updated_secs_ago.is_some_and(|s| s > 120);
                 @let has_ml     = entry.predicted_delay_mins.is_some();
+                // Clamp midnight-wrap artifacts (e.g. -1404 min from crossing midnight)
+                @let display_delay = entry.delay_mins.filter(|&m| m >= -60 && m <= 300);
                 a .train-card
-                  data-stale=[if stale   { Some("true") } else { None::<&str> }]
+                  data-stale=[if stale { Some("true") } else { None::<&str> }]
                   data-pred=[if has_ml { Some("ml") } else { Some("stat") }]
+                  data-scheduled=(entry.scheduled_departure)
                   href={ "/trains/" (entry.rid) "/view" }
                 {
                     div .train-card-left {
-                        span .train-time {
-                            (entry.scheduled_departure.get(11..16).unwrap_or("--:--"))
+                        div .train-time-col {
+                            span .train-time {
+                                (entry.scheduled_departure.get(11..16).unwrap_or("--:--"))
+                            }
+                            span .train-countdown {}
                         }
-                        (delay_badge(entry.delay_mins, entry.is_cancelled.unwrap_or(false)))
+                        (delay_badge(display_delay, entry.is_cancelled.unwrap_or(false)))
                         @if let Some(dest) = &entry.destination_name {
                             span .train-destination { "→ " (dest) }
                         }
@@ -322,12 +360,13 @@ pub fn departure_board_fragment(crs: &str, entries: &[DepartureBoardEntry]) -> M
                     div .train-card-right {
                         span .train-rid { (entry.rid) }
                         (platform_chip(entry.platform.as_deref(), entry.is_platform_planned))
-                        (prediction_chip(entry.predicted_delay_mins, entry.delay_mins))
+                        (prediction_chip(entry.predicted_delay_mins, display_delay))
                     }
                 }
             }
         }
         script { (maud::PreEscaped(PRED_FILTER_JS)) }
+        script { (maud::PreEscaped(COUNTDOWN_JS)) }
     }
 }
 
@@ -429,6 +468,11 @@ pub async fn journeys_fragment(
         };
     }
 
+    let from_name = state.station_index.search(&from, 1).into_iter().next()
+        .map(|h| h.name).unwrap_or_else(|| from.clone());
+    let to_name = state.station_index.search(&to, 1).into_iter().next()
+        .map(|h| h.name).unwrap_or_else(|| to.clone());
+
     let date = q
         .date
         .as_deref()
@@ -470,7 +514,7 @@ pub async fn journeys_fragment(
                 is_platform_planned,
                 is_cancelled: None,
                 last_updated_secs_ago: None,
-                destination_name: Some(to.clone()),
+                destination_name: Some(to_name.clone()),
                 predicted_delay_mins: None,
             }
         })
@@ -478,11 +522,11 @@ pub async fn journeys_fragment(
 
     if entries.is_empty() {
         return html! {
-            p .no-results { "No direct services found from " (from) " to " (to) "." }
+            p .no-results { "No direct services found from " (from_name) " to " (to_name) "." }
         };
     }
 
-    departure_board_fragment(&format!("{from} \u{2192} {to}"), &entries)
+    departure_board_fragment(&format!("{from_name} \u{2192} {to_name}"), &entries)
 }
 
 // ---------------------------------------------------------------------------

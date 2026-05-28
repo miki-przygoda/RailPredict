@@ -423,13 +423,28 @@ main {
   margin-left: 1rem;
 }
 
+.train-time-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
 .train-time {
   font-size: 1.6rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   line-height: 1;
-  flex-shrink: 0;
+}
+
+.train-countdown {
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-height: 0.85rem;
+  line-height: 1;
+  margin-top: 0.15rem;
 }
 
 .train-destination {

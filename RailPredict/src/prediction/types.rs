@@ -124,6 +124,13 @@ impl HistoricalStore {
         entry.back().map(|r| r.recorded_at)
     }
 
+    /// Return the `(delay_mins, recorded_at)` of the most recent record, or `None` if empty.
+    /// Used by `PredictionEngine::record_outcome` to apply the write-throttle.
+    pub fn last_record(&self, pattern: &ServicePattern) -> Option<(i32, DateTime<Utc>)> {
+        let entry = self.inner.get(pattern)?;
+        entry.back().map(|r| (r.delay_mins, r.recorded_at))
+    }
+
     /// Rolling statistics for `pattern` over the last 7 days.
     ///
     /// Returns `RollingStats::default()` (all zeros) when no recent data exists, so
