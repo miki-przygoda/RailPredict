@@ -232,7 +232,6 @@ mod tests {
             prediction_confidence: Some(0.55),
             platform: Some("4A".to_string()),
             timestamp: "2024-04-17T12:00:00Z".to_string(),
-            predicted_delay_mins: Some(5),
         };
         let json = serde_json::to_string(&ev).unwrap();
         let back: LiveUpdateEvent = serde_json::from_str(&json).unwrap();

@@ -85,6 +85,18 @@ const PRECEDING_WINDOW_MIN_MINS: i64 = 1;
 const STALENESS_THRESHOLD_DAYS: f64 = 21.0;
 
 // ---------------------------------------------------------------------------
+// record_outcome throttle
+// ---------------------------------------------------------------------------
+
+/// Minimum change in delay (minutes) that triggers a new history record.
+/// Updates smaller than this are skipped unless MIN_RECORD_INTERVAL_SECS has elapsed.
+const MIN_DELAY_CHANGE_MINS: i32 = 2;
+
+/// Minimum seconds between consecutive records for the same service pattern.
+/// Guarantees a periodic snapshot even when the delay is stable.
+const MIN_RECORD_INTERVAL_SECS: i64 = 300; // 5 minutes
+
+// ---------------------------------------------------------------------------
 // PredictionEngine
 // ---------------------------------------------------------------------------
 
@@ -294,14 +306,26 @@ impl PredictionEngine {
     ///
     /// Called after `status.reported_delay_mins` has been set by the ingestion pipeline.
     /// Does nothing if the pattern or delay value cannot be derived.
+    ///
+    /// ## Write throttle
+    /// Only records if the delay has changed by ≥ MIN_DELAY_CHANGE_MINS since the last
+    /// stored observation OR at least MIN_RECORD_INTERVAL_SECS have elapsed. This prevents
+    /// Darwin's high-frequency TS updates (dozens per minute per active train) from flooding
+    /// the history store with identical readings while still capturing meaningful changes.
     pub fn record_outcome(&self, status: &TrainStatus) {
         let Some(pattern) = derive_pattern(status) else { return };
         let Some(delay_mins) = status.reported_delay_mins.value else { return };
+        let now = Utc::now();
+        if let Some((last_delay, last_at)) = self.store.last_record(&pattern) {
+            let change = (delay_mins - last_delay).abs();
+            let elapsed = (now - last_at).num_seconds();
+            if change < MIN_DELAY_CHANGE_MINS && elapsed < MIN_RECORD_INTERVAL_SECS {
+                return;
+            }
+        }
         // Capture the prediction that was active before this observation arrived.
-        // status.predicted_delay_mins is set by the previous predict_and_update call,
-        // so it represents what the engine believed just before seeing this actual delay.
         let predicted_delay_mins = status.predicted_delay_mins.value;
-        self.store.insert(pattern, DelayRecord { delay_mins, predicted_delay_mins, recorded_at: Utc::now() });
+        self.store.insert(pattern, DelayRecord { delay_mins, predicted_delay_mins, recorded_at: now });
     }
 }
 
@@ -442,13 +466,35 @@ mod tests {
         assert!(status.volatility.historical_reliability.is_none());
     }
 
+    // Helper: insert `n` records with timestamps spaced 10 min apart, bypassing the throttle.
+    // Tests that need a specific sample count should use this instead of calling record_outcome
+    // in a tight loop, since the throttle would suppress duplicate rapid inserts.
+    fn seed_store(engine: &PredictionEngine, status: &TrainStatus, delays: &[i32]) {
+        use crate::prediction::types::{DelayRecord, ServicePattern};
+        use chrono::{Datelike, Duration, Timelike};
+        let pattern = ServicePattern {
+            uid: status.uid.clone().unwrap_or_default(),
+            weekday: status.scheduled_departure.value.weekday(),
+            origin_crs: status.origin_crs.clone().unwrap_or_default(),
+            departure_hour: status.scheduled_departure.value.hour() as u8,
+        };
+        let n = delays.len();
+        for (i, &d) in delays.iter().enumerate() {
+            engine.store.insert(pattern.clone(), DelayRecord {
+                delay_mins: d,
+                predicted_delay_mins: None,
+                // Oldest first; spaced 10 min apart so rolling_stats_7d sees them all.
+                recorded_at: Utc::now() - Duration::minutes((n - i) as i64 * 10),
+            });
+        }
+    }
+
     #[test]
     fn predict_with_fewer_than_three_samples_returns_none() {
         let engine = PredictionEngine::new();
         let mut status = make_status_with_history("C12345", "LEEDS");
         status.reported_delay_mins = Stamped::new(Some(5));
-        engine.record_outcome(&status);
-        engine.record_outcome(&status);
+        seed_store(&engine, &status, &[5, 5]);
         engine.predict_and_update(&mut status);
         assert!(status.predicted_delay_mins.value.is_none());
     }
@@ -458,9 +504,7 @@ mod tests {
         let engine = PredictionEngine::new();
         let mut status = make_status_with_history("C12345", "LEEDS");
         status.reported_delay_mins = Stamped::new(Some(5));
-        for _ in 0..10 {
-            engine.record_outcome(&status);
-        }
+        seed_store(&engine, &status, &[5; 10]);
         engine.predict_and_update(&mut status);
         assert_eq!(status.predicted_delay_mins.value, Some(5));
     }
@@ -470,43 +514,39 @@ mod tests {
         let engine = PredictionEngine::new();
         let mut status = make_status_with_history("C12345", "LEEDS");
         // 8 samples at 5 mins, 2 outliers at 120 mins
-        for _ in 0..8 {
-            status.reported_delay_mins = Stamped::new(Some(5));
-            engine.record_outcome(&status);
-        }
-        status.reported_delay_mins = Stamped::new(Some(120));
-        engine.record_outcome(&status);
-        engine.record_outcome(&status);
+        let mut delays = vec![5i32; 8];
+        delays.extend_from_slice(&[120, 120]);
+        seed_store(&engine, &status, &delays);
 
+        status.reported_delay_mins = Stamped::new(Some(5));
         engine.predict_and_update(&mut status);
         // Trimming 10% from each end of 10 samples = 1 from each end.
-        // Drops one 5 and one 120. Remaining: [5,5,5,5,5,5,5,120] → mean=25.
-        // Without trimming it would be (5*8 + 120*2)/10 = 28.
-        // With trim=1: sorted=[5,5,5,5,5,5,5,5,120,120], drop first and last → [5,5,5,5,5,5,5,120] → mean=25.
+        // sorted=[5,5,5,5,5,5,5,5,120,120], drop first and last → [5,5,5,5,5,5,5,120] → mean=25.
         let predicted = status.predicted_delay_mins.value.unwrap();
         assert!(predicted < 30, "trimmed mean {predicted} should be < 30 (not dominated by outliers)");
         assert!(predicted >= 5, "trimmed mean {predicted} should be >= 5");
     }
 
     #[test]
-    fn record_outcome_caps_at_max_samples() {
-        use crate::prediction::types::MAX_SAMPLES;
-        use super::super::types::ServicePattern;
-        use chrono::Datelike;
-        use chrono::Timelike;
+    fn store_caps_at_max_samples() {
+        use crate::prediction::types::{DelayRecord, MAX_SAMPLES, ServicePattern};
+        use chrono::{Datelike, Duration, Timelike};
 
         let engine = PredictionEngine::new();
-        let mut status = make_status_with_history("C12345", "LEEDS");
-        status.reported_delay_mins = Stamped::new(Some(3));
-        for _ in 0..MAX_SAMPLES + 5 {
-            engine.record_outcome(&status);
-        }
+        let status = make_status_with_history("C12345", "LEEDS");
         let pattern = ServicePattern {
             uid: "C12345".to_string(),
             weekday: status.scheduled_departure.value.weekday(),
             origin_crs: "LEEDS".to_string(),
             departure_hour: status.scheduled_departure.value.hour() as u8,
         };
+        for i in 0..MAX_SAMPLES + 5 {
+            engine.store.insert(pattern.clone(), DelayRecord {
+                delay_mins: (i % 10) as i32,
+                predicted_delay_mins: None,
+                recorded_at: Utc::now() - Duration::minutes((MAX_SAMPLES + 5 - i) as i64),
+            });
+        }
         assert_eq!(engine.store.sample_count(&pattern), MAX_SAMPLES);
     }
 
@@ -515,12 +555,51 @@ mod tests {
         let engine = PredictionEngine::new();
         let mut status = make_status_with_history("C12345", "LEEDS");
         status.reported_delay_mins = Stamped::new(Some(4));
-        for _ in 0..45 {
-            engine.record_outcome(&status);
-        }
+        seed_store(&engine, &status, &[4i32; 45]);
         engine.predict_and_update(&mut status);
         let confidence = status.volatility.historical_reliability.unwrap();
         assert!((confidence - 0.5).abs() < 0.01, "expected ~0.5, got {confidence}");
+    }
+
+    #[test]
+    fn record_outcome_throttle_skips_unchanged_rapid_updates() {
+        let engine = PredictionEngine::new();
+        let mut status = make_status_with_history("C12345", "LEEDS");
+        status.reported_delay_mins = Stamped::new(Some(10));
+        // First call always inserts.
+        engine.record_outcome(&status);
+        // Second call immediately after with same delay should be suppressed.
+        engine.record_outcome(&status);
+        engine.record_outcome(&status);
+        use crate::prediction::types::ServicePattern;
+        use chrono::{Datelike, Timelike};
+        let pattern = ServicePattern {
+            uid: "C12345".to_string(),
+            weekday: status.scheduled_departure.value.weekday(),
+            origin_crs: "LEEDS".to_string(),
+            departure_hour: status.scheduled_departure.value.hour() as u8,
+        };
+        assert_eq!(engine.store.sample_count(&pattern), 1, "throttle should suppress duplicate rapid inserts");
+    }
+
+    #[test]
+    fn record_outcome_records_significant_delay_change() {
+        let engine = PredictionEngine::new();
+        let mut status = make_status_with_history("C12345", "LEEDS");
+        status.reported_delay_mins = Stamped::new(Some(5));
+        engine.record_outcome(&status);
+        // A change of ≥ MIN_DELAY_CHANGE_MINS (2) should bypass the time throttle.
+        status.reported_delay_mins = Stamped::new(Some(10));
+        engine.record_outcome(&status);
+        use crate::prediction::types::ServicePattern;
+        use chrono::{Datelike, Timelike};
+        let pattern = ServicePattern {
+            uid: "C12345".to_string(),
+            weekday: status.scheduled_departure.value.weekday(),
+            origin_crs: "LEEDS".to_string(),
+            departure_hour: status.scheduled_departure.value.hour() as u8,
+        };
+        assert_eq!(engine.store.sample_count(&pattern), 2, "significant delay change should always be recorded");
     }
 
     #[test]
@@ -554,9 +633,7 @@ mod tests {
         // Scheduled departure is "now"
         target.scheduled_departure = Stamped::new(now);
         target.reported_delay_mins = Stamped::new(Some(5));
-        for _ in 0..10 {
-            engine.record_outcome(&target);
-        }
+        seed_store(&engine, &target, &[5i32; 10]);
 
         // Preceding train: same origin, departs 10 mins before target, 15 mins late
         let mut preceding = TrainStatus::new(
@@ -587,9 +664,7 @@ mod tests {
         let mut target = make_status_with_history("C12345", "LDS");
         target.scheduled_departure = Stamped::new(now);
         target.reported_delay_mins = Stamped::new(Some(5));
-        for _ in 0..10 {
-            engine.record_outcome(&target);
-        }
+        seed_store(&engine, &target, &[5i32; 10]);
 
         // Preceding train: only 3 mins late — below threshold
         let mut preceding = TrainStatus::new(
@@ -613,9 +688,7 @@ mod tests {
         let engine = PredictionEngine::new();
         let mut status = make_status_with_history("C12345", "LEEDS");
         status.reported_delay_mins = Stamped::new(Some(5));
-        for _ in 0..10 {
-            engine.record_outcome(&status);
-        }
+        seed_store(&engine, &status, &[5i32; 10]);
         engine.predict_and_update(&mut status);
         assert!(status.volatility.correlation_signal.is_none());
         assert_eq!(status.predicted_delay_mins.value, Some(5));
