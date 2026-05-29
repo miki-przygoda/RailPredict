@@ -125,7 +125,7 @@ language:
 - en
 license: other
 license_name: network-rail-open-data-licence
-license_link: https://www.networkrail.co.uk/who-we-are/transparency-and-open-data/open-data-feeds/
+license_link: https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence/
 task_categories:
 - tabular-regression
 tags:
@@ -247,7 +247,7 @@ df = ds["train"].to_pandas()
 
 Data derived from the **National Rail Darwin Push Port** feed, provided by
 Network Rail under the
-[Network Rail Open Data Licence](https://www.networkrail.co.uk/who-we-are/transparency-and-open-data/open-data-feeds/).
+[Network Rail Open Data Licence](https://www.networkrail.co.uk/who-we-are/transparency-and-ethics/transparency/open-data-feeds/network-rail-infrastructure-limited-data-feeds-licence/).
 You must comply with that licence when redistributing or building products on
 this data.
 
