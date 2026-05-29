@@ -10,16 +10,18 @@ The current version and last worked on date should be noted at the top of this f
 
 RailPredict is a Rust-based high-performance shadow system for UK Rail data. Its core purpose is to act as an **Intelligent Buffer** between users and the GBR (Great British Railways) API — minimising expensive live calls by combining cached static data, local predictive logic, and state-machine-driven polling. The system should feel instant to the user: data is pre-warmed, delays are predicted locally, and live API calls only happen when transactionally unavoidable.
 
+**Current state (v1.12.0):** The full Tier A/B pipeline is live — Darwin stream ingestion, GTFS timetable loading, LightGBM ONNX inference (day-ahead and real-time models), prediction outcome tracking, and the complete departure board and detail UI. Tier C (live GBR purchase API) is the only remaining unconnected piece; the plumbing is already built.
+
 ---
 
 ## Working Principles
 
-- **Before writing any code**, check `docs/improvements.md` for that domain. It contains architectural decisions and recommendations that should be treated as constraints, not suggestions.
 - **Before modifying a file**, read its immediate neighbours in the module tree to understand the data flow context.
-- **If a file has not been touched in several sessions**, leave a short inline note at the top of the file (as a Rust doc comment `//!`) marking what the module does, what state it was last left in, and what the next expected change is.
+- **Check `docs/improvements.md`** before starting work in any domain — it captures all architectural decisions made across the project's epics and should be treated as constraints, not suggestions.
 - **Never make a live GBR API call inside a hot path.** All external calls go through the networking layer with rate limiting and circuit-breaker logic.
 - **Concurrency model**: prefer message passing (`mpsc`, `oneshot`) over shared mutable state (`Arc<Mutex<T>>`). Use `Arc<RwLock<T>>` only for read-heavy shared state like the train registry.
 - **Error handling**: use `thiserror` for domain errors, `anyhow` for application-level error propagation. Never `.unwrap()` in production paths.
+- **No JavaScript frameworks** in the frontend — `maud` + `htmx` + minimal vanilla JS only. No build step.
 
 ---
 
@@ -44,7 +46,8 @@ This is strict — follow it exactly:
 
 ```
 RailPredict/                        ← repo root
-├── CLAUDE.md                       ← this file; Claude session seed + working reference
+├── CLAUDE.md                       ← this file; AI session seed + architecture reference
+├── CONTRIBUTING.md                 ← contributor guide; read before opening a PR
 ├── README.md                       ← project vision + current status table
 ├── TODO.md                         ← active sprint tracker + remaining epics
 ├── CHANGELOG.md                    ← completed epics log; updated on minor version bumps
@@ -56,12 +59,23 @@ RailPredict/                        ← repo root
 │   ├── prometheus.yml              ← Prometheus scrape config (docker compose --profile monitoring)
 │   └── docker-compose.prod.yml    ← production overrides (no exposed DB port, stricter limits)
 ├── docs/
-│   ├── improvements.md             ← full item index + architectural decisions; all epics complete at v1.7.0
+│   ├── improvements.md             ← full item index + architectural decisions (all epics done at v1.7.0)
 │   ├── model-performance.md        ← ML model accuracy breakdown and evaluation data
+│   ├── model-improvement-plan.md   ← ML v3 improvement rationale (complete, v1.12.0)
 │   └── index.html                  ← generated static snapshot (make export); not hand-edited
+├── scripts/
+│   ├── compare_models.py           ← LightGBM training + ONNX export; run to retrain models
+│   ├── export_dataset.py           ← export delay_history to Parquet + HuggingFace README
+│   ├── fetch_hsp_history.py        ← bulk HSP historical delay fetch (route-based O-D pairs)
+│   ├── run_hsp_fetch.sh            ← launcher for 4 parallel HSP shards
+│   ├── seed_history.py             ← synthetic delay backfill (use before live data exists)
+│   ├── seed_stations.py            ← populate stations table from OpenStreetMap Overpass
+│   ├── train_models.py             ← standalone training script (older; prefer compare_models.py)
+│   └── requirements.txt            ← Python deps for all scripts
 └── RailPredict/                    ← Rust crate root
     ├── Cargo.toml                  ← crate manifest; version must match project version
     ├── Cargo.lock                  ← committed; this is a binary application not a library
+    ├── .env.example                ← template; copy to .env and fill in credentials
     ├── tests/
     │   ├── integration.rs          ← end-to-end wiring tests (real pipeline, in-memory)
     │   └── db_integration.rs       ← sqlx::test DB integration tests (11 functions)
@@ -148,7 +162,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 **Volatility promotions** (bypass normal time-based transitions):
 - Wind > 50mph on a route → force all trains on that route to `Active`
-- Major incident detected (news/social scraper) → force affected corridor to `Critical`
+- Major incident detected → force affected corridor to `Critical`
 
 ---
 
@@ -180,55 +194,33 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - `HistoricalStore` is hard-capped at `MAX_SAMPLES=90` per pattern; trimmed-mean drops top/bottom 10%; no prediction emitted with fewer than 3 samples
 - `predict_and_update_with_correlation` blends in preceding-service delay (0.6/0.4 weight) when a service shares `origin_crs` in a ±20-min window
 - Confidence decay: `confidence * exp(-days_since / 21.0)` applied when last `DelayRecord` is older than 21 days
+- ONNX models live in `models/` — retrain with `scripts/compare_models.py`, which exports `day_ahead.onnx` and `realtime.onnx` directly
 
 ### Database (`src/db/`)
 - `load_history` uses a window function to reconstruct `HistoricalStore` from the most-recent `MAX_SAMPLES` rows per pattern — avoids full table scan
 - `flush_history` inserts in 500-row chunks with `ON CONFLICT DO NOTHING` — idempotent; safe to call repeatedly
 - `departures_from` is the hot path for the departure board; indexed on `(location_crs, operating_date, scheduled_departure)`
 
+### ML Pipeline (`scripts/`)
+- `compare_models.py` trains day-ahead and real-time LightGBM models, applies equal-tier sample weighting to correct the severe-delay bias in the Darwin feed, and exports to ONNX
+- Feature count is fixed: 10 for day-ahead, 15 for real-time — changing this requires matching updates to `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`)
+- `export_dataset.py` regenerates `dataset/delay_history.parquet` and the HuggingFace README from the live DB; run after each retrain
+
 ---
 
-## References from HFT-Engine (`data/HFT-Engine/`)
+## Concurrency & Performance Patterns
 
-A separate Rust project (gitignored under `data/`) that solved similar concurrency and ingestion problems at nanosecond scale. RailPredict does not need that level of latency, but the structural patterns are proven and directly portable. Do not copy inline assembly, PRFM prefetch hints, or NEON/AVX2 signal logic — those are HFT-specific. Everything below is domain-agnostic Rust.
+These are the key patterns worth preserving as the codebase grows:
 
-### High-value direct ports
+**Single global scheduler, not per-train tasks.** `PollManager` uses a `BinaryHeap<(Instant, TrainId)>` so the number of tokio tasks stays O(1) regardless of how many trains are tracked. Never spawn a dedicated `tokio::spawn` per train for polling.
 
-**1. SPSC lock-free ring buffer — `data/HFT-Engine/src/models.rs`: `RingBuffer` + `TradeLog`**
-The pattern: `UnsafeCell<[T; N]>` for the backing array, `AtomicU64` write cursor, `Ordering::Release` on commit and `Ordering::Acquire` on read. Writer fills all struct fields first, then `fetch_add(1, Release)` to make the entry visible — never the other way around. This maps directly onto the Darwin ingestion pipeline: the STOMP receiver (writer) fills a parsed `TrainUpdate` slot, then commits; the state machine (reader) polls the cursor.
+**Fan-out via oneshot channels.** The coalescer in `networking/coalescer.rs` deduplicates concurrent in-flight requests: the first caller drives the HTTP request, late arrivals attach a `oneshot::Receiver`. This prevents N identical outbound calls when N users load the same train page simultaneously.
 
-**2. Sequence gap detection + dirty flag — `data/HFT-Engine/src/engine.rs`: `run_ingestor`**
-The ingestor tracks `last_ingest_seq` and on each received packet checks `recv_seq != last_ingest_seq + 1`. On a gap it sets a `dirty: AtomicBool` flag and increments `gap_count`. The consumer (trading strategy) skips processing while dirty and only clears it after `N` consecutive clean sequences. This is **exactly** the Darwin out-of-order / late-arrival problem described in `docs/improvements.md`. Port this pattern verbatim into `src/ingestion/filter.rs`.
+**STOMP reconnect without state loss.** `PipelineContext` holds all shared state behind `Arc`. On a STOMP disconnect, only the TCP client is replaced — the registry, prediction engine, and filter retain their state across reconnects.
 
-**3. `LatencyHistogram` — `data/HFT-Engine/src/models.rs`**
-Fixed-bucket histogram covering 0–10,000 µs (one `u64` per bucket), overflow counter for values above the range, and an O(n) `percentile()` walk that requires zero allocation. Single-writer semantics (`UnsafeCell` + no lock). Directly useful for monitoring Darwin XML parse latency and state-machine poll timing. Copy this struct as-is into a `src/diagnostics/` module.
+**Sequence guard for late arrivals.** `SequenceGuard` in `filter.rs` tracks the last-seen sequence per train and drops messages that arrive out of order. This handles the Darwin reconnect-replay problem where old messages flood in after a reconnect.
 
-**4. Versioned JSON run log + `unix_to_date_time` — `data/HFT-Engine/src/engine.rs`: `write_log` + `unix_to_date_time`**
-Writes structured logs to `logs/v{version}/{YYYY-MM-DD}/{HH-MM-SS}.json`. Version is read from `Cargo.toml` at compile time via `env!("CARGO_PKG_VERSION")` — stays in sync with the project version automatically. The `unix_to_date_time` function is a stdlib-only Gregorian calendar implementation (no `chrono`) for log path generation. Use this pattern for RailPredict's run and diagnostic logs.
-
-**5. Pre-allocated flat instrument registry — `data/HFT-Engine/src/models.rs`: `InstrumentId` + `InstrumentBuffers`**
-Instead of a `HashMap<InstrumentId, Arc<RingBuffer>>`, a compact `u8`-indexed newtype (`InstrumentId(pub u8)`) is used as an array index into a pre-allocated flat `[RingBuffer; MAX_INSTRUMENTS]`. O(1) lookup with zero heap allocation on the hot path. The equivalent in RailPredict is the `TrainID` → `TrainStatus` registry inside `src/cache/train_registry.rs`. A flat array keyed by a compact train index (populated from a startup lookup table) is faster and simpler than a `dashmap` if the active-train count is bounded. Use `dashmap` for the full registry; use a flat pre-allocated array for the subset of trains in `Active` or `Critical` state where lookup is on the hot polling path.
-
-### Medium-value: adapt with judgement
-
-**6. Spin-based watchdog — `data/HFT-Engine/src/engine.rs`: `run_watchdog`**
-The watchdog checks elapsed time every 2^24 iterations to amortise the timer call cost, avoiding OS sleep/wakeup cycles that could preempt critical threads. RailPredict does not have that thread-preemption concern, but the structural pattern — a dedicated watchdog task monitoring connection health, with configurable idle and no-feed timeout thresholds — maps directly to monitoring the Darwin STOMP connection. Adapt into a `tokio::spawn` task rather than a spin loop (tokio's async sleep is fine for RailPredict's ms-level timing requirements).
-
-**7. Buffer pre-touch with `write_volatile` — `data/HFT-Engine/src/main.rs`**
-On macOS (and Linux with overcommit), `std::mem::zeroed()` on a heap allocation does not commit physical pages — they are zero-fill-on-demand. The first write to each page causes a demand-paging fault. In HFT this is catastrophic (~3–5µs). In RailPredict it matters less, but pre-touching the `TrainStatus` registry at startup (before any polling threads run) gives consistent first-write latency. Do this in `main.rs` before spawning any tokio tasks.
-
-**8. `#[cold]` on rare/error paths — `data/HFT-Engine/src/engine.rs`: `halt_trading`**
-`#[cold]` on a function biases the branch predictor in the caller toward the not-taken (non-error) direction after the first few calls. Apply this to the circuit breaker's `enter_cache_only_mode()` function and to any error handler called from a polling hot path.
-
-**9. Thread priority — `data/HFT-Engine/src/engine.rs`: `set_qos_interactive`**
-Uses `pthread_set_qos_class_self_np(0x21, 0)` on macOS to set `QOS_USER_INTERACTIVE`, biasing the thread toward P-cores. On Linux uses `SCHED_FIFO` via raw syscall. Apply to the Darwin STOMP ingestion thread and the state machine poll manager thread to reduce OS-scheduling jitter on those two latency-sensitive paths.
-
-### What NOT to port
-
-- Inline assembly (`asm!`, NEON, AVX2, PRFM) — RailPredict has no sub-microsecond latency requirement.
-- `mach_absolute_time()` timing discussion — use `chrono` or `tokio::time` normally.
-- The trading signal logic, `fake-exchange`, `market-simulator` — entirely different domain.
-- `collect_memory_stats` (getrusage + sysctl) — not needed unless you add a diagnostics endpoint later.
+**`#[cold]` on error paths.** Applied to `circuit_breaker::enter_cache_only_mode` and similar rare paths — biases the branch predictor toward the happy path.
 
 ---
 
@@ -246,4 +238,4 @@ When starting a new session on this project, the recommended warm-up order is:
 1. Read `TODO.md` → understand current sprint
 2. Read this file (`CLAUDE.md`) → reload architecture context
 3. Check `git log --oneline -10` → see what changed recently
-4. Read `docs/improvements.md` if relevant to today's work
+4. Read `docs/improvements.md` if working in a domain with prior architectural decisions
