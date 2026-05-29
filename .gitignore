@@ -38,3 +38,4 @@ scripts/.venv/
 # Push the Parquet and README to HuggingFace, not git
 fetch_progress_shard*.txt
 /dataset
+docs/railpredict-site-integration.md
