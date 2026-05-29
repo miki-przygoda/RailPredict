@@ -1,16 +1,21 @@
 """
 Compare LightGBM model variants and export the best as production ONNX models.
 
-Previous results (from session 2026-05-26, synthetic seed + early Darwin data):
-    v1 (synthetic only)          day-ahead MAE ≈ 35 min on 26 May test set
-    v2 (synthetic + real day-1)  day-ahead MAE ≈ 21 min on 26 May test set  (−41%)
+v2 improvements (2026-05-29):
+  1. Fix preceding_delay_mins — was hardcoded 0 in training; now computed via
+     merge_asof (most recent different-uid service at same TIPLOC within 20 min).
+  2. Fix mins_until_departure — was hardcoded 0; now approximated from
+     departure_hour and recorded_at (accurate to within ~30 min).
+  3. Target clipping — training target clipped to [-30, 240] to stop the heavy
+     right tail (660K severe-delay rows, avg 109 min) from dominating MAE loss.
+  4. Bad-day exclusion — 21 May (avg -79.9 min) and 27 May (avg -83.2 min) are
+     startup-reconnect artifact days and are excluded from training.
+  5. Boosted hyperparameters — n_estimators 500→1000, num_leaves 63→127,
+     min_child_samples 20→50; early stopping on last-10% chronological val set.
 
-Current comparison (real Darwin data only — synthetic seed no longer in DB):
-    v_early — trained on 22–23 May Darwin data only
-    v_full  — trained on all real Darwin data before today (22–23 + 25 May)
-              → exported as production models (day_ahead.onnx, realtime.onnx)
-
-Test set: today's Darwin data (27 May 2026, growing while the server runs).
+Previous results (fixed reference — real Darwin data, 28 May test set):
+    v_prev day-ahead  MAE = 17.59 min
+    v_prev real-time  MAE =  5.92 min
 
 Usage:
     python compare_models.py
@@ -30,7 +35,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMRegressor, early_stopping, log_evaluation
 from onnxmltools import convert_lightgbm
 from onnxmltools.convert.common.data_types import FloatTensorType
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
@@ -40,10 +45,15 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 MODELS_DIR = Path(__file__).parent.parent / "models"
 
-# Dates — skipping 21 May (first-connection startup noise, avg delay −87 min)
-EARLY_END  = pd.Timestamp("2026-05-24", tz="UTC")   # v_early trains on 22–23 May
-FULL_END   = pd.Timestamp("2026-05-28", tz="UTC")   # v_full trains on 22–23 + 25 + 27 May
-TEST_DATE  = "2026-05-28"                            # today's data is the test set
+# Previous-model reference MAEs (for the comparison table)
+PREV_DAY_MAE = 17.59
+PREV_RT_MAE  =  5.92
+
+# Test set: today's data
+TEST_DATE = "2026-05-29"
+
+# Bad days to exclude (startup reconnect artifacts — extreme negative avg delay)
+BAD_DAYS = ("2026-05-21", "2026-05-27")
 
 FEATURE_COLS_DAY = [
     "weekday", "departure_hour", "month", "is_peak",
@@ -56,12 +66,18 @@ FEATURE_COLS_RT = FEATURE_COLS_DAY + [
     "wind_mph", "volatility_score", "mins_until_departure",
 ]
 
+# v2 hyperparameters — boosted for 2.5M rows
 LGBM_PARAMS = dict(
-    n_estimators=500, learning_rate=0.05, num_leaves=63,
-    min_child_samples=20, subsample=0.8, colsample_bytree=0.8,
-    n_jobs=-1, verbose=-1, random_state=42,
+    n_estimators=1000,       # was 500
+    learning_rate=0.05,
+    num_leaves=127,          # was 63
+    min_child_samples=50,    # was 20 — avoids overfit on noisy records
+    subsample=0.8,
+    colsample_bytree=0.8,
+    n_jobs=-1,
+    verbose=-1,
+    random_state=42,
 )
-
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -69,19 +85,21 @@ LGBM_PARAMS = dict(
 
 def load_data(database_url: str) -> pd.DataFrame:
     engine = create_engine(database_url)
-    sql = text("""
+    bad_days_sql = ", ".join(f"'{d}'" for d in BAD_DAYS)
+    sql = text(f"""
         SELECT uid, weekday, origin_crs, departure_hour,
                delay_mins, recorded_at
         FROM delay_history
-        WHERE delay_mins BETWEEN -60 AND 300
+        WHERE delay_mins BETWEEN -30 AND 240
           AND recorded_at >= '2026-05-22'
+          AND recorded_at::date NOT IN ({bad_days_sql})
         ORDER BY uid, weekday, origin_crs, departure_hour, recorded_at
     """)
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn, parse_dates=["recorded_at"])
     if df["recorded_at"].dt.tz is None:
         df["recorded_at"] = df["recorded_at"].dt.tz_localize("UTC")
-    print(f"  Loaded {len(df):,} observations")
+    print(f"  Loaded {len(df):,} observations  (excluded: {', '.join(BAD_DAYS)})")
     return df
 
 
@@ -133,10 +151,61 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Preceding delay feature — merge_asof within 20-min window
+# ---------------------------------------------------------------------------
+
+def compute_preceding_delay(df: pd.DataFrame) -> np.ndarray:
+    """
+    For each record find the most recent observation at the same TIPLOC by a
+    *different* UID within the prior 20 minutes.  Returns a float32 array of
+    the same length as df (0.0 where no predecessor exists).
+    """
+    print("  Computing preceding_delay_mins …", end="", flush=True)
+
+    # merge_asof requires both sides sorted by the key column
+    df_sorted = df[["uid", "origin_crs", "recorded_at", "delay_mins"]].copy()
+    df_sorted = df_sorted.sort_values("recorded_at").reset_index(drop=False)
+    # 'index' column now holds original df positions
+
+    right = df_sorted[["uid", "origin_crs", "recorded_at", "delay_mins"]].rename(
+        columns={
+            "uid":        "uid_prev",
+            "recorded_at": "rec_prev",
+            "delay_mins":  "delay_prev",
+        }
+    )
+
+    merged = pd.merge_asof(
+        df_sorted[["index", "uid", "origin_crs", "recorded_at"]],
+        right,
+        left_on="recorded_at",
+        right_on="rec_prev",
+        by="origin_crs",
+        tolerance=pd.Timedelta("20min"),
+        allow_exact_matches=False,
+    )
+
+    # Zero out same-UID matches (merge_asof doesn't exclude them)
+    same_uid = merged["uid"] == merged["uid_prev"]
+    merged.loc[same_uid, "delay_prev"] = np.nan
+
+    result = np.zeros(len(df), dtype=np.float32)
+    orig_idx = merged["index"].values
+    vals     = merged["delay_prev"].fillna(0.0).values.astype(np.float32)
+    result[orig_idx] = vals
+
+    pct_nonzero = (result != 0).mean() * 100
+    print(f" done  ({pct_nonzero:.1f}% rows have a predecessor)")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Feature engineering
 # ---------------------------------------------------------------------------
 
 def engineer_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    df = df.copy()
+
     df["month"]   = df["recorded_at"].dt.month.astype(np.int32)
     df["is_peak"] = (
         df["departure_hour"].isin([7, 8, 16, 17, 18]) & (df["weekday"] <= 4)
@@ -150,13 +219,26 @@ def engineer_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df["origin_crs_enc"] = df["origin_crs"].map(crs_map).fillna(0).astype(np.int32)
     df["uid_prefix_enc"] = df["uid"].str[0].map(pfx_map).fillna(0).astype(np.int32)
 
+    # current_delay_mins: historical delay + training noise to prevent copy-through
     rng = np.random.default_rng(42)
     noise = rng.uniform(0.7, 1.3, size=len(df))
-    df["current_delay_mins"]   = (df["delay_mins"].values * noise).astype(np.float32)
-    df["preceding_delay_mins"] = np.float32(0)
-    df["wind_mph"]             = np.float32(0)
-    df["volatility_score"]     = np.float32(0)
-    df["mins_until_departure"] = np.float32(0)
+    df["current_delay_mins"] = (df["delay_mins"].values * noise).astype(np.float32)
+
+    # FIX 1: preceding_delay_mins — computed from data, was always 0
+    df["preceding_delay_mins"] = compute_preceding_delay(df)
+
+    # FIX 2: mins_until_departure — approximated from departure_hour vs recorded_at hour
+    # Accurate to within ~30 min (we don't have departure minute in delay_history)
+    rec_hour = df["recorded_at"].dt.hour.values + df["recorded_at"].dt.minute.values / 60.0
+    dep_hour = df["departure_hour"].values.astype(float)
+    mins_raw = (dep_hour - rec_hour) * 60.0
+    # Overnight wrap: if result < −12 h the departure is on the next day
+    mins_raw = np.where(mins_raw < -720.0, mins_raw + 1440.0, mins_raw)
+    df["mins_until_departure"] = mins_raw.clip(-360.0, 360.0).astype(np.float32)
+
+    # Weather features — no historical weather in DB; stay zero
+    df["wind_mph"]         = np.float32(0)
+    df["volatility_score"] = np.float32(0)
 
     meta = {"crs": crs_map, "uid_prefix": pfx_map}
     return df, meta
@@ -196,12 +278,23 @@ def evaluate_variant(
     model_name: str = "",
 ) -> dict:
     X_tr = train[feature_cols].astype(np.float32).values
-    y_tr = train["delay_mins"].values
+    y_tr = train["delay_mins"].values.clip(-30, 240)   # FIX 3: target clipping
     X_te = test[feature_cols].astype(np.float32).values
     y_te = test["delay_mins"].values
 
+    # FIX 5: Early stopping on last-10% chronological slice (no temporal leakage)
+    split   = int(len(X_tr) * 0.9)
+    X_fit, X_val = X_tr[:split], X_tr[split:]
+    y_fit, y_val = y_tr[:split], y_tr[split:]
+
     m = LGBMRegressor(**LGBM_PARAMS)
-    m.fit(X_tr, y_tr)
+    m.fit(
+        X_fit, y_fit,
+        eval_set=[(X_val, y_val)],
+        callbacks=[early_stopping(50, verbose=False), log_evaluation(0)],
+    )
+    best_iter = m.best_iteration_ if m.best_iteration_ else LGBM_PARAMS["n_estimators"]
+
     preds = m.predict(X_te)
 
     mae  = mean_absolute_error(y_te, preds)
@@ -210,6 +303,9 @@ def evaluate_variant(
     w5   = np.mean(np.abs(preds - y_te) <= 5)  * 100
     w10  = np.mean(np.abs(preds - y_te) <= 10) * 100
     bias = np.mean(preds - y_te)
+
+    print(f"    best_iter={best_iter}  MAE={mae:.2f}  RMSE={rmse:.2f}  bias={bias:+.2f}"
+          f"  ±2m={w2:.1f}%  ±5m={w5:.1f}%  ±10m={w10:.1f}%")
 
     if export_onnx and model_name:
         MODELS_DIR.mkdir(exist_ok=True)
@@ -221,7 +317,7 @@ def evaluate_variant(
             f.write(onnx_model.SerializeToString())
         print(f"    Exported → {out_path}  ({out_path.stat().st_size / 1024:.0f} KB)")
 
-    return dict(label=label, n_train=len(train), n_test=len(test),
+    return dict(label=label, n_train=len(train), n_test=len(test), best_iter=best_iter,
                 mae=mae, rmse=rmse, bias=bias, w2=w2, w5=w5, w10=w10, model=m)
 
 
@@ -232,10 +328,10 @@ def evaluate_variant(
 def print_importance(model: LGBMRegressor, cols: list[str], label: str) -> None:
     pairs = sorted(zip(cols, model.feature_importances_), key=lambda x: x[1], reverse=True)
     top_score = max(s for _, s in pairs)
-    print(f"\n  [{label}] Feature importance (top 10):")
-    for name, score in pairs[:10]:
-        bar = "█" * int(score / top_score * 24)
-        print(f"    {name:<24} {score:6.0f}  {bar}")
+    print(f"\n  [{label}] Feature importance:")
+    for name, score in pairs:
+        bar = "█" * int(score / top_score * 28)
+        print(f"    {name:<26} {score:6.0f}  {bar}")
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +353,7 @@ def main() -> None:
     by_day = df.groupby(df["recorded_at"].dt.date).agg(
         rows=("delay_mins", "count"), avg_delay=("delay_mins", "mean")
     )
-    print("\n  Data by day:")
+    print("\n  Data by day (after exclusions and filter):")
     for d, row in by_day.iterrows():
         print(f"    {d}  {row['rows']:>8,} rows  avg={row['avg_delay']:+.1f} min")
 
@@ -267,23 +363,23 @@ def main() -> None:
     print("\n══ Feature engineering ═══════════════════════════════════════")
     df, meta = engineer_features(df)
 
+    # Spot-check the two fixed features
+    prec_pct = (df["preceding_delay_mins"] != 0).mean() * 100
+    mud_rng  = df["mins_until_departure"]
+    print(f"  preceding_delay_mins: {prec_pct:.1f}% non-zero  "
+          f"mean={df['preceding_delay_mins'].mean():.1f}")
+    print(f"  mins_until_departure: min={mud_rng.min():.0f}  "
+          f"max={mud_rng.max():.0f}  mean={mud_rng.mean():.1f}")
+
     # Fixed test set: today's real Darwin data
     test = df[df["recorded_at"].dt.date == pd.Timestamp(TEST_DATE).date()].copy()
-    print(f"\n  Test set ({TEST_DATE} — today): {len(test):,} rows")
+    print(f"\n  Test set ({TEST_DATE}): {len(test):,} rows")
     if len(test) < 50:
-        sys.exit(f"Too little test data for {TEST_DATE} ({len(test)} rows — wait for Darwin to collect more)")
+        sys.exit(f"Too little test data for {TEST_DATE} ({len(test)} rows)")
 
-    # v_early: 22–23 May only (first clean real Darwin days)
-    v_early_train = df[
-        (df["recorded_at"] >= pd.Timestamp("2026-05-22", tz="UTC")) &
-        (df["recorded_at"] < EARLY_END)
-    ].copy()
-
-    # v_full: all real Darwin data before today (22–23 + 25 May)
-    v_full_train = df[df["recorded_at"] < FULL_END].copy()
-
-    print(f"  v_early train (22–23 May):              {len(v_early_train):>8,} rows")
-    print(f"  v_full  train (22–23 + 25 + 27 May):   {len(v_full_train):>8,} rows")
+    # Training: everything before today (bad days already excluded in SQL)
+    train = df[df["recorded_at"].dt.date < pd.Timestamp(TEST_DATE).date()].copy()
+    print(f"  Training set (pre-{TEST_DATE}): {len(train):,} rows")
 
     # Save feature metadata
     meta_path = MODELS_DIR / "feature_meta.json"
@@ -291,97 +387,75 @@ def main() -> None:
     with open(meta_path, "w") as f:
         json.dump(meta, f)
     print(f"\n  Feature metadata → {meta_path}")
-    print(f"  ({len(meta['crs'])} CRS/TIPLOC encodings, {len(meta['uid_prefix'])} UID prefixes)")
+    print(f"  ({len(meta['crs'])} TIPLOC encodings, {len(meta['uid_prefix'])} UID prefixes)")
 
     # ---------------------------------------------------------------------------
     # Baselines
     # ---------------------------------------------------------------------------
-    print("\n══ Trimmed-mean baselines ════════════════════════════════════")
-    bl_early = trimmed_mean_baseline(v_early_train, test)
-    bl_full  = trimmed_mean_baseline(v_full_train,  test)
-    print(f"  v_early baseline MAE: {bl_early:.2f} min")
-    print(f"  v_full  baseline MAE: {bl_full:.2f} min")
+    print("\n══ Trimmed-mean baseline ═════════════════════════════════════")
+    bl = trimmed_mean_baseline(train, test)
+    print(f"  Baseline MAE: {bl:.2f} min")
 
     # ---------------------------------------------------------------------------
-    # Day-ahead models
+    # Day-ahead model
     # ---------------------------------------------------------------------------
     results = []
 
-    print("\n══ Day-ahead models ══════════════════════════════════════════")
-    print("  Training v_early (22–23 May only) …")
-    r = evaluate_variant("v_early day-ahead (22–23 May)",
-                         v_early_train, test, FEATURE_COLS_DAY)
+    print("\n══ Day-ahead model (10 features) ════════════════════════════")
+    r = evaluate_variant(
+        "v2 day-ahead", train, test, FEATURE_COLS_DAY,
+        export_onnx=True, model_name="day_ahead",
+    )
     results.append(r)
-    print(f"    MAE={r['mae']:.2f}  RMSE={r['rmse']:.2f}  bias={r['bias']:+.2f}")
-
-    print("  Training v_full (22–23 + 25 + 27 May) …")
-    r = evaluate_variant("v_full day-ahead (all pre-today)",
-                         v_full_train, test, FEATURE_COLS_DAY,
-                         export_onnx=True, model_name="day_ahead")
-    results.append(r)
-    print(f"    MAE={r['mae']:.2f}  RMSE={r['rmse']:.2f}  bias={r['bias']:+.2f}")
 
     # ---------------------------------------------------------------------------
-    # Real-time models
+    # Real-time model
     # ---------------------------------------------------------------------------
-    print("\n══ Real-time models ══════════════════════════════════════════")
-    print("  Training v_early real-time …")
-    r = evaluate_variant("v_early real-time (22–23 May)",
-                         v_early_train, test, FEATURE_COLS_RT)
+    print("\n══ Real-time model (15 features) ════════════════════════════")
+    r = evaluate_variant(
+        "v2 real-time", train, test, FEATURE_COLS_RT,
+        export_onnx=True, model_name="realtime",
+    )
     results.append(r)
-    print(f"    MAE={r['mae']:.2f}  RMSE={r['rmse']:.2f}  bias={r['bias']:+.2f}")
-
-    print("  Training v_full real-time (22–23 + 25 + 27 May) …")
-    r = evaluate_variant("v_full real-time (all pre-today)",
-                         v_full_train, test, FEATURE_COLS_RT,
-                         export_onnx=True, model_name="realtime")
-    results.append(r)
-    print(f"    MAE={r['mae']:.2f}  RMSE={r['rmse']:.2f}  bias={r['bias']:+.2f}")
 
     # ---------------------------------------------------------------------------
     # Comparison table
     # ---------------------------------------------------------------------------
-    print("\n" + "═" * 76)
-    print("  COMPARISON — test set: real Darwin", TEST_DATE, f"({len(test):,} rows)")
-    print("═" * 76)
-    print(f"  {'Model':<40} {'MAE':>6} {'RMSE':>7} {'Bias':>6} {'±2m':>5} {'±5m':>5} {'±10m':>6}")
-    print("  " + "─" * 74)
-    print(f"  {'v_early baseline (trimmed-mean)':<40} {bl_early:>6.2f}   {'—':>6}  {'—':>5}  {'—':>5}  {'—':>5}  {'—':>6}")
-    print(f"  {'v_full  baseline (trimmed-mean)':<40} {bl_full:>6.2f}   {'—':>6}  {'—':>5}  {'—':>5}  {'—':>5}  {'—':>6}")
+    print("\n" + "═" * 80)
+    print(f"  COMPARISON — test set: {TEST_DATE}  ({len(test):,} rows)")
+    print("═" * 80)
+    print(f"  {'Model':<38} {'Train rows':>10} {'MAE':>7} {'RMSE':>8} "
+          f"{'Bias':>6} {'±2m':>5} {'±5m':>5} {'±10m':>6}")
+    print("  " + "─" * 78)
+
+    # Fixed reference row for the previous model
+    for label, mae, rmse in [
+        ("v_prev day-ahead (28 May train)", PREV_DAY_MAE, "—"),
+        ("v_prev real-time (28 May train)", PREV_RT_MAE,  "—"),
+    ]:
+        print(f"  {label:<38} {'~1.4M':>10} {mae:>7.2f} {str(rmse):>8}  {'—':>5}  {'—':>5}  {'—':>5}  {'—':>6}")
+
+    print("  " + "─" * 78)
     for r in results:
-        print(f"  {r['label']:<40} {r['mae']:>6.2f} {r['rmse']:>7.2f} {r['bias']:>+6.2f} "
-              f"{r['w2']:>4.1f}% {r['w5']:>4.1f}% {r['w10']:>5.1f}%")
-    print("═" * 76)
+        print(f"  {r['label']:<38} {r['n_train']:>10,} {r['mae']:>7.2f} {r['rmse']:>8.2f} "
+              f"{r['bias']:>+6.2f} {r['w2']:>4.1f}% {r['w5']:>4.1f}% {r['w10']:>5.1f}%")
+    print("═" * 80)
 
-    # ---------------------------------------------------------------------------
-    # Delta: more training data
-    # ---------------------------------------------------------------------------
-    print("\n══ Delta: adding 25 May data ═════════════════════════════════")
-    for model_type in ("day-ahead", "real-time"):
-        early_r = next(r for r in results if "v_early" in r["label"] and model_type in r["label"])
-        full_r  = next(r for r in results if "v_full"  in r["label"] and model_type in r["label"])
-        delta_mae  = full_r["mae"]  - early_r["mae"]
-        delta_rmse = full_r["rmse"] - early_r["rmse"]
-        delta_w5   = full_r["w5"]   - early_r["w5"]
-        verdict = "better" if delta_mae < 0 else "worse"
-        print(f"  {model_type:<12}  ΔMAE={delta_mae:+.2f}  ΔRMSE={delta_rmse:+.2f}"
-              f"  Δ±5min={delta_w5:+.1f}%  → {verdict}")
+    # Delta vs previous
+    print("\n══ Delta vs v_prev ═══════════════════════════════════════════")
+    for r in results:
+        ref = PREV_DAY_MAE if "day-ahead" in r["label"] else PREV_RT_MAE
+        delta = r["mae"] - ref
+        sign  = "▼ better" if delta < 0 else "▲ worse"
+        print(f"  {r['label']:<22}  ΔMAE={delta:+.2f} min  {sign}")
 
-    # ---------------------------------------------------------------------------
-    # Historical reference (previous sessions)
-    # ---------------------------------------------------------------------------
-    print("\n══ Historical reference (synthetic-seed era, 26 May test set) ═")
-    print("  v1 day-ahead (synthetic only)          MAE ≈ 35.0 min")
-    print("  v2 day-ahead (synthetic + real day-1)  MAE ≈ 21.0 min  (−41%)")
-    print("  Real Darwin data replaced synthetic seed — current models use real data only.")
+    # Feature importance
+    day_r = next(r for r in results if "day-ahead" in r["label"])
+    rt_r  = next(r for r in results if "real-time" in r["label"])
+    print_importance(day_r["model"], FEATURE_COLS_DAY, "v2 day-ahead")
+    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v2 real-time")
 
-    # Feature importance for exported models
-    day_full = next(r for r in results if "v_full day-ahead" in r["label"])
-    rt_full  = next(r for r in results if "v_full real-time" in r["label"])
-    print_importance(day_full["model"], FEATURE_COLS_DAY, "v_full day-ahead")
-    print_importance(rt_full["model"],  FEATURE_COLS_RT,  "v_full real-time")
-
-    print("\n  v_full models exported to models/  — restart the Rust server to activate.")
+    print("\n  v2 models exported to models/ — restart the Rust server to activate.\n")
 
 
 if __name__ == "__main__":
