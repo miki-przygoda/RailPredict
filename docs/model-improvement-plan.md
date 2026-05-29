@@ -1,5 +1,5 @@
 # Model Improvement Plan
-**Status:** In progress — created 2026-05-29
+**Status:** Complete — shipped in v1.12.0 (2026-05-29)
 
 ---
 
