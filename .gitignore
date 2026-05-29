@@ -33,3 +33,9 @@ models/feature_meta.json
 
 # Python venv for ML training
 scripts/.venv/
+
+# Dataset export — regenerate with `python3 scripts/export_dataset.py`
+# Push the Parquet and README to HuggingFace, not git
+dataset/*.parquet
+dataset/*.csv.gz
+fetch_progress_shard*.txt
