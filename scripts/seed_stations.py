@@ -1,21 +1,26 @@
 """
 seed_stations.py — Populate the `stations` table from OpenStreetMap.
 
-Uses the Overpass API to fetch every UK National Rail station that has a CRS
-code (ref:crs tag).  No account or API key required — Overpass is free and
-publicly accessible.  The OSM data also includes TIPLOC codes (ref:tiploc) and
-coordinates for almost all stations, which the ingest pipeline cannot derive
-from GTFS alone.
+WHEN TO USE:
+    Run once on a fresh instance, or after adding new stations to the DB schema.
+    The GTFS ingest pipeline (`cargo run -- ingest-static`) also populates
+    stations, but OSM has broader coverage for TIPLOC codes and coordinates.
+    It is safe to run this after a GTFS ingest — it upserts on CRS code.
+
+    This script does not require any API keys or accounts.
+
+HOW IT WORKS:
+    Queries the Overpass API for every UK National Rail station tagged with a
+    CRS code (ref:crs). OSM data also includes TIPLOC codes (ref:tiploc) and
+    lat/lon coordinates for almost all stations — data the GTFS feed omits.
+    Results are upserted into the `stations` table keyed on crs.
 
 Run:
     python scripts/seed_stations.py
 
-Or via make:
-    make seed-stations
-
-Environment:
-    DATABASE_URL   Postgres connection string (read from .env if not set).
-                   Uses @localhost: substitution if @db: is present (Docker host).
+Requirements:
+    pip install psycopg2-binary python-dotenv
+    DATABASE_URL set in .env or environment.
 """
 
 import json

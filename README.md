@@ -165,7 +165,21 @@ src/
 
 migrations/         sqlx Postgres migrations (versioned, checksum-locked)
 static/             style.css (single-file design system, ~1 400 lines)
+scripts/            Python ML training, data export, and DB seeding utilities
 ```
+
+---
+
+## Docs
+
+| File | Contents |
+|:-----|:---------|
+| [`docs/improvements.md`](docs/improvements.md) | Full index of architectural decisions made across all epics. Treat as constraints before touching any module. |
+| [`docs/model-performance.md`](docs/model-performance.md) | ML model accuracy breakdown — MAE, tier distribution, feature importance. |
+| [`docs/model-improvement-plan.md`](docs/model-improvement-plan.md) | Rationale behind the v1.12.0 LightGBM improvements (bias correction, feature fixes, hyperparameter scaling). |
+| [`CLAUDE.md`](CLAUDE.md) | AI session seed — full architecture reference, module map, and key patterns. Useful as a human reference too. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup guide, code conventions, PR process, and notes on AI-assisted development. |
+| [`SECURITY.md`](SECURITY.md) | Secrets inventory and rotation procedure. |
 
 ---
 
@@ -186,3 +200,20 @@ static/             style.css (single-file design system, ~1 400 lines)
 **Predictability over cleverness.** The state machine, circuit breaker, and coalescer all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/demo`, `/metrics`, and the live event monitor.
 
 **Dependency hygiene.** `cargo deny` enforces licence compatibility and blocks known-vulnerable crate versions on every build. Secrets are documented with rotation cadence in `SECURITY.md`; none are committed or logged.
+
+---
+
+## AI-Assisted Development
+
+RailPredict was built with [Claude Code](https://claude.ai/code) — Anthropic's CLI for agentic software development. The bulk of the implementation, from the Darwin ingestion pipeline to the LightGBM ONNX inference layer, was written in pair with Claude Sonnet.
+
+**`CLAUDE.md`** is the session seed that gives Claude full architectural context before it writes any code — module map, key patterns, concurrency model, versioning protocol. It is the single most important file for understanding the project's design decisions in one place, and doubles as a human architecture reference.
+
+If you want to contribute using Claude Code:
+
+```bash
+# Claude Code reads CLAUDE.md automatically at session start
+claude   # from the repo root
+```
+
+The warm-up order in `CLAUDE.md` tells Claude what to read first. For significant new features, use `/plan` before implementation — Claude will propose and seek approval on a design before writing anything. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for more detail.

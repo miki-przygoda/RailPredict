@@ -1,26 +1,37 @@
 """
 seed_history.py — Backfill delay_history with synthetic historical data.
 
-Reads the top N origin_crs (TIPLOC) values already seen in delay_history,
-then generates 90 days of realistic historical records for each
-(origin_crs, uid, weekday, departure_hour) service-pattern.
+WHEN TO USE:
+    Run this when setting up a fresh instance before any live Darwin data has
+    collected. It gives the prediction engine enough history to start producing
+    confidence-weighted predictions immediately. Once you have 7+ days of real
+    Darwin data, this script is no longer needed — real observations will
+    naturally outweigh the synthetic ones (MAX_SAMPLES=90 per pattern, FIFO).
 
-Delay distribution is calibrated to published UK rail statistics:
-  - ~70 % on time (≤1 min)
-  - ~15 % slight delay (2–5 min)
-  - ~10 % moderate delay (6–20 min)
-  -  ~4 % significant delay (21–60 min)
-  -  ~1 % severe delay (>60 min)
+    Do NOT run this on top of an established DB — it will mix synthetic data
+    with real observations, degrading model accuracy.
 
-Time-of-day and per-station biases are applied.
-predicted_delay_mins is left NULL so the existing rows serve as training
-data only; the running model produces predictions for today's live trains.
+HOW IT WORKS:
+    Reads the top N origin_crs (TIPLOC) values already seen in delay_history,
+    then generates 90 days of realistic historical records for each
+    (origin_crs, uid, weekday, departure_hour) service-pattern.
+
+    Delay distribution is calibrated to published UK rail statistics:
+      - ~70 % on time (≤1 min)
+      - ~15 % slight delay (2–5 min)
+      - ~10 % moderate delay (6–20 min)
+      -  ~4 % significant delay (21–60 min)
+      -  ~1 % severe delay (>60 min)
+
+    Time-of-day and per-station biases are applied.
+    predicted_delay_mins is left NULL so rows serve as training data only.
 
 Usage:
-    python scripts/seed_history.py [--days 90] [--stations 100]
+    python scripts/seed_history.py [--days 90] [--stations 120]
 
-Or via make:
-    make seed-history
+Requirements:
+    pip install psycopg2-binary python-dotenv
+    DATABASE_URL set in .env or environment.
 """
 
 import argparse
