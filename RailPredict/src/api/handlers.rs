@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -12,7 +12,7 @@ use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
-use crate::types::TrainId;
+use crate::{export, types::TrainId};
 
 use super::{
     types::{ApiError, DepartureBoardEntry, HealthResponse, TrainSummary},
@@ -423,4 +423,40 @@ pub async fn station_search_handler(
         .map(|h| StationResult { crs: h.crs, name: h.name, trains_today: 0 })
         .collect();
     Ok(Json(results))
+}
+
+// ---------------------------------------------------------------------------
+// Report handler — GET /report
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ReportQuery {
+    #[serde(default = "default_days")]
+    days: u32,
+}
+
+fn default_days() -> u32 { 7 }
+
+/// `GET /report[?days=N]`
+///
+/// Generates and serves the self-contained delay-intelligence HTML report
+/// directly in the browser. Equivalent to `make export` but served live.
+pub async fn report_handler(
+    Query(params): Query<ReportQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match export::render_html(&state.db, params.days).await {
+        Ok(html) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            format!("Report generation failed: {e}"),
+        )
+            .into_response(),
+    }
 }

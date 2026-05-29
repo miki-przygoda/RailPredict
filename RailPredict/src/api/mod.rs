@@ -163,6 +163,7 @@ pub fn router(state: AppState) -> Router {
     // be throttled, and the dashboard is a lightweight status page that should always load.
     let infra_router = Router::new()
         .route("/", get(dashboard::dashboard_page))
+        .route("/report", get(handlers::report_handler))
         .route("/demo", get(demo::demo_page))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(handlers::health_handler))

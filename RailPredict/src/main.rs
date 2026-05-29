@@ -331,6 +331,11 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Clone before move — shares the same Arc<HistoricalStore>, so records from
+    // the heartbeat task are visible to the ingestion pipeline and the flush task.
+    let heartbeat_engine   = prediction_engine.clone();
+    let heartbeat_registry = Arc::clone(&registry);
+
     let initial_pipeline = IngestionPipeline::new(
         initial_stomp,
         config.watched_routes.clone(),
@@ -401,6 +406,44 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => {
                     tracing::error!(error = %e, "Cannot rebuild STOMP client — giving up reconnect");
                     break;
+                }
+            }
+        }
+    });
+
+    // --- On-time heartbeat recorder task ---
+    // Calls record_outcome on every poll-fired event for Active/Critical trains.
+    // Darwin only sends TS messages on delay changes — on-time trains go silent,
+    // giving zero training examples for "train is running fine". This task fills
+    // that gap: on each poll tick it reads the current status and feeds it into
+    // the historical store. The 5-min write throttle prevents flooding.
+    let mut heartbeat_rx = sc_tx.subscribe();
+    let heartbeat_token  = token.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = heartbeat_token.cancelled() => break,
+                result = heartbeat_rx.recv() => {
+                    let event = match result {
+                        Ok(e) => e,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(skipped = n, "Heartbeat recorder lagged");
+                            continue;
+                        }
+                        Err(_) => break,
+                    };
+                    // Only poll-fired events (same state → same state), not real promotions.
+                    if event.old_state != event.new_state {
+                        continue;
+                    }
+                    use railpredict::state_machine::train_state::TrainState;
+                    if !matches!(event.new_state, TrainState::Active | TrainState::Critical) {
+                        continue;
+                    }
+                    if let Some(entry) = heartbeat_registry.get(&event.train_id) {
+                        let status = entry.read().await;
+                        heartbeat_engine.record_outcome(&status);
+                    }
                 }
             }
         }
