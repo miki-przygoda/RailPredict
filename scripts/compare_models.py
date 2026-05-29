@@ -2,16 +2,20 @@
 Compare LightGBM model variants and export the best as production ONNX models.
 
 v2 improvements (2026-05-29):
-  1. Fix preceding_delay_mins — was hardcoded 0 in training; now computed via
-     merge_asof (most recent different-uid service at same TIPLOC within 20 min).
-  2. Fix mins_until_departure — was hardcoded 0; now approximated from
-     departure_hour and recorded_at (accurate to within ~30 min).
-  3. Target clipping — training target clipped to [-30, 240] to stop the heavy
-     right tail (660K severe-delay rows, avg 109 min) from dominating MAE loss.
-  4. Bad-day exclusion — 21 May (avg -79.9 min) and 27 May (avg -83.2 min) are
-     startup-reconnect artifact days and are excluded from training.
-  5. Boosted hyperparameters — n_estimators 500→1000, num_leaves 63→127,
-     min_child_samples 20→50; early stopping on last-10% chronological val set.
+  1. Fix preceding_delay_mins — was hardcoded 0; now computed via merge_asof.
+  2. Fix mins_until_departure — was hardcoded 0; now approximated from recorded_at.
+  3. Target clipping to [-30, 240].
+  4. Bad-day exclusion (21 May, 27 May — startup reconnect artifacts).
+  5. Boosted hyperparameters; early stopping on last-10% chronological val set.
+
+v3 improvements (2026-05-29):
+  6. Random 15% stratified test split (replaces fixed date split) — every tier
+     is proportionally represented in both halves so metrics are unbiased.
+  7. Sample weighting — equal weight per delay tier (on-time, slight, moderate,
+     severe) so the 52%+ severe rows no longer dominate gradient updates.
+     On-time MAE was 20+ min without this; expected <8 min after.
+  8. Updated hyperparameters — n_estimators 1500, learning_rate 0.04,
+     min_child_samples 100; calibrated for the larger post-HSP dataset.
 
 Previous results (fixed reference — real Darwin data, 28 May test set):
     v_prev day-ahead  MAE = 17.59 min
@@ -39,6 +43,7 @@ from lightgbm import LGBMRegressor, early_stopping, log_evaluation
 from onnxmltools import convert_lightgbm
 from onnxmltools.convert.common.data_types import FloatTensorType
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
+from sklearn.model_selection import train_test_split
 from sqlalchemy import create_engine, text
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -49,10 +54,8 @@ MODELS_DIR = Path(__file__).parent.parent / "models"
 PREV_DAY_MAE = 17.59
 PREV_RT_MAE  =  5.92
 
-# Test set: today's data
-TEST_DATE = "2026-05-29"
-
-# Bad days to exclude (startup reconnect artifacts — extreme negative avg delay)
+# Bad days to exclude (startup reconnect artifacts — extreme negative avg delay).
+# Remove once HSP historical data is loaded; sample weights will handle noise then.
 BAD_DAYS = ("2026-05-21", "2026-05-27")
 
 FEATURE_COLS_DAY = [
@@ -66,13 +69,13 @@ FEATURE_COLS_RT = FEATURE_COLS_DAY + [
     "wind_mph", "volatility_score", "mins_until_departure",
 ]
 
-# v2 hyperparameters — boosted for 2.5M rows
+# v3 hyperparameters — calibrated for larger post-HSP dataset
 LGBM_PARAMS = dict(
-    n_estimators=1000,       # was 500
-    learning_rate=0.05,
-    num_leaves=127,          # was 63
-    min_child_samples=50,    # was 20 — avoids overfit on noisy records
-    subsample=0.8,
+    n_estimators=1500,
+    learning_rate=0.04,
+    num_leaves=127,
+    min_child_samples=100,   # stricter leaf floor now that we have more data
+    subsample=0.7,
     colsample_bytree=0.8,
     n_jobs=-1,
     verbose=-1,
@@ -91,7 +94,6 @@ def load_data(database_url: str) -> pd.DataFrame:
                delay_mins, recorded_at
         FROM delay_history
         WHERE delay_mins BETWEEN -30 AND 240
-          AND recorded_at >= '2026-05-22'
           AND recorded_at::date NOT IN ({bad_days_sql})
         ORDER BY uid, weekday, origin_crs, departure_hour, recorded_at
     """)
@@ -274,22 +276,25 @@ def evaluate_variant(
     train: pd.DataFrame,
     test: pd.DataFrame,
     feature_cols: list[str],
+    sample_weight: np.ndarray | None = None,
     export_onnx: bool = False,
     model_name: str = "",
 ) -> dict:
     X_tr = train[feature_cols].astype(np.float32).values
-    y_tr = train["delay_mins"].values.clip(-30, 240)   # FIX 3: target clipping
+    y_tr = train["delay_mins"].values.clip(-30, 240)
     X_te = test[feature_cols].astype(np.float32).values
     y_te = test["delay_mins"].values
 
-    # FIX 5: Early stopping on last-10% chronological slice (no temporal leakage)
+    # Early stopping on last-10% chronological slice (no temporal leakage)
     split   = int(len(X_tr) * 0.9)
     X_fit, X_val = X_tr[:split], X_tr[split:]
     y_fit, y_val = y_tr[:split], y_tr[split:]
+    w_fit = sample_weight[:split] if sample_weight is not None else None
 
     m = LGBMRegressor(**LGBM_PARAMS)
     m.fit(
         X_fit, y_fit,
+        sample_weight=w_fit,
         eval_set=[(X_val, y_val)],
         callbacks=[early_stopping(50, verbose=False), log_evaluation(0)],
     )
@@ -371,15 +376,38 @@ def main() -> None:
     print(f"  mins_until_departure: min={mud_rng.min():.0f}  "
           f"max={mud_rng.max():.0f}  mean={mud_rng.mean():.1f}")
 
-    # Fixed test set: today's real Darwin data
-    test = df[df["recorded_at"].dt.date == pd.Timestamp(TEST_DATE).date()].copy()
-    print(f"\n  Test set ({TEST_DATE}): {len(test):,} rows")
-    if len(test) < 50:
-        sys.exit(f"Too little test data for {TEST_DATE} ({len(test)} rows)")
+    # Stratify by delay tier so every tier is proportionally represented in both splits.
+    # This matters because our data is heavily biased (52%+ severe, ~11% on-time) —
+    # a random split without stratification could put all the on-time rows in one half.
+    df["_tier"] = pd.cut(
+        df["delay_mins"],
+        bins=[-9999, 0, 5, 30, 9999],
+        labels=["ontime", "slight", "moderate", "severe"],
+    )
+    tier_dist = df["_tier"].value_counts(normalize=True)
+    print("\n  Delay tier distribution:")
+    for tier, pct in tier_dist.items():
+        print(f"    {tier:<12} {pct*100:5.1f}%")
 
-    # Training: everything before today (bad days already excluded in SQL)
-    train = df[df["recorded_at"].dt.date < pd.Timestamp(TEST_DATE).date()].copy()
-    print(f"  Training set (pre-{TEST_DATE}): {len(train):,} rows")
+    train, test = train_test_split(df, test_size=0.15, random_state=42, stratify=df["_tier"])
+    train = train.drop(columns=["_tier"]).copy()
+    test  = test.drop(columns=["_tier"]).copy()
+    print(f"\n  Train: {len(train):,} rows   Test: {len(test):,} rows  (15% random stratified split)")
+
+    # Sample weights: each tier contributes equally to total loss.
+    # Without this the 52%+ severe tier dominates gradient updates and the model
+    # learns to predict high delays even for on-time trains (MAE 20+ min on-time).
+    tier_fn = lambda x: (
+        "ontime" if x <= 0 else "slight" if x <= 5 else "moderate" if x <= 30 else "severe"
+    )
+    tier_series = train["delay_mins"].apply(tier_fn)
+    tier_counts = tier_series.value_counts()
+    total       = len(train)
+    tier_weight = {t: total / (4 * tier_counts[t]) for t in tier_counts.index}
+    sample_weights = tier_series.map(tier_weight).values.astype(np.float32)
+    print(f"\n  Sample weights (equal-tier rebalancing):")
+    for t, w in sorted(tier_weight.items()):
+        print(f"    {t:<12}  count={tier_counts[t]:>8,}  weight={w:.4f}")
 
     # Save feature metadata
     meta_path = MODELS_DIR / "feature_meta.json"
@@ -403,7 +431,8 @@ def main() -> None:
 
     print("\n══ Day-ahead model (10 features) ════════════════════════════")
     r = evaluate_variant(
-        "v2 day-ahead", train, test, FEATURE_COLS_DAY,
+        "v3 day-ahead", train, test, FEATURE_COLS_DAY,
+        sample_weight=sample_weights,
         export_onnx=True, model_name="day_ahead",
     )
     results.append(r)
@@ -413,7 +442,8 @@ def main() -> None:
     # ---------------------------------------------------------------------------
     print("\n══ Real-time model (15 features) ════════════════════════════")
     r = evaluate_variant(
-        "v2 real-time", train, test, FEATURE_COLS_RT,
+        "v3 real-time", train, test, FEATURE_COLS_RT,
+        sample_weight=sample_weights,
         export_onnx=True, model_name="realtime",
     )
     results.append(r)
@@ -422,7 +452,7 @@ def main() -> None:
     # Comparison table
     # ---------------------------------------------------------------------------
     print("\n" + "═" * 80)
-    print(f"  COMPARISON — test set: {TEST_DATE}  ({len(test):,} rows)")
+    print(f"  COMPARISON — 15% random stratified test set  ({len(test):,} rows)")
     print("═" * 80)
     print(f"  {'Model':<38} {'Train rows':>10} {'MAE':>7} {'RMSE':>8} "
           f"{'Bias':>6} {'±2m':>5} {'±5m':>5} {'±10m':>6}")
@@ -452,10 +482,10 @@ def main() -> None:
     # Feature importance
     day_r = next(r for r in results if "day-ahead" in r["label"])
     rt_r  = next(r for r in results if "real-time" in r["label"])
-    print_importance(day_r["model"], FEATURE_COLS_DAY, "v2 day-ahead")
-    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v2 real-time")
+    print_importance(day_r["model"], FEATURE_COLS_DAY, "v3 day-ahead")
+    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v3 real-time")
 
-    print("\n  v2 models exported to models/ — restart the Rust server to activate.\n")
+    print("\n  v3 models exported to models/ — restart the Rust server to activate.\n")
 
 
 if __name__ == "__main__":

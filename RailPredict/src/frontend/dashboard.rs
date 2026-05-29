@@ -206,6 +206,16 @@ fn render(
                         h3 { "Dev Console" }
                         p { "Ingest GTFS data, probe the train registry, and simulate checkout." }
                     }
+                    a .dash-nav-card href="/report" target="_blank" {
+                        div .dnc-icon { "📄" }
+                        h3 { "Delay Report (7d)" }
+                        p { "Generate a self-contained HTML snapshot of the last 7 days of delay and prediction data." }
+                    }
+                    a .dash-nav-card href="/report?days=1" target="_blank" {
+                        div .dnc-icon { "⚡" }
+                        h3 { "Live Report (24h)" }
+                        p { "Same report scoped to the last 24 hours — most recent delay and accuracy data." }
+                    }
                 }
             }
 

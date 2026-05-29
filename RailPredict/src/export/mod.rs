@@ -24,9 +24,14 @@ pub struct ExportSummary {
     pub total_observations: i64,
     pub total_services: i64,
     pub mean_actual_mins: Option<f64>,
+    pub mean_predicted_mins: Option<f64>,
     pub mean_abs_error_mins: Option<f64>,
     pub prediction_coverage_pct: Option<f64>,
     pub on_time_pct: Option<f64>,
+    /// % of predictions within ±5 min of actual delay (among predicted rows only).
+    pub pct_within_5min: Option<f64>,
+    /// % of predictions within ±10 min of actual delay (among predicted rows only).
+    pub pct_within_10min: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -34,6 +39,7 @@ pub struct DailyStat {
     pub day: String,
     pub observations: i64,
     pub mean_actual_mins: Option<f64>,
+    pub mean_predicted_mins: Option<f64>,
     pub mean_abs_error_mins: Option<f64>,
     pub on_time_pct: Option<f64>,
 }
@@ -77,9 +83,12 @@ struct SummaryRow {
     total_observations: i64,
     total_services: i64,
     mean_actual_mins: Option<f64>,
+    mean_predicted_mins: Option<f64>,
     mean_abs_error_mins: Option<f64>,
     prediction_coverage_pct: Option<f64>,
     on_time_pct: Option<f64>,
+    pct_within_5min: Option<f64>,
+    pct_within_10min: Option<f64>,
 }
 
 #[derive(FromRow)]
@@ -87,6 +96,7 @@ struct DailyRow {
     day: String,
     observations: i64,
     mean_actual_mins: Option<f64>,
+    mean_predicted_mins: Option<f64>,
     mean_abs_error_mins: Option<f64>,
     on_time_pct: Option<f64>,
 }
@@ -115,18 +125,21 @@ struct HourlyRow {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Query the database, render the HTML template, and write to `output_path`.
-/// `days` controls the look-back window (default 7).
-pub async fn export_site(db: &Db, output_path: &Path, days: u32) -> anyhow::Result<()> {
+/// Render the HTML report for `days` days of history and return it as a string.
+pub async fn render_html(db: &Db, days: u32) -> anyhow::Result<String> {
     let data = gather(db, days).await?;
-
-    let total_obs = data.summary.total_observations;
-    let total_svcs = data.summary.total_services;
     // Escape `</` so a stray `</script>` in a string field can't terminate the
     // host <script> tag. `\/` is a valid JSON escape for `/`, so the parsed
     // values are unchanged.
     let json = serde_json::to_string(&data)?.replace("</", "<\\/");
+    Ok(TEMPLATE.replace("__EXPORT_DATA__", &json))
+}
 
+/// Query the database, render the HTML template, and write to `output_path`.
+/// `days` controls the look-back window (default 7).
+pub async fn export_site(db: &Db, output_path: &Path, days: u32) -> anyhow::Result<()> {
+    let data = gather(db, days).await?;
+    let json = serde_json::to_string(&data)?.replace("</", "<\\/");
     let html = TEMPLATE.replace("__EXPORT_DATA__", &json);
 
     if let Some(parent) = output_path.parent()
@@ -138,15 +151,15 @@ pub async fn export_site(db: &Db, output_path: &Path, days: u32) -> anyhow::Resu
 
     tracing::info!(
         path = %output_path.display(),
-        observations = total_obs,
-        services = total_svcs,
+        observations = data.summary.total_observations,
+        services = data.summary.total_services,
         days,
         "Static site exported"
     );
     println!(
         "Exported {} observations across {} services → {}",
-        total_obs,
-        total_svcs,
+        data.summary.total_observations,
+        data.summary.total_services,
         output_path.display()
     );
     Ok(())
@@ -177,6 +190,8 @@ async fn query_summary(db: &Db, days: i32) -> anyhow::Result<ExportSummary> {
             COUNT(*)                                                             AS total_observations,
             COUNT(DISTINCT uid || '|' || origin_crs)                            AS total_services,
             AVG(delay_mins::FLOAT8)                                             AS mean_actual_mins,
+            AVG(predicted_delay_mins::FLOAT8)
+                FILTER (WHERE predicted_delay_mins IS NOT NULL)                 AS mean_predicted_mins,
             AVG(ABS(delay_mins::FLOAT8 - predicted_delay_mins::FLOAT8))
                 FILTER (WHERE predicted_delay_mins IS NOT NULL)                 AS mean_abs_error_mins,
             CASE WHEN COUNT(*) > 0
@@ -184,7 +199,13 @@ async fn query_summary(db: &Db, days: i32) -> anyhow::Result<ExportSummary> {
                  ELSE NULL END                                                  AS prediction_coverage_pct,
             CASE WHEN COUNT(*) > 0
                  THEN 100.0 * SUM(CASE WHEN delay_mins <= 0 THEN 1 ELSE 0 END)::FLOAT8 / COUNT(*)
-                 ELSE NULL END                                                  AS on_time_pct
+                 ELSE NULL END                                                  AS on_time_pct,
+            100.0 * SUM(CASE WHEN ABS(delay_mins - predicted_delay_mins) <= 5
+                                  AND predicted_delay_mins IS NOT NULL THEN 1 ELSE 0 END)::FLOAT8
+                / NULLIF(COUNT(predicted_delay_mins), 0)                        AS pct_within_5min,
+            100.0 * SUM(CASE WHEN ABS(delay_mins - predicted_delay_mins) <= 10
+                                  AND predicted_delay_mins IS NOT NULL THEN 1 ELSE 0 END)::FLOAT8
+                / NULLIF(COUNT(predicted_delay_mins), 0)                        AS pct_within_10min
         FROM delay_history
         WHERE recorded_at >= NOW() - $1::INT * INTERVAL '1 day'
           AND delay_mins BETWEEN -120 AND 600
@@ -195,12 +216,15 @@ async fn query_summary(db: &Db, days: i32) -> anyhow::Result<ExportSummary> {
     .await?;
 
     Ok(ExportSummary {
-        total_observations:     row.total_observations,
-        total_services:         row.total_services,
-        mean_actual_mins:       row.mean_actual_mins,
-        mean_abs_error_mins:    row.mean_abs_error_mins,
+        total_observations:      row.total_observations,
+        total_services:          row.total_services,
+        mean_actual_mins:        row.mean_actual_mins,
+        mean_predicted_mins:     row.mean_predicted_mins,
+        mean_abs_error_mins:     row.mean_abs_error_mins,
         prediction_coverage_pct: row.prediction_coverage_pct,
-        on_time_pct:            row.on_time_pct,
+        on_time_pct:             row.on_time_pct,
+        pct_within_5min:         row.pct_within_5min,
+        pct_within_10min:        row.pct_within_10min,
     })
 }
 
@@ -211,6 +235,8 @@ async fn query_daily(db: &Db, days: i32) -> anyhow::Result<Vec<DailyStat>> {
             TO_CHAR(recorded_at::DATE, 'YYYY-MM-DD')                           AS day,
             COUNT(*)                                                            AS observations,
             AVG(delay_mins::FLOAT8)                                            AS mean_actual_mins,
+            AVG(predicted_delay_mins::FLOAT8)
+                FILTER (WHERE predicted_delay_mins IS NOT NULL)                AS mean_predicted_mins,
             AVG(ABS(delay_mins::FLOAT8 - predicted_delay_mins::FLOAT8))
                 FILTER (WHERE predicted_delay_mins IS NOT NULL)                AS mean_abs_error_mins,
             CASE WHEN COUNT(*) > 0
@@ -228,11 +254,12 @@ async fn query_daily(db: &Db, days: i32) -> anyhow::Result<Vec<DailyStat>> {
     .await?;
 
     Ok(rows.into_iter().map(|r| DailyStat {
-        day:              r.day,
-        observations:     r.observations,
-        mean_actual_mins: r.mean_actual_mins,
+        day:                 r.day,
+        observations:        r.observations,
+        mean_actual_mins:    r.mean_actual_mins,
+        mean_predicted_mins: r.mean_predicted_mins,
         mean_abs_error_mins: r.mean_abs_error_mins,
-        on_time_pct:      r.on_time_pct,
+        on_time_pct:         r.on_time_pct,
     }).collect())
 }
 

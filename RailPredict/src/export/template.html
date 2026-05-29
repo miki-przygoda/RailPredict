@@ -3,39 +3,70 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RailPredict · Delay Intelligence</title>
+<title>RailPredict · Punctuality Report</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 :root {
   --bg:#1a1a1a; --surface:#242424; --surface-2:#2c2c2c;
   --border:#333; --green:#00c853; --amber:#ffab40; --red:#ef5350;
+  --blue:#4a9eff; --blue-dim:#1e2d45;
   --text:#e0e0e0; --muted:#888; --r:8px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:1.5rem 2rem}
 a{color:var(--green)}
 h1{font-size:1.5rem;font-weight:700;color:var(--green);letter-spacing:-0.02em}
-.meta{color:var(--muted);font-size:0.8rem;margin-top:0.3rem}
+.meta{color:var(--muted);font-size:.8rem;margin-top:.3rem}
+.intro{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin:1.25rem 0;font-size:.85rem;line-height:1.7;color:#bbb}
+.intro strong{color:var(--text)}
 .no-data{text-align:center;padding:4rem 2rem;color:var(--muted);border:1px solid var(--border);border-radius:var(--r);margin-top:2rem}
-.no-data h2{font-size:1.1rem;margin-bottom:0.5rem;color:var(--text)}
+.no-data h2{font-size:1.1rem;margin-bottom:.5rem;color:var(--text)}
+
+/* Section headers */
+.section-head{font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:1.5rem 0 .6rem}
+.section-head-hero{font-size:.8rem;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.06em;margin:1.5rem 0 .6rem;display:flex;align-items:center;gap:.5rem}
+.section-head-hero::before{content:'';display:inline-block;width:3px;height:1em;background:var(--blue);border-radius:2px}
 
 /* Cards */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.75rem;margin:1.5rem 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:.75rem;margin:0 0 1rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.2rem}
 .card-val{font-size:1.75rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
-.card-lbl{font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:.35rem}
-.c-green{color:var(--green)} .c-amber{color:var(--amber)} .c-red{color:var(--red)}
+.card-lbl{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:.35rem}
+.card-hint{font-size:.7rem;color:var(--muted);margin-top:.2rem}
+.card-verdict{font-size:.72rem;margin-top:.5rem;padding:.3rem .6rem;border-radius:5px;font-weight:600;display:inline-block}
+.vd-good{background:rgba(0,200,83,.12);color:#5dbb80;border:1px solid rgba(0,200,83,.25)}
+.vd-moderate{background:rgba(255,171,64,.12);color:#c9944a;border:1px solid rgba(255,171,64,.25)}
+.vd-poor{background:rgba(239,83,80,.12);color:#c06060;border:1px solid rgba(239,83,80,.25)}
+.card-hero{border-color:#2a3d60;background:#1c2535}
+.c-green{color:var(--green)} .c-amber{color:var(--amber)} .c-red{color:var(--red)} .c-blue{color:var(--blue)}
 
 /* Charts */
 .charts{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem}
 @media(max-width:680px){.charts{grid-template-columns:1fr}}
 .chart-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.2rem}
-.chart-title{font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.75rem}
+.chart-box-hero{border-color:#2a3d60;background:#1c2535}
+.chart-box-full{grid-column:1/-1}
+.chart-title{font-size:.8rem;font-weight:600;color:var(--text);margin-bottom:.2rem}
+.chart-sub{font-size:.72rem;color:var(--muted);margin-bottom:.75rem}
+
+/* Note boxes */
+.note{background:var(--blue-dim);border:1px solid #2a3d60;border-left:3px solid var(--blue);border-radius:var(--r);padding:.75rem 1rem;margin-top:.9rem;font-size:.78rem;line-height:1.65;color:#aabbd0}
+.note strong{color:#c8ddf5}
+.note p+p{margin-top:.35rem}
+.note-tags{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.5rem}
+.tag{display:inline-flex;align-items:center;gap:.25rem;padding:.15rem .5rem;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.tag-lower{background:rgba(0,200,83,.15);color:var(--green)}
+.tag-higher{background:rgba(0,200,83,.15);color:var(--green)}
+.tag-target{background:rgba(74,158,255,.15);color:var(--blue)}
+.tag-warn{background:rgba(255,171,64,.15);color:var(--amber)}
+.tag-good{background:rgba(0,200,83,.18);color:#5dbb80;border:1px solid rgba(0,200,83,.3)}
+.tag-moderate{background:rgba(255,171,64,.15);color:#c9944a;border:1px solid rgba(255,171,64,.25)}
+.tag-poor{background:rgba(239,83,80,.15);color:#c06060;border:1px solid rgba(239,83,80,.25)}
 
 /* Table */
-.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);margin-bottom:1.5rem}
-.tbl-header{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
-.tbl-title{font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);margin-bottom:.75rem}
+.tbl-header{display:flex;align-items:baseline;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--border);gap:1rem;flex-wrap:wrap}
+.tbl-title{font-size:.8rem;font-weight:600;color:var(--text)}
 .tbl-note{font-size:.72rem;color:var(--muted)}
 table{width:100%;border-collapse:collapse;font-size:.82rem}
 th{background:var(--surface-2);color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:.7rem;padding:.55rem .75rem;text-align:left;white-space:nowrap}
@@ -46,155 +77,521 @@ tr:hover td{background:var(--surface-2)}
 .ba{background:rgba(255,171,64,.15);color:var(--amber)}
 .br{background:rgba(239,83,80,.15);color:var(--red)}
 .dim{color:var(--muted)}
-code{font-family:"SF Mono","Fira Code",monospace;font-size:.8em;color:#8080a0}
 
 footer{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--border);font-size:.75rem;color:var(--muted)}
+
+/* Toolbar */
+.toolbar{display:flex;align-items:center;gap:.6rem;margin-bottom:1.25rem;flex-wrap:wrap}
+.toolbar-label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-right:.25rem}
+.btn{display:inline-flex;align-items:center;gap:.35rem;padding:.35rem .8rem;border-radius:6px;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;border:1px solid var(--border);background:var(--surface);color:var(--text);transition:background .15s,border-color .15s}
+.btn:hover{background:var(--surface-2);border-color:#555}
+.btn-primary{background:#1a3a28;border-color:var(--green);color:var(--green)}
+.btn-primary:hover{background:#1f4a30}
+.btn-day.active{background:#1a3a28;border-color:var(--green);color:var(--green)}
 </style>
 </head>
 <body>
-<h1>RailPredict · Delay Intelligence</h1>
+<h1>UK Rail Punctuality Report</h1>
 <p class="meta" id="meta-line"></p>
+<div class="toolbar" id="toolbar"></div>
 <div id="root"></div>
 
 <script>
 const DATA = __EXPORT_DATA__;
 
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const fmt1 = v => v != null ? v.toFixed(1) : '—';
+const fmt1   = v => v != null ? v.toFixed(1) : '—';
 const fmtPct = v => v != null ? v.toFixed(1) + '%' : '—';
 const pctCls = v => v == null ? '' : v >= 70 ? 'bg' : v >= 50 ? 'ba' : 'br';
 const cardPctCls = v => v == null ? '' : v >= 70 ? 'c-green' : v >= 50 ? 'c-amber' : 'c-red';
 const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
 const esc = s => String(s).replace(/[&<>"']/g, c => ESC_MAP[c]);
+const fmtHour = h => { const ap = h < 12 ? 'am' : 'pm'; return `${h % 12 || 12}${ap}`; };
+const tag = (cls, text) => `<span class="tag ${cls}">${text}</span>`;
 
 // ── Meta line ────────────────────────────────────────────────────────────────
 document.getElementById('meta-line').textContent =
-  `Last ${DATA.days_window} days · Generated ${DATA.generated_at}`;
+  `Showing the last ${DATA.days_window} day${DATA.days_window !== 1 ? 's' : ''} · Generated ${DATA.generated_at}`;
+
+// ── Toolbar (live only) ───────────────────────────────────────────────────────
+(function() {
+  const base = window.location.pathname.replace(/\/$/, '');
+  if (!base.endsWith('/report')) return;
+  const days = DATA.days_window;
+  const tb = document.getElementById('toolbar');
+  tb.innerHTML =
+    `<span class="toolbar-label">Time window</span>` +
+    [1,7,14,30].map(d =>
+      `<a class="btn btn-day${d === days ? ' active' : ''}" href="${base}?days=${d}">${d === 1 ? 'Today' : d + ' days'}</a>`
+    ).join('') +
+    `<a class="btn btn-primary" href="${base}?days=${days}">↻ Refresh report</a>`;
+})();
 
 // ── No-data guard ────────────────────────────────────────────────────────────
 if (DATA.summary.total_observations === 0) {
   document.getElementById('root').innerHTML = `
     <div class="no-data">
-      <h2>No delay data yet</h2>
-      <p>Connect RailPredict to the Darwin Push Port and leave it running for a day or two.<br>
-      Re-run <code>make export</code> once observations have accumulated.</p>
+      <h2>No data available yet</h2>
+      <p>The system is still collecting train data. Check back in a few hours once journeys have been recorded.</p>
     </div>`;
 } else {
   renderDashboard();
 }
 
 function renderDashboard() {
-  const s = DATA.summary;
+  const s       = DATA.summary;
+  const daily   = DATA.daily;
+  const hourly  = DATA.hourly;
+  const hasPred = s.pct_within_5min != null;
+
+  // ── Grading helpers ──────────────────────────────────────────────────────
+  // Returns 'good' | 'moderate' | 'poor'
+  function grade(val, goodThresh, modThresh, higherIsBetter) {
+    if (val == null) return null;
+    if (higherIsBetter) return val >= goodThresh ? 'good' : val >= modThresh ? 'moderate' : 'poor';
+    return val <= goodThresh ? 'good' : val <= modThresh ? 'moderate' : 'poor';
+  }
+
+  // Verdict chip shown on cards
+  function verdict(tier, goodText, modText, poorText) {
+    if (!tier) return '';
+    const map = {
+      good:     ['vd-good',     '✓ ' + goodText],
+      moderate: ['vd-moderate', '~ ' + modText],
+      poor:     ['vd-poor',     '⚠ ' + poorText],
+    };
+    const [cls, text] = map[tier];
+    return `<div class="card-verdict ${cls}">${text}</div>`;
+  }
+
+  // Grade tag shown in note boxes
+  function gradeTag(tier, goodText, modText, poorText) {
+    if (!tier) return '';
+    const map = {
+      good:     ['tag-good',     '✓ ' + goodText],
+      moderate: ['tag-moderate', '~ ' + modText],
+      poor:     ['tag-poor',     '⚠ ' + poorText],
+    };
+    const [cls, text] = map[tier];
+    return tag(cls, text);
+  }
+
+  // ── Pre-compute all grades ───────────────────────────────────────────────
+  const g5min   = grade(s.pct_within_5min,  60, 40, true);
+  const g10min  = grade(s.pct_within_10min, 75, 55, true);
+  const gErr    = grade(s.mean_abs_error_mins, 5, 10, false);
+  const gDelay  = grade(s.mean_actual_mins,    3,  8, false);
+  const gOnTime = grade(s.on_time_pct,        92, 75, true);
+  const gCov    = grade(s.prediction_coverage_pct, 80, 50, true);
+
+  // ── Pre-compute dynamic insight text ────────────────────────────────────
+
+  // Worst day by forecast error
+  const worstDay = daily.reduce((w, d) =>
+    d.mean_abs_error_mins != null && (!w || d.mean_abs_error_mins > w.mean_abs_error_mins) ? d : w, null);
+
+  // Error trend: compare average of first half vs second half of daily data
+  const validDaily = daily.filter(d => d.mean_abs_error_mins != null);
+  let trendText = '';
+  if (validDaily.length >= 4) {
+    const half = Math.floor(validDaily.length / 2);
+    const avg = arr => arr.reduce((s, d) => s + d.mean_abs_error_mins, 0) / arr.length;
+    const diff = avg(validDaily.slice(half)) - avg(validDaily.slice(0, half));
+    if (diff < -1)      trendText = ' Encouragingly, forecast accuracy has been <strong>improving</strong> across the period.';
+    else if (diff > 1)  trendText = ' Note that forecast accuracy has been <strong>getting worse</strong> recently — this may be worth investigating.';
+    else                trendText = ' Accuracy has been <strong>broadly stable</strong> across the period.';
+  }
+
+  // Overall prediction verdict sentence
+  let predOverallText = '';
+  if (s.pct_within_10min != null) {
+    if (g10min === 'good')
+      predOverallText = `<strong>${fmt1(s.pct_within_10min)}%</strong> of forecasts landed within 10 minutes of the actual delay — the model is performing well overall.`;
+    else if (g10min === 'moderate')
+      predOverallText = `<strong>${fmt1(s.pct_within_10min)}%</strong> of forecasts are within 10 minutes. Predictions are broadly useful but there is meaningful room to improve.`;
+    else
+      predOverallText = `Only <strong>${fmt1(s.pct_within_10min)}%</strong> of forecasts are within 10 minutes. The model may need more training data or retraining on recent delays.`;
+  }
+  const worstDayText = worstDay
+    ? ` The most challenging day was <strong>${worstDay.day}</strong>, where predictions were off by an average of <strong>${fmt1(worstDay.mean_abs_error_mins)} min</strong>.`
+    : '';
+
+  // Peak and best hours
+  const peakHour = hourly.reduce((p, h) =>
+    h.mean_delay != null && (!p || h.mean_delay > p.mean_delay) ? h : p, null);
+  const bestHour = hourly.filter(h => h.mean_delay != null && h.observations > 5)
+    .reduce((b, h) => (!b || h.mean_delay < b.mean_delay) ? h : b, null);
+
+  let hourlyInsight = '';
+  if (peakHour) {
+    const peakSeverity = peakHour.mean_delay > 15
+      ? 'significantly delayed'
+      : peakHour.mean_delay > 5 ? 'notably delayed' : 'slightly delayed';
+    hourlyInsight = `Trains departing around <strong>${fmtHour(peakHour.hour)}</strong> are the most ${peakSeverity}, running an average of <strong>${fmt1(peakHour.mean_delay)} min</strong> late.`;
+    if (bestHour && bestHour.hour !== peakHour.hour)
+      hourlyInsight += ` The most reliable slot is around <strong>${fmtHour(bestHour.hour)}</strong>, averaging just <strong>${fmt1(bestHour.mean_delay)} min</strong> late.`;
+  }
+
+  // Best and worst routes
+  const routesWithPct = DATA.services.filter(r => r.on_time_pct != null);
+  const bestRoute  = routesWithPct.reduce((b, r) => (!b || r.on_time_pct > b.on_time_pct) ? r : b, null);
+  const worstRoute = routesWithPct.filter(r => r.observations >= 5)
+    .reduce((w, r) => (!w || r.on_time_pct < w.on_time_pct) ? r : w, null);
+
+  let routeInsight = '';
+  if (bestRoute && worstRoute && bestRoute.uid !== worstRoute.uid) {
+    routeInsight = `<p>Best performing route in this period: <strong>${esc(bestRoute.uid)}</strong> departing ${esc(bestRoute.origin_crs)} on ${DAYS[bestRoute.weekday]} at ${fmtHour(bestRoute.departure_hour)} — <strong>${fmtPct(bestRoute.on_time_pct)}</strong> on time.
+      Most delayed: <strong>${esc(worstRoute.uid)}</strong> from ${esc(worstRoute.origin_crs)} — only <strong>${fmtPct(worstRoute.on_time_pct)}</strong> on time.</p>`;
+  }
+
+  // Overall punctuality verdict sentence
+  let punctualityText = '';
+  if (s.on_time_pct != null) {
+    if (gOnTime === 'good')
+      punctualityText = `At <strong>${fmt1(s.on_time_pct)}%</strong> on time, trains are meeting the national punctuality target of ~92%.`;
+    else if (gOnTime === 'moderate')
+      punctualityText = `At <strong>${fmt1(s.on_time_pct)}%</strong> on time, punctuality is below the national target of ~92% but most trains are still arriving on schedule.`;
+    else
+      punctualityText = `At <strong>${fmt1(s.on_time_pct)}%</strong> on time, punctuality is significantly below the national target of ~92%. Delays are a systemic issue in this period.`;
+  }
+
+  // ── Build HTML ────────────────────────────────────────────────────────────
   const root = document.getElementById('root');
+
   root.innerHTML = `
-    <div class="cards" id="cards"></div>
-    <div class="charts">
-      <div class="chart-box"><div class="chart-title">Daily observations &amp; mean prediction error</div><canvas id="c-daily" height="200"></canvas></div>
-      <div class="chart-box"><div class="chart-title">Mean delay by departure hour</div><canvas id="c-hourly" height="200"></canvas></div>
+    <div class="intro">
+      This report tracks how reliably UK trains ran and <strong>how accurately the system predicted delays</strong> over the selected period.
+      <strong>On-time</strong> means the train arrived no later than its scheduled time.
+      The most important figures are in the <em>Prediction accuracy</em> section below.
     </div>
+
+    ${hasPred ? `
+    <p class="section-head-hero">Prediction accuracy — how well did forecasts match reality?</p>
+    <div class="cards" id="cards-pred"></div>
+    <div class="charts">
+      <div class="chart-box chart-box-hero chart-box-full">
+        <div class="chart-title">Predicted delay vs actual delay — day by day</div>
+        <div class="chart-sub">The closer the blue and red lines are, the more accurate the forecasts were.</div>
+        <canvas id="c-pred" height="140"></canvas>
+        <div class="note">
+          <p><strong>How to read this:</strong> The <strong style="color:var(--blue)">blue line</strong> is what the system predicted the average delay would be each day. The <strong style="color:#ef5350">red dashed line</strong> is what actually happened. A wide gap on any day means the model was caught off-guard.</p>
+          <p>${predOverallText}${worstDayText}${trendText}</p>
+          <div class="note-tags">
+            ${gradeTag(g10min, 'Predictions are accurate', 'Predictions are broadly on track', 'Predictions need improvement')}
+            ${tag('tag-target', '✓ Lines overlapping = accurate')}
+            ${tag('tag-lower', '↓ Amber bars — lower is better')}
+          </div>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <p class="section-head">Overall performance</p>
+    <div class="cards" id="cards-summary"></div>
+
+    <p class="section-head">Trends over time</p>
+    <div class="charts">
+      <div class="chart-box">
+        <div class="chart-title">Daily journey volume &amp; forecast error</div>
+        <div class="chart-sub">How many trains ran each day and how far off the predictions were.</div>
+        <canvas id="c-daily" height="200"></canvas>
+        <div class="note" id="note-daily"></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Which departure times are most delayed?</div>
+        <div class="chart-sub">Average minutes late by hour of day.</div>
+        <canvas id="c-hourly" height="200"></canvas>
+        <div class="note" id="note-hourly"></div>
+      </div>
+    </div>
+
     <div class="tbl-wrap">
       <div class="tbl-header">
-        <span class="tbl-title">Service breakdown</span>
-        <span class="tbl-note">Top ${DATA.services.length} services by observation count</span>
+        <span class="tbl-title">Route breakdown</span>
+        <span class="tbl-note">Top ${DATA.services.length} busiest routes in the period</span>
       </div>
       <table><thead><tr>
-        <th>UID</th><th>Origin</th><th>Day</th><th>Departs</th>
-        <th>Obs</th><th>Actual avg</th><th>Predicted avg</th><th>Error avg</th>
-        <th>On-time</th><th>Coverage</th>
+        <th>Route ID</th><th>From</th><th>Day</th><th>Departs</th>
+        <th>Journeys</th><th>Actual delay ↓</th><th>Predicted delay</th><th>Forecast gap ↓</th>
+        <th>On time ↑</th>
       </tr></thead><tbody id="tbody"></tbody></table>
+    </div>
+    <div class="note" id="note-table" style="margin-top:0;margin-bottom:1.5rem;border-radius:0 0 var(--r) var(--r);border-top:none"></div>`;
+
+  // ── Fill dynamic note content ─────────────────────────────────────────────
+
+  // Daily chart note
+  const avgErrText = s.mean_abs_error_mins != null
+    ? (gErr === 'good'
+        ? `Overall, predictions average just <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — excellent accuracy.`
+        : gErr === 'moderate'
+          ? `Overall, predictions are averaging <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — reasonable, with room to improve.`
+          : `Overall, predictions are averaging <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — this is higher than ideal.`)
+    : '';
+  document.getElementById('note-daily').innerHTML = `
+    <p><strong>How to read this:</strong> Green bars show how many journeys ran each day — taller bars mean more trains. The <strong style="color:#ffab40">amber line</strong> is the forecast error (how many minutes off predictions were). The <strong style="color:#ef5350">red dashed line</strong> is the actual average delay.</p>
+    <p>${avgErrText}${trendText}</p>
+    <div class="note-tags">
+      ${gradeTag(gErr, 'Low forecast error', 'Moderate forecast error', 'High forecast error')}
+      ${tag('tag-lower', '↓ Both lines — lower is better')}
     </div>`;
 
-  // Summary cards
-  const cards = [
-    { val: s.total_observations.toLocaleString(), lbl: 'Observations', cls: '' },
-    { val: s.total_services.toLocaleString(),     lbl: 'Services tracked', cls: '' },
-    { val: fmt1(s.mean_actual_mins) + (s.mean_actual_mins != null ? ' min' : ''), lbl: 'Mean actual delay', cls: 'c-amber' },
-    { val: fmt1(s.mean_abs_error_mins) + (s.mean_abs_error_mins != null ? ' min' : ''), lbl: 'Mean prediction error', cls: 'c-green' },
-    { val: fmtPct(s.on_time_pct), lbl: 'On time (≤ 0 min)', cls: cardPctCls(s.on_time_pct) },
-    { val: fmtPct(s.prediction_coverage_pct), lbl: 'Predictions captured', cls: '' },
-  ];
-  document.getElementById('cards').innerHTML = cards.map(c =>
-    `<div class="card"><div class="card-val ${c.cls}">${c.val}</div><div class="card-lbl">${c.lbl}</div></div>`
-  ).join('');
+  // Hourly chart note
+  document.getElementById('note-hourly').innerHTML = `
+    <p><strong>How to read this:</strong> Each bar is one hour of the day. <strong style="color:rgba(0,200,83,.9)">Green</strong> = on time (under 1 min). <strong style="color:#ffab40">Amber</strong> = slight delay (1–5 min). <strong style="color:#ef5350">Red</strong> = significant delay (over 5 min).</p>
+    <p>${hourlyInsight || 'Not enough hourly data to identify a clear peak time.'}</p>
+    <div class="note-tags">
+      ${tag('tag-lower', '↓ Shorter bars — lower is better')}
+      ${peakHour && peakHour.mean_delay > 10
+        ? tag('tag-poor', `⚠ ${fmtHour(peakHour.hour)} is a high-delay slot`)
+        : peakHour
+          ? tag('tag-moderate', `Peak delays: ${fmtHour(peakHour.hour)}`)
+          : ''}
+    </div>`;
 
-  // Daily chart
-  const daily = DATA.daily;
+  // Table note
+  document.getElementById('note-table').innerHTML = `
+    <p><strong>Reading the columns:</strong> <strong>Actual delay</strong> — how late this route ran on average (lower is better). <strong>Predicted delay</strong> — what the system forecast. <strong>Forecast gap</strong> — difference between those two; lower means the prediction was accurate. <strong>On time</strong> — percentage arriving on schedule (higher is better).</p>
+    ${routeInsight}
+    <p>${punctualityText}</p>
+    <div class="note-tags">
+      ${gradeTag(gOnTime, 'Punctuality on target', 'Below target', 'Significantly below target')}
+      ${tag('tag-lower', '↓ Actual delay — lower is better')}
+      ${tag('tag-lower', '↓ Forecast gap — lower is better')}
+      ${tag('tag-higher', '↑ On time % — higher is better')}
+      ${tag('tag-target', '✓ Industry target: ~92%')}
+    </div>`;
+
+  // ── Prediction accuracy hero cards ────────────────────────────────────────
+  if (hasPred) {
+    const predCards = [
+      {
+        val: fmtPct(s.pct_within_5min),
+        lbl: 'Predictions within ±5 min',
+        hint: 'Share of forecasts that landed within 5 minutes of the actual delay.',
+        vd: verdict(g5min,
+          'Strong — most predictions are very close',
+          'Decent — roughly half are within 5 min',
+          'Low — the model often misses by more than 5 min'),
+        cls: cardPctCls(s.pct_within_5min),
+        hero: true,
+      },
+      {
+        val: fmtPct(s.pct_within_10min),
+        lbl: 'Predictions within ±10 min',
+        hint: 'Share of forecasts that landed within 10 minutes of the actual delay.',
+        vd: verdict(g10min,
+          'Strong — 3 in 4 forecasts are on target',
+          'Moderate — most forecasts are in the right range',
+          'Weak — many forecasts are significantly off'),
+        cls: cardPctCls(s.pct_within_10min),
+        hero: true,
+      },
+      {
+        val: fmt1(s.mean_abs_error_mins) + (s.mean_abs_error_mins != null ? ' min' : ''),
+        lbl: 'Avg prediction error',
+        hint: "How far off predictions were on average — the model's typical margin of error.",
+        vd: verdict(gErr,
+          'Excellent — under 5 min average error',
+          'Acceptable — under 10 min average error',
+          'High — consider retraining the model'),
+        cls: s.mean_abs_error_mins != null
+          ? (s.mean_abs_error_mins <= 5 ? 'c-green' : s.mean_abs_error_mins <= 10 ? 'c-amber' : 'c-red')
+          : '',
+        hero: true,
+      },
+      {
+        val: fmtPct(s.prediction_coverage_pct),
+        lbl: 'Journeys with a forecast',
+        hint: 'Share of all journeys where a prediction was available.',
+        vd: verdict(gCov,
+          'High coverage — most journeys have a forecast',
+          'Partial coverage — some journeys lack a forecast',
+          'Low coverage — many journeys have no forecast'),
+        cls: '',
+        hero: true,
+      },
+    ];
+    document.getElementById('cards-pred').innerHTML = predCards.map(c => `
+      <div class="card${c.hero ? ' card-hero' : ''}">
+        <div class="card-val ${c.cls}">${c.val}</div>
+        <div class="card-lbl">${c.lbl}</div>
+        <div class="card-hint">${c.hint}</div>
+        ${c.vd}
+      </div>`).join('');
+  }
+
+  // ── Summary cards ─────────────────────────────────────────────────────────
+  const summaryCards = [
+    {
+      val: s.total_observations.toLocaleString(),
+      lbl: 'Journeys tracked',
+      hint: 'Individual train arrivals recorded in this period.',
+      vd: '',
+    },
+    {
+      val: s.total_services.toLocaleString(),
+      lbl: 'Routes monitored',
+      hint: 'Distinct train services observed.',
+      vd: '',
+    },
+    {
+      val: fmt1(s.mean_actual_mins) + (s.mean_actual_mins != null ? ' min' : ''),
+      lbl: 'Average delay',
+      hint: 'How late trains ran on average across all journeys.',
+      vd: verdict(gDelay,
+        'Minimal delays — trains running close to schedule',
+        'Elevated delays — noticeably above schedule',
+        'Significant delays — a difficult period for punctuality'),
+      cls: s.mean_actual_mins != null && s.mean_actual_mins > 5 ? 'c-amber' : 'c-green',
+    },
+    {
+      val: fmtPct(s.on_time_pct),
+      lbl: 'Arrived on time',
+      hint: 'Share of trains that were not late at all.',
+      vd: verdict(gOnTime,
+        'On target — meeting the 92% national benchmark',
+        'Below target — most trains on time but short of 92%',
+        'Well below target — significant reliability issues'),
+      cls: cardPctCls(s.on_time_pct),
+    },
+  ];
+  document.getElementById('cards-summary').innerHTML = summaryCards.map(c => `
+    <div class="card">
+      <div class="card-val ${c.cls || ''}">${c.val}</div>
+      <div class="card-lbl">${c.lbl}</div>
+      <div class="card-hint">${c.hint}</div>
+      ${c.vd}
+    </div>`).join('');
+
+  // ── Predicted vs actual chart (hero) ─────────────────────────────────────
+  if (hasPred && daily.length && document.getElementById('c-pred')) {
+    new Chart(document.getElementById('c-pred'), {
+      data: {
+        labels: daily.map(d => d.day),
+        datasets: [
+          {
+            type:'line', label:'Predicted avg delay (min)',
+            data: daily.map(d => d.mean_predicted_mins),
+            borderColor:'#4a9eff', backgroundColor:'rgba(74,158,255,.08)',
+            borderWidth:2.5, pointRadius:4, tension:.3, fill:true, order:1,
+          },
+          {
+            type:'line', label:'Actual avg delay (min)',
+            data: daily.map(d => d.mean_actual_mins),
+            borderColor:'#ef5350', backgroundColor:'transparent',
+            borderWidth:2, borderDash:[5,3], pointRadius:4, tension:.3, order:2,
+          },
+          {
+            type:'bar', label:'Avg forecast error (min)',
+            data: daily.map(d => d.mean_abs_error_mins),
+            backgroundColor:'rgba(255,171,64,.25)', borderColor:'rgba(255,171,64,.5)',
+            borderWidth:1, yAxisID:'yb', order:3,
+          },
+        ],
+      },
+      options: {
+        responsive:true, interaction:{mode:'index',intersect:false},
+        plugins:{ legend:{labels:{color:'#888',font:{size:11}}} },
+        scales:{
+          x:{ticks:{color:'#888',font:{size:11}},grid:{color:'#2a3040'}},
+          y:{ticks:{color:'#888',font:{size:11}},grid:{color:'#2a3040'},title:{display:true,text:'minutes late',color:'#888',font:{size:10}}},
+          yb:{position:'right',ticks:{color:'#888',font:{size:11}},grid:{display:false},title:{display:true,text:'error (min)',color:'#888',font:{size:10}}},
+        },
+      },
+    });
+  }
+
+  // ── Daily volume + error chart ────────────────────────────────────────────
   if (daily.length) {
     new Chart(document.getElementById('c-daily'), {
       data: {
         labels: daily.map(d => d.day),
         datasets: [
-          { type:'bar',  label:'Observations',       data: daily.map(d=>d.observations),       backgroundColor:'rgba(0,200,83,.2)',  borderColor:'rgba(0,200,83,.5)', borderWidth:1, yAxisID:'yb', order:3 },
-          { type:'line', label:'Mean abs error (min)',data: daily.map(d=>d.mean_abs_error_mins), borderColor:'#ffab40', backgroundColor:'transparent', borderWidth:2, pointRadius:4, tension:.3, yAxisID:'ya', order:1 },
-          { type:'line', label:'Mean actual (min)',   data: daily.map(d=>d.mean_actual_mins),    borderColor:'#ef5350', backgroundColor:'transparent', borderWidth:1.5, borderDash:[4,3], pointRadius:3, tension:.3, yAxisID:'ya', order:2 },
-        ]
+          {
+            type:'bar', label:'Journeys recorded',
+            data: daily.map(d => d.observations),
+            backgroundColor:'rgba(0,200,83,.2)', borderColor:'rgba(0,200,83,.5)',
+            borderWidth:1, yAxisID:'yb', order:3,
+          },
+          {
+            type:'line', label:'Avg forecast error (min)',
+            data: daily.map(d => d.mean_abs_error_mins),
+            borderColor:'#ffab40', backgroundColor:'transparent',
+            borderWidth:2, pointRadius:4, tension:.3, yAxisID:'ya', order:1,
+          },
+          {
+            type:'line', label:'Avg actual delay (min)',
+            data: daily.map(d => d.mean_actual_mins),
+            borderColor:'#ef5350', backgroundColor:'transparent',
+            borderWidth:1.5, borderDash:[4,3], pointRadius:3, tension:.3, yAxisID:'ya', order:2,
+          },
+        ],
       },
       options: {
         responsive:true, interaction:{mode:'index',intersect:false},
         plugins:{ legend:{labels:{color:'#888',font:{size:11}}} },
         scales:{
           x:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'}},
-          ya:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'minutes',color:'#888',font:{size:10}}},
-          yb:{position:'right',ticks:{color:'#888',font:{size:11}},grid:{display:false},title:{display:true,text:'count',color:'#888',font:{size:10}}},
-        }
-      }
+          ya:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'minutes late',color:'#888',font:{size:10}}},
+          yb:{position:'right',ticks:{color:'#888',font:{size:11}},grid:{display:false},title:{display:true,text:'journeys',color:'#888',font:{size:10}}},
+        },
+      },
     });
   }
 
-  // Hourly chart
-  const hourly = DATA.hourly;
+  // ── Hourly chart ──────────────────────────────────────────────────────────
   if (hourly.length) {
     const delays = Array(24).fill(null);
     hourly.forEach(h => { delays[h.hour] = h.mean_delay; });
-    const labels = Array.from({length:24},(_,i)=>String(i).padStart(2,'0')+':xx');
     new Chart(document.getElementById('c-hourly'), {
       type:'bar',
       data: {
-        labels,
-        datasets:[{ label:'Mean delay (min)', data:delays,
-          backgroundColor: delays.map(d => d==null?'transparent':d<=1?'rgba(0,200,83,.6)':d<=5?'rgba(255,171,64,.6)':'rgba(239,83,80,.6)'),
-          borderWidth:0 }]
+        labels: Array.from({length:24}, (_, i) => fmtHour(i)),
+        datasets:[{
+          label:'Avg delay (min)', data:delays,
+          backgroundColor: delays.map(d =>
+            d == null ? 'transparent' : d <= 1 ? 'rgba(0,200,83,.6)' : d <= 5 ? 'rgba(255,171,64,.6)' : 'rgba(239,83,80,.6)'
+          ),
+          borderWidth:0,
+        }],
       },
       options:{
-        responsive:true, plugins:{legend:{display:false}},
+        responsive:true,
+        plugins:{legend:{display:false}, tooltip:{callbacks:{label: ctx => `${fmt1(ctx.raw)} min avg delay`}}},
         scales:{
           x:{ticks:{color:'#888',font:{size:10},maxRotation:45},grid:{color:'#333'}},
-          y:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'minutes',color:'#888',font:{size:10}}},
-        }
-      }
+          y:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'avg minutes late',color:'#888',font:{size:10}}},
+        },
+      },
     });
   }
 
-  // Service table
+  // ── Route table ───────────────────────────────────────────────────────────
   const tbody = document.getElementById('tbody');
   if (!DATA.services.length) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:2rem;color:#888">No service patterns observed yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:#888">No routes recorded yet.</td></tr>';
     return;
   }
-  tbody.innerHTML = DATA.services.map(s => {
-    const err = (s.mean_actual != null && s.mean_predicted != null)
-      ? Math.abs(s.mean_actual - s.mean_predicted).toFixed(1) + ' min' : '—';
-    const ot = fmtPct(s.on_time_pct);
-    const oc = pctCls(s.on_time_pct);
-    const cov = fmtPct(s.coverage_pct);
+  tbody.innerHTML = DATA.services.map(svc => {
+    const gap = (svc.mean_actual != null && svc.mean_predicted != null)
+      ? Math.abs(svc.mean_actual - svc.mean_predicted).toFixed(1) + ' min' : '—';
     return `<tr>
-      <td><code>${esc(s.uid)}</code></td>
-      <td>${esc(s.origin_crs)}</td>
-      <td>${DAYS[s.weekday] ?? esc(s.weekday)}</td>
-      <td>${String(s.departure_hour).padStart(2,'0')}:xx</td>
-      <td>${s.observations}</td>
-      <td class="${s.mean_actual>5?'c-amber':''}">${fmt1(s.mean_actual)} min</td>
-      <td class="dim">${fmt1(s.mean_predicted)} min</td>
-      <td>${err}</td>
-      <td><span class="badge ${oc}">${ot}</span></td>
-      <td class="dim">${cov}</td>
+      <td class="dim" style="font-size:.75rem">${esc(svc.uid)}</td>
+      <td>${esc(svc.origin_crs)}</td>
+      <td>${DAYS[svc.weekday] ?? esc(svc.weekday)}</td>
+      <td>${fmtHour(svc.departure_hour)}</td>
+      <td>${svc.observations.toLocaleString()}</td>
+      <td class="${svc.mean_actual > 5 ? 'c-amber' : 'c-green'}">${fmt1(svc.mean_actual)} min</td>
+      <td class="dim">${fmt1(svc.mean_predicted)} min</td>
+      <td>${gap}</td>
+      <td><span class="badge ${pctCls(svc.on_time_pct)}">${fmtPct(svc.on_time_pct)}</span></td>
     </tr>`;
   }).join('');
 }
 </script>
 <footer>
-  Generated by <strong>RailPredict</strong> &mdash; data from Darwin Push Port via National Rail.
-  Source: <a href="https://github.com/miki-przygoda/RailPredict">github.com/miki-przygoda/RailPredict</a>
+  Generated by <strong>RailPredict</strong> &mdash; live train data from National Rail.
+  <a href="https://github.com/miki-przygoda/RailPredict">github.com/miki-przygoda/RailPredict</a>
 </footer>
 </body>
 </html>

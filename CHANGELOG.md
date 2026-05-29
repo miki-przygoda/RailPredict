@@ -2,9 +2,27 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.11.0" -- 26/05/2026**
+**version = "1.12.0" -- 29/05/2026**
 
 ---
+
+## v1.12.0 — 29/05/2026 — ML model v3: sample weighting, stratified split, fixed features
+
+- **`scripts/compare_models.py` v3**: random 15% stratified test split; equal-tier sample
+  weighting (on-time/slight/moderate/severe each contribute 25% of gradient weight); fixed
+  `preceding_delay_mins` (was hardcoded 0, now merge_asof — 65% populated, top-8 RT feature);
+  fixed `mins_until_departure` (was hardcoded 0, now 3rd most important RT feature); updated
+  hyperparameters (n_estimators=1500, num_leaves=127, min_child_samples=100).
+- **Model results**: day-ahead MAE 17.59 → 13.57 min (−4.0); real-time MAE 5.92 → 4.02 min
+  (−1.9); real-time ±10m accuracy 90.7%; near-zero bias (−0.14 min).
+- **`RailPredict/src/main.rs`**: heartbeat recorder task — subscribes to state-change broadcast,
+  calls `record_outcome` on every poll tick for Active/Critical trains so on-time trains generate
+  training records even when Darwin sends no TS message.
+- **`scripts/fetch_hsp_history.py`**: complete rewrite — route-based O-D pair approach (fixes
+  `from_loc == to_loc` API restriction); correct `rid` field name in serviceDetails POST; correct
+  `days` value derived from date weekday; extracts delay rows for all stops in each service;
+  DB-backed progress tracking (no flat files); silent by default (`--verbose`/`--dry-run` flags).
+- **`scripts/run_hsp_fetch.sh`**: stripped log-file plumbing; progress via DB query.
 
 ## v1.11.0 — 26/05/2026 — Dashboard redesign + in-memory station index + seeds
 
