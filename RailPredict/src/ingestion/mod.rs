@@ -260,12 +260,20 @@ impl IngestionPipeline {
 
                     // Capture values needed inside the closure before borrowing self.
                     let estimated_dep = ts_update.estimated_departure;
+                    let working_dep = ts_update.working_departure;
                     let platform = ts_update.platform.clone();
                     let ts_uid = ts_update.uid.clone();
                     let ts_destination_crs = ts_update.destination_crs.clone();
                     let engine = self.ctx.prediction_engine.clone();
                     let db_for_persist = self.ctx.db.clone();
                     let persisted_set = Arc::clone(&self.ctx.persisted_predictions);
+
+                    // Look up predecessor delay BEFORE the registry.update() closure to avoid
+                    // holding nested locks (update holds a write lock; delay_for_rid needs a read
+                    // lock on a different entry — still a potential deadlock via DashMap shards).
+                    let predecessor_delay = self.ctx.registry
+                        .predecessor_rid(rid.as_str())
+                        .and_then(|prev| self.ctx.registry.delay_for_rid(&prev));
 
                     // Apply live fields to registry (works whether just registered or pre-existing).
                     self.ctx.registry
@@ -289,6 +297,10 @@ impl IngestionPipeline {
                             if status.uid.is_none() {
                                 status.uid = ts_uid;
                             }
+                            // Populate working_departure on first sighting.
+                            if status.working_departure.is_none() {
+                                status.working_departure = working_dep;
+                            }
                             // Update destination_crs whenever the parser emits one —
                             // the last Location in the TS message is always the destination.
                             if ts_destination_crs.is_some() {
@@ -298,6 +310,12 @@ impl IngestionPipeline {
                                 Stamped::with_version(Some(is_cancelled), darwin_version),
                             );
                             status.last_update_source = UpdateSource::StompFirehose;
+
+                            // Propagate fleet turnround (NP association) delay into volatility
+                            // context so prediction/engine.rs can use it as a feature.
+                            if predecessor_delay.is_some() {
+                                status.volatility.predecessor_train_delay_mins = predecessor_delay;
+                            }
 
                             // Feed confirmed delay into historical store, then refresh prediction.
                             engine.record_outcome(status);
@@ -345,6 +363,15 @@ impl IngestionPipeline {
                         };
                         let _ = self.ctx.state_change_tx.send(event);
                     }
+                }
+
+                ParsedUpdate::Association { prev_rid, next_rid } => {
+                    self.ctx.registry.record_association(&prev_rid, &next_rid);
+                    tracing::debug!(
+                        prev_rid = %prev_rid,
+                        next_rid = %next_rid,
+                        "Recorded NP turnround association"
+                    );
                 }
 
                 ParsedUpdate::Deactivated(deact) => {

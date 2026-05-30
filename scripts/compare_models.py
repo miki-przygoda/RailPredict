@@ -34,6 +34,13 @@ v5 improvements (2026-05-30):
   12. Historical weather from Open-Meteo archive API — wind_mph and
       volatility_score are now non-zero in training (were always 0 in v1–v4).
 
+v6 improvements (2026-05-30):
+  13. Fleet turnround (predecessor_train_delay) — delay of the same physical
+      train set on its previous trip, sourced from Darwin Association (NP) at
+      inference time.  Training proxy = preceding_delay_mins (same origin CRS,
+      different UID, within 20 min).  Real-time: 19→21 features (also adds
+      schedule_margin_mins from prior session, baked in simultaneously).
+
 Previous results (fixed reference — v3 real Darwin data, 30 May 2026):
     v3 day-ahead  MAE = 14.12 min
     v3 real-time  MAE =  4.09 min
@@ -86,6 +93,9 @@ FEATURE_COLS_RT = FEATURE_COLS_DAY + [
     "current_delay_mins", "preceding_delay_mins",
     "wind_mph", "volatility_score", "mins_until_departure",
     "station_congestion_30m",
+    "operator_cascade_delay",
+    "predecessor_train_delay",
+    "schedule_margin_mins",
 ]
 
 # v3 hyperparameters — calibrated for larger post-HSP dataset
@@ -269,6 +279,51 @@ def compute_station_congestion(df: pd.DataFrame) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Operator cascade feature — rolling 60-min mean delay at same operator (UID prefix)
+# ---------------------------------------------------------------------------
+
+def compute_operator_cascade(df: pd.DataFrame) -> np.ndarray:
+    """
+    For each record: mean delay of ALL trains from the same operator (first char of UID)
+    in the prior 60 minutes.  Returns 0.0 where fewer than 3 trains are in the window.
+
+    Uses an hour-bucket approach (shift by 1 h to avoid leakage): the feature for a
+    given row is the mean of all records in the *previous* complete hour for that
+    operator prefix.  This is O(n) and leak-free at the cost of ~30 min of lag vs
+    a true trailing window — acceptable for a coarse system-stress signal.
+    """
+    print("  Computing operator_cascade_delay …", end="", flush=True)
+
+    df2 = df[["uid", "recorded_at", "delay_mins"]].copy()
+    df2["op_prefix"]   = df2["uid"].str[0]
+    df2["hour_bucket"] = df2["recorded_at"].dt.floor("1h")
+
+    # Mean delay per (op_prefix, hour_bucket)
+    hour_mean = (
+        df2.groupby(["op_prefix", "hour_bucket"])["delay_mins"]
+        .agg(["mean", "count"])
+        .rename(columns={"mean": "op_mean", "count": "op_count"})
+        .reset_index()
+    )
+    # Shift the bucket forward by 1 h so each row gets the *previous* hour's stats
+    hour_mean["hour_bucket"] = hour_mean["hour_bucket"] + pd.Timedelta("1h")
+
+    merged = df2[["op_prefix", "hour_bucket"]].merge(
+        hour_mean, on=["op_prefix", "hour_bucket"], how="left"
+    )
+    # Zero out where fewer than 3 trains were in the window
+    result = np.where(
+        merged["op_count"].fillna(0) >= 3,
+        merged["op_mean"].fillna(0.0),
+        0.0,
+    ).astype(np.float32)
+
+    pct_nonzero = (result != 0).mean() * 100
+    print(f" done  ({pct_nonzero:.1f}% rows have an operator cascade signal)")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Historical weather — Open-Meteo archive API (Heathrow, UK proxy)
 # ---------------------------------------------------------------------------
 
@@ -361,6 +416,16 @@ def engineer_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
     # Station congestion: mean delay at origin CRS in prior 30 min
     df["station_congestion_30m"] = compute_station_congestion(df)
+    df["schedule_margin_mins"] = np.float32(0)
+
+    # Operator cascade: mean delay of same operator (UID prefix) in prior 60 min
+    df["operator_cascade_delay"] = compute_operator_cascade(df)
+
+    # predecessor_train_delay: proxy using preceding_delay_mins (same origin, different UID,
+    # within 20 min).  At training time we don't have Association turnround data, so this
+    # is the best available approximation.  The model will differentiate the two signals
+    # at inference time once live Association messages flow in.
+    df["predecessor_train_delay"] = df["preceding_delay_mins"].values.copy()
 
     meta = {"crs": crs_map, "uid_prefix": pfx_map}
     return df, meta
