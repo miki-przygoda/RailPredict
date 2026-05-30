@@ -105,6 +105,10 @@ pub struct TrainStatus {
     /// Current confirmed or estimated platform from Darwin.
     pub actual_platform: Stamped<Option<String>>,
 
+    /// Working timetable departure time (`wtd` from Darwin TS). Internal schedule
+    /// with engineering margins. `None` until first Darwin TS message with `wtd` is seen.
+    pub working_departure: Option<DateTime<Utc>>,
+
     // --- Cancellation ---
 
     pub is_cancelled: Stamped<Option<bool>>,
@@ -162,6 +166,7 @@ impl TrainStatus {
             predicted_delay_mins: Stamped::new(None),
             scheduled_platform: Stamped::new(None),
             actual_platform: Stamped::new(None),
+            working_departure: None,
             is_cancelled: Stamped::new(None),
             cancellation_reason: Stamped::new(None),
             origin_crs: None,

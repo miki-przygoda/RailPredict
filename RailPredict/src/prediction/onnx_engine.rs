@@ -1,14 +1,14 @@
 //! ONNX-backed ML prediction engine for day-ahead and real-time delay forecasting.
 //!
 //! Wraps two ONNX Runtime sessions loaded from `models/`:
-//!   - `day_ahead.onnx`  — pattern + 7-day rolling history (10 features)
-//!   - `realtime.onnx`   — above + live Darwin signals (15 features)
+//!   - `day_ahead.onnx`  — pattern + 7-day rolling history (12 features)
+//!   - `realtime.onnx`   — above + live Darwin signals (20 features)
 //!
 //! Both models are optional: if a file is absent the corresponding method returns `None`
 //! and `PredictionEngine` falls back to the trimmed-mean statistical engine.
 //!
 //! Feature vector layout is **index-ordered** and must exactly match the Python training
-//! script (`scripts/train_models.py`). Any change to column order in either place
+//! script (`scripts/compare_models.py`). Any change to column order in either place
 //! requires a corresponding change in the other.
 //!
 //! ## Day-ahead (12 features)
@@ -17,9 +17,10 @@
 //! [6] rolling_mean_7d  [7] rolling_std_7d  [8] rolling_ontime_7d  [9] sample_count_log
 //! [10] rolling_mean_14d  [11] rolling_std_14d
 //!
-//! ## Real-time (18 features = day-ahead + 6)
+//! ## Real-time (20 features = day-ahead + 8)
 //! [12] current_delay_mins  [13] preceding_delay_mins  [14] wind_mph
 //! [15] volatility_score    [16] mins_until_departure  [17] station_congestion_30m
+//! [18] operator_cascade_delay  [19] predecessor_train_delay
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -35,7 +36,7 @@ use ort::value::TensorRef;
 use super::types::{LiveFeatures, RollingStats, ServicePattern};
 
 const N_DAY_FEATURES: usize = 12;
-const N_RT_FEATURES:  usize = 18;
+const N_RT_FEATURES:  usize = 20;
 
 // ---------------------------------------------------------------------------
 // OnnxEngine
@@ -94,7 +95,7 @@ impl OnnxEngine {
         Ok(Self { day_ahead, realtime, crs_map, uid_prefix_map })
     }
 
-    /// Day-ahead prediction (10 features). Returns `None` when the model isn't loaded
+    /// Day-ahead prediction (12 features). Returns `None` when the model isn't loaded
     /// or the CRS code is unknown.
     pub fn predict_day_ahead(
         &self,
@@ -109,7 +110,7 @@ impl OnnxEngine {
         run_session(session, feats, N_DAY_FEATURES).map(|v| v + 6)
     }
 
-    /// Real-time prediction (18 features). Returns `None` when the model isn't loaded
+    /// Real-time prediction (20 features). Returns `None` when the model isn't loaded
     /// or the CRS code is unknown.
     pub fn predict_realtime(
         &self,
@@ -126,6 +127,8 @@ impl OnnxEngine {
         feats.push(live.volatility_score);
         feats.push(live.mins_until_departure);
         feats.push(live.station_congestion_30m);
+        feats.push(live.operator_cascade_delay);
+        feats.push(live.predecessor_train_delay);
         run_session(session, feats, N_RT_FEATURES)
     }
     // (sessions are Mutex<Session> so run_session can acquire &mut Session)

@@ -56,6 +56,15 @@ pub struct LiveFeatures {
     pub mins_until_departure: f32,
     /// Mean delay of all other trains at the same origin CRS in the last 30 min (0.0 if unknown).
     pub station_congestion_30m: f32,
+    /// Mean delay of all other trains from the same operator (UID prefix) in the last 60 min.
+    /// Zero if fewer than 3 other trains are in the window.
+    pub operator_cascade_delay: f32,
+    /// Delay of the predecessor service (same physical train set, previous trip).
+    /// Sourced from Darwin `Association` messages (category NP).  Zero if unknown.
+    pub predecessor_train_delay: f32,
+    /// Schedule performance allowance in minutes (ptd - wtd). Zero if unknown or no margin.
+    /// Positive = slack built in; train can absorb this many minutes of delay and still arrive on time.
+    pub schedule_margin_mins: f32,
 }
 
 /// The stable identity of a recurring rail service — independent of the daily RID.

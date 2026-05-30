@@ -192,9 +192,11 @@ impl PredictionEngine {
 
         // Station congestion: mean delay of all other trains at the same origin in the last 30 min.
         let station_congestion_30m = station_congestion(status, registry_snapshot);
+        // Operator cascade: mean delay of all other trains from the same operator in the last 60 min.
+        let operator_cascade_delay = operator_cascade(status, registry_snapshot);
 
         let ml_prediction: Option<i32> = if let Some(reported) = status.reported_delay_mins.value {
-            // Real-time: we have a live Darwin delay signal — use the 18-feature model.
+            // Real-time: we have a live Darwin delay signal — use the 19-feature model.
             let preceding = status
                 .volatility
                 .correlation_signal
@@ -208,13 +210,27 @@ impl PredictionEngine {
                 (false, false) => 0.0,
             };
             let mins_until = (dep.timestamp() - Utc::now().timestamp()) as f32 / 60.0;
+            let predecessor_train_delay = status
+                .volatility
+                .predecessor_train_delay_mins
+                .unwrap_or(0) as f32;
+            let schedule_margin_mins = match (status.scheduled_departure.value, status.working_departure) {
+                (ptd, Some(wtd)) => {
+                    let diff = (ptd - wtd).num_seconds() as f32 / 60.0;
+                    diff.clamp(0.0, 30.0)
+                }
+                _ => 0.0,
+            };
             let live = LiveFeatures {
-                current_delay_mins:     reported as f32,
-                preceding_delay_mins:   preceding,
-                wind_mph:               wind,
+                current_delay_mins:      reported as f32,
+                preceding_delay_mins:    preceding,
+                wind_mph:                wind,
                 volatility_score,
-                mins_until_departure:   mins_until,
+                mins_until_departure:    mins_until,
                 station_congestion_30m,
+                operator_cascade_delay,
+                predecessor_train_delay,
+                schedule_margin_mins,
             };
             self.onnx.predict_realtime(&pattern, &rolling, dep, &live)
                 .or_else(|| self.onnx.predict_day_ahead(&pattern, &rolling, dep))
@@ -356,6 +372,36 @@ fn station_congestion(status: &TrainStatus, snapshot: Option<&[TrainStatus]>) ->
         }
     }
     if count == 0 { 0.0 } else { sum as f32 / count as f32 }
+}
+
+// ---------------------------------------------------------------------------
+// Operator cascade helper
+// ---------------------------------------------------------------------------
+
+/// Mean delay of all trains sharing the same UID prefix (operator) as `status`,
+/// excluding `status` itself, whose `reported_delay_mins` was updated in the last
+/// 60 minutes.  Returns 0.0 when fewer than 3 qualifying trains exist, so the
+/// feature does not fire on thin evidence.
+fn operator_cascade(status: &TrainStatus, snapshot: Option<&[TrainStatus]>) -> f32 {
+    let Some(snapshot) = snapshot else { return 0.0 };
+    let Some(ref uid) = status.uid else { return 0.0 };
+    let prefix = uid.chars().next().unwrap_or('_');
+    let cutoff = Utc::now() - chrono::Duration::minutes(60);
+    let mut sum = 0i64;
+    let mut count = 0u32;
+    for t in snapshot {
+        if t.id == status.id { continue; }
+        let t_prefix = t.uid.as_deref()
+            .and_then(|u| u.chars().next())
+            .unwrap_or('_');
+        if t_prefix != prefix { continue; }
+        if t.reported_delay_mins.last_updated < cutoff { continue; }
+        if let Some(d) = t.reported_delay_mins.value {
+            sum += d as i64;
+            count += 1;
+        }
+    }
+    if count < 3 { 0.0 } else { sum as f32 / count as f32 }
 }
 
 // ---------------------------------------------------------------------------

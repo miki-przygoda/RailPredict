@@ -42,6 +42,13 @@ use crate::types::TrainId;
 pub enum ParsedUpdate {
     TrainStatus(TsUpdate),
     Deactivated(DeactivatedUpdate),
+    /// Parsed content of a Darwin `Association` message (category `NP` only).
+    Association {
+        /// RID of the incoming (previous working) service.
+        prev_rid: String,
+        /// RID of the outgoing (next part) service being formed from the same stock.
+        next_rid: String,
+    },
 }
 
 /// Parsed content of a Darwin `TS` message.
@@ -69,6 +76,9 @@ pub struct TsUpdate {
     /// CRS code of the last Location element (`tpl` attribute), used as destination station.
     /// Equals `station_crs` when the TS message contains only a single Location element.
     pub destination_crs: Option<String>,
+    /// Working timetable departure (`wtd` attribute on the first Location).
+    /// Internal schedule with engineering margins — typically ≤ `scheduled_departure`.
+    pub working_departure: Option<DateTime<Utc>>,
 }
 
 /// Parsed content of a Darwin `deactivated` message.
@@ -116,6 +126,11 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
     // Parser state: we track whether we're inside a TS block.
     let mut current_ts: Option<TsUpdate> = None;
 
+    // Parser state for Association messages (category NP only).
+    let mut current_assoc_category: Option<String> = None;
+    let mut current_assoc_main_rid: Option<String>  = None;
+    let mut current_assoc_next_rid: Option<String>  = None;
+
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
@@ -145,6 +160,7 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                             is_delayed: false,
                             station_crs: None,
                             destination_crs: None,
+                            working_departure: None,
                         });
                     }
                     b"Location" if current_ts.is_some() => {
@@ -155,6 +171,10 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                                 if let Some(ptd) = attr_opt(e, b"ptd") {
                                     ts.scheduled_departure =
                                         parse_hhmm_on_date(&ptd, ts.ssd).ok();
+                                }
+                                if let Some(wtd) = attr_opt(e, b"wtd") {
+                                    ts.working_departure =
+                                        parse_hhmm_on_date(&wtd, ts.ssd).ok();
                                 }
                                 ts.platform = attr_opt(e, b"plat");
                                 ts.station_crs = tpl.clone();
@@ -183,15 +203,44 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                             .map_err(|err| ParseError::InvalidRid(rid_str.clone(), err))?;
                         updates.push(ParsedUpdate::Deactivated(DeactivatedUpdate { rid }));
                     }
+                    b"Association" => {
+                        // Only track NP (Next Part / turnround) associations.
+                        current_assoc_category = attr_opt(e, b"category");
+                        current_assoc_main_rid = None;
+                        current_assoc_next_rid = None;
+                    }
+                    b"main" if current_assoc_category.as_deref() == Some("NP") => {
+                        current_assoc_main_rid = attr_opt(e, b"rid");
+                    }
+                    b"assoc" if current_assoc_category.as_deref() == Some("NP") => {
+                        current_assoc_next_rid = attr_opt(e, b"rid");
+                    }
                     _ => {}
                 }
             }
 
             Ok(Event::End(ref e)) => {
-                if e.local_name().as_ref() == b"TS"
-                    && let Some(ts) = current_ts.take()
-                {
-                    updates.push(ParsedUpdate::TrainStatus(ts));
+                match e.local_name().as_ref() {
+                    b"TS" => {
+                        if let Some(ts) = current_ts.take() {
+                            updates.push(ParsedUpdate::TrainStatus(ts));
+                        }
+                    }
+                    b"Association" => {
+                        // Emit only if this was an NP association and both RIDs were captured.
+                        if current_assoc_category.as_deref() == Some("NP") {
+                            if let (Some(prev_rid), Some(next_rid)) = (
+                                current_assoc_main_rid.take(),
+                                current_assoc_next_rid.take(),
+                            ) {
+                                updates.push(ParsedUpdate::Association { prev_rid, next_rid });
+                            }
+                        }
+                        current_assoc_category = None;
+                        current_assoc_main_rid = None;
+                        current_assoc_next_rid = None;
+                    }
+                    _ => {}
                 }
             }
 
@@ -418,6 +467,42 @@ mod tests {
   </uR>
 </Pport>"#;
         assert!(parse_pport(xml).is_err());
+    }
+
+    #[test]
+    fn parses_np_association_message() {
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR>
+    <Association tiploc="LEEDS" category="NP">
+      <main rid="202404170000001" wta="12:00" wtd="12:05"/>
+      <assoc rid="202404170000002" wta="12:30" wtd="12:35"/>
+    </Association>
+  </uR>
+</Pport>"#;
+        let (_, updates) = parse_pport(xml).unwrap();
+        assert_eq!(updates.len(), 1);
+        if let ParsedUpdate::Association { prev_rid, next_rid } = &updates[0] {
+            assert_eq!(prev_rid, "202404170000001");
+            assert_eq!(next_rid, "202404170000002");
+        } else {
+            panic!("expected Association update");
+        }
+    }
+
+    #[test]
+    fn non_np_association_is_ignored() {
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T12:00:00Z" version="16.0">
+  <uR>
+    <Association tiploc="LEEDS" category="JJ">
+      <main rid="202404170000001" wta="12:00" wtd="12:05"/>
+      <assoc rid="202404170000002" wta="12:30" wtd="12:35"/>
+    </Association>
+  </uR>
+</Pport>"#;
+        let (_, updates) = parse_pport(xml).unwrap();
+        assert_eq!(updates.len(), 0, "JJ (join) associations should be ignored");
     }
 
     #[test]
