@@ -2,9 +2,30 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.0" -- 29/05/2026**
+**version = "1.12.3" -- 30/05/2026**
 
 ---
+
+## v1.12.3 — 30/05/2026 — v7.5-HC models activated (3k trees, operator features)
+
+- **`scripts/compare_models.py` v7.5**: two new interaction features — `weekday_operator_enc`
+  (encodes weekday × UID-prefix pair; captures operator-specific day-of-week patterns) and
+  `operator_relative_delay` (rolling_mean_7d minus operator's training-set baseline; ranks
+  feature #7 in day-ahead importance). Day-ahead grows from 12 → 14 features; real-time from
+  20 → 22 features. `feature_meta.json` now includes `weekday_operator` and `operator_mean_delay` maps.
+- **HC model training**: high-convergence variant with 3k trees, lr=0.015, num_leaves=255,
+  min_child_samples=100. best_iter=3000 on both models (hitting budget; models are at data's
+  noise floor). Day-ahead MAE 13.94 → 13.47 min (−0.47); real-time MAE 4.06 → 3.97 min (−0.09).
+- **`models/day_ahead.onnx` + `models/realtime.onnx`**: promoted to HC versions (58MB each,
+  up from 14MB standard). Previous 14MB standard models remain as `*_hc.onnx` fallbacks.
+- **`RailPredict/src/prediction/onnx_engine.rs`**: updated feature vector (14/22 features),
+  added `weekday_operator_map` and `operator_mean_delay` maps with graceful fallback for
+  older `feature_meta.json` files. `+6` bias correction retained on day-ahead (bias −5.69 min).
+- **`scripts/generate_synthetic.py`**: fixed distribution parameters so on-time targets are
+  mathematically correct — good days N(−5,3)→95.3% on-time; average days 80% bimodal pool
+  → 70.8% on-time. Fixed `_load_pool()` to not SELECT non-existent columns from delay_history.
+- **`RailPredict/src/frontend/dashboard.rs`**: split "Delay records" metric into "Real delay
+  records" and "Synthetic records" (separate DB queries via `tokio::try_join!`).
 
 ## v1.12.0 — 29/05/2026 — ML model v3: sample weighting, stratified split, fixed features
 

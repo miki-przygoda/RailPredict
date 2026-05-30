@@ -10,6 +10,11 @@ use crate::api::AppState;
 
 use super::layout::base;
 
+struct DataCounts {
+    real: i64,
+    synthetic: i64,
+}
+
 struct PredStats {
     count_24h: i64,
     median_ae:  f64,
@@ -23,9 +28,9 @@ pub async fn dashboard_page(State(state): State<AppState>) -> Markup {
         .await
         .is_ok();
 
-    let (station_count, history_count, pred_stats) = tokio::join!(
+    let (station_count, data_counts, pred_stats) = tokio::join!(
         fetch_station_count(&state, db_ok),
-        fetch_history_count(&state, db_ok),
+        fetch_data_counts(&state, db_ok),
         fetch_pred_stats(&state, db_ok),
     );
 
@@ -34,7 +39,7 @@ pub async fn dashboard_page(State(state): State<AppState>) -> Markup {
 
     base("Dashboard", render(
         db_ok, stomp_ok, train_count,
-        station_count, history_count, pred_stats,
+        station_count, data_counts, pred_stats,
     ))
 }
 
@@ -46,12 +51,15 @@ async fn fetch_station_count(state: &AppState, db_ok: bool) -> Option<i64> {
         .ok()
 }
 
-async fn fetch_history_count(state: &AppState, db_ok: bool) -> Option<i64> {
+async fn fetch_data_counts(state: &AppState, db_ok: bool) -> Option<DataCounts> {
     if !db_ok { return None; }
-    sqlx::query_scalar("SELECT COUNT(*) FROM delay_history")
-        .fetch_one(&state.db)
-        .await
-        .ok()
+    let (real, synthetic) = tokio::try_join!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM delay_history")
+            .fetch_one(&state.db),
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM delay_history_synthetic")
+            .fetch_one(&state.db),
+    ).ok()?;
+    Some(DataCounts { real, synthetic })
 }
 
 async fn fetch_pred_stats(state: &AppState, db_ok: bool) -> Option<PredStats> {
@@ -86,7 +94,7 @@ fn render(
     stomp_ok: bool,
     train_count: usize,
     station_count: Option<i64>,
-    history_count: Option<i64>,
+    data_counts: Option<DataCounts>,
     pred_stats: Option<PredStats>,
 ) -> Markup {
     html! {
@@ -137,9 +145,17 @@ fn render(
                     }
                 }
                 div .dash-metric {
-                    span .dm-label { "Delay records" }
+                    span .dm-label { "Real delay records" }
                     span .dm-value {
-                        @if let Some(n) = history_count { (fmt_big(n)) } @else { "—" }
+                        @if let Some(ref c) = data_counts { (fmt_big(c.real)) } @else { "—" }
+                    }
+                }
+                div .dash-metric {
+                    span .dm-label { "Synthetic records" }
+                    span .dm-value {
+                        @if let Some(ref c) = data_counts {
+                            @if c.synthetic > 0 { (fmt_big(c.synthetic)) } @else { "—" }
+                        } @else { "—" }
                     }
                 }
                 @if let Some(p) = &pred_stats {
