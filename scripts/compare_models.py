@@ -95,7 +95,6 @@ FEATURE_COLS_RT = FEATURE_COLS_DAY + [
     "station_congestion_30m",
     "operator_cascade_delay",
     "predecessor_train_delay",
-    "schedule_margin_mins",
 ]
 
 # v3 hyperparameters — calibrated for larger post-HSP dataset

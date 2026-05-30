@@ -53,6 +53,11 @@ pub struct VolatilityContext {
     /// `None` when no qualifying preceding service was detected at prediction time, or
     /// when the prediction engine was called without a registry snapshot.
     pub correlation_signal: Option<CorrelationSignal>,
+
+    /// Reported delay of the predecessor service (same physical train set, previous trip).
+    /// Set from Darwin `Association` messages (category NP) via the ingestion pipeline.
+    /// `None` until a turnround association is seen for this RID.
+    pub predecessor_train_delay_mins: Option<i32>,
 }
 
 impl VolatilityContext {
@@ -64,6 +69,7 @@ impl VolatilityContext {
             historical_reliability: None,
             last_updated: Utc::now(),
             correlation_signal: None,
+            predecessor_train_delay_mins: None,
         }
     }
 

@@ -62,9 +62,6 @@ pub struct LiveFeatures {
     /// Delay of the predecessor service (same physical train set, previous trip).
     /// Sourced from Darwin `Association` messages (category NP).  Zero if unknown.
     pub predecessor_train_delay: f32,
-    /// Schedule performance allowance in minutes (ptd - wtd). Zero if unknown or no margin.
-    /// Positive = slack built in; train can absorb this many minutes of delay and still arrive on time.
-    pub schedule_margin_mins: f32,
 }
 
 /// The stable identity of a recurring rail service — independent of the daily RID.
