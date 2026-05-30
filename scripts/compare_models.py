@@ -17,9 +17,16 @@ v3 improvements (2026-05-29):
   8. Updated hyperparameters — n_estimators 1500, learning_rate 0.04,
      min_child_samples 100; calibrated for the larger post-HSP dataset.
 
-Previous results (fixed reference — real Darwin data, 28 May test set):
-    v_prev day-ahead  MAE = 17.59 min
-    v_prev real-time  MAE =  5.92 min
+v4 improvements (2026-05-30):
+  9. Timezone fix — bad-day filter now casts recorded_at to UTC before date
+     comparison; BST (+01:00) edge case was leaking ~11K rows from 21/27 May
+     into training despite those days being listed as excluded.
+  10. Per-day row cap (400K) — prevents any single day dominating gradients.
+      28 May had 1.34M of 3M rows (44% of training data); capped to 400K.
+
+Previous results (fixed reference — v3 real Darwin data, 30 May 2026):
+    v3 day-ahead  MAE = 14.12 min
+    v3 real-time  MAE =  4.09 min
 
 Usage:
     python compare_models.py
@@ -50,9 +57,12 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 MODELS_DIR = Path(__file__).parent.parent / "models"
 
-# Previous-model reference MAEs (for the comparison table)
-PREV_DAY_MAE = 17.59
-PREV_RT_MAE  =  5.92
+# Previous-model reference MAEs (for the comparison table) — v3 results
+PREV_DAY_MAE = 14.12
+PREV_RT_MAE  =  4.09
+
+# Maximum rows per calendar day — prevents any single day dominating gradients.
+MAX_ROWS_PER_DAY = 400_000
 
 # Bad days to exclude (startup reconnect artifacts — extreme negative avg delay).
 # Remove once HSP historical data is loaded; sample weights will handle noise then.
@@ -94,7 +104,7 @@ def load_data(database_url: str) -> pd.DataFrame:
                delay_mins, recorded_at
         FROM delay_history
         WHERE delay_mins BETWEEN -30 AND 240
-          AND recorded_at::date NOT IN ({bad_days_sql})
+          AND (recorded_at AT TIME ZONE 'UTC')::date NOT IN ({bad_days_sql})
         ORDER BY uid, weekday, origin_crs, departure_hour, recorded_at
     """)
     with engine.connect() as conn:
@@ -102,6 +112,17 @@ def load_data(database_url: str) -> pd.DataFrame:
     if df["recorded_at"].dt.tz is None:
         df["recorded_at"] = df["recorded_at"].dt.tz_localize("UTC")
     print(f"  Loaded {len(df):,} observations  (excluded: {', '.join(BAD_DAYS)})")
+
+    # Cap rows per calendar day to prevent any single day dominating gradients.
+    before = len(df)
+    df = (
+        df.groupby(df["recorded_at"].dt.date, group_keys=False)
+        .apply(lambda g: g.sample(n=min(len(g), MAX_ROWS_PER_DAY), random_state=42))
+        .reset_index(drop=True)
+    )
+    if len(df) < before:
+        print(f"  Per-day cap ({MAX_ROWS_PER_DAY:,}/day): {before:,} → {len(df):,} rows")
+
     return df
 
 
@@ -431,7 +452,7 @@ def main() -> None:
 
     print("\n══ Day-ahead model (10 features) ════════════════════════════")
     r = evaluate_variant(
-        "v3 day-ahead", train, test, FEATURE_COLS_DAY,
+        "v4 day-ahead", train, test, FEATURE_COLS_DAY,
         sample_weight=sample_weights,
         export_onnx=True, model_name="day_ahead",
     )
@@ -442,7 +463,7 @@ def main() -> None:
     # ---------------------------------------------------------------------------
     print("\n══ Real-time model (15 features) ════════════════════════════")
     r = evaluate_variant(
-        "v3 real-time", train, test, FEATURE_COLS_RT,
+        "v4 real-time", train, test, FEATURE_COLS_RT,
         sample_weight=sample_weights,
         export_onnx=True, model_name="realtime",
     )
@@ -460,8 +481,8 @@ def main() -> None:
 
     # Fixed reference row for the previous model
     for label, mae, rmse in [
-        ("v_prev day-ahead (28 May train)", PREV_DAY_MAE, "—"),
-        ("v_prev real-time (28 May train)", PREV_RT_MAE,  "—"),
+        ("v3 day-ahead (30 May train)", PREV_DAY_MAE, "—"),
+        ("v3 real-time (30 May train)", PREV_RT_MAE,  "—"),
     ]:
         print(f"  {label:<38} {'~1.4M':>10} {mae:>7.2f} {str(rmse):>8}  {'—':>5}  {'—':>5}  {'—':>5}  {'—':>6}")
 
@@ -482,10 +503,10 @@ def main() -> None:
     # Feature importance
     day_r = next(r for r in results if "day-ahead" in r["label"])
     rt_r  = next(r for r in results if "real-time" in r["label"])
-    print_importance(day_r["model"], FEATURE_COLS_DAY, "v3 day-ahead")
-    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v3 real-time")
+    print_importance(day_r["model"], FEATURE_COLS_DAY, "v4 day-ahead")
+    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v4 real-time")
 
-    print("\n  v3 models exported to models/ — restart the Rust server to activate.\n")
+    print("\n  v4 models exported to models/ — restart the Rust server to activate.\n")
 
     # Write benchmarks.json — picked up by the export module for the index page.
     from datetime import datetime as _dt
