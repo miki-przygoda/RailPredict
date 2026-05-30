@@ -24,6 +24,16 @@ v4 improvements (2026-05-30):
      Per-day cap was tested and reverted — it removed 44% of training data and
      hurt the day-ahead model (MAE 14.12 → 20.57). More data wins.
 
+v5 improvements (2026-05-30):
+  10. 14-day rolling stats (rolling_mean_14d, rolling_std_14d) — longer window
+      captures multi-week route patterns; day-ahead: 10→12 features,
+      real-time: 15→18 features.
+  11. Station congestion (station_congestion_30m) — mean delay of all trains at
+      the same origin CRS in the prior 30 min; real-time model only. Captures
+      network-level disruption beyond the single preceding-service signal.
+  12. Historical weather from Open-Meteo archive API — wind_mph and
+      volatility_score are now non-zero in training (were always 0 in v1–v4).
+
 Previous results (fixed reference — v3 real Darwin data, 30 May 2026):
     v3 day-ahead  MAE = 14.12 min
     v3 real-time  MAE =  4.09 min
@@ -69,11 +79,13 @@ FEATURE_COLS_DAY = [
     "weekday", "departure_hour", "month", "is_peak",
     "origin_crs_enc", "uid_prefix_enc",
     "rolling_mean_7d", "rolling_std_7d", "rolling_ontime_7d", "sample_count_log",
+    "rolling_mean_14d", "rolling_std_14d",
 ]
 
 FEATURE_COLS_RT = FEATURE_COLS_DAY + [
     "current_delay_mins", "preceding_delay_mins",
     "wind_mph", "volatility_score", "mins_until_departure",
+    "station_congestion_30m",
 ]
 
 # v3 hyperparameters — calibrated for larger post-HSP dataset
@@ -119,12 +131,15 @@ def load_data(database_url: str) -> pd.DataFrame:
 def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     print("  Computing rolling features …", end="", flush=True)
     n = len(df)
-    rolling_mean   = np.zeros(n, dtype=np.float32)
-    rolling_std    = np.zeros(n, dtype=np.float32)
-    rolling_ontime = np.zeros(n, dtype=np.float32)
-    rolling_count  = np.zeros(n, dtype=np.int32)
+    rolling_mean    = np.zeros(n, dtype=np.float32)
+    rolling_std     = np.zeros(n, dtype=np.float32)
+    rolling_ontime  = np.zeros(n, dtype=np.float32)
+    rolling_count   = np.zeros(n, dtype=np.int32)
+    rolling_mean14  = np.zeros(n, dtype=np.float32)
+    rolling_std14   = np.zeros(n, dtype=np.float32)
 
-    seven_days_ns = np.timedelta64(7, "D")
+    seven_days_ns    = np.timedelta64(7,  "D")
+    fourteen_days_ns = np.timedelta64(14, "D")
 
     for _, group in df.groupby(
         ["uid", "weekday", "origin_crs", "departure_hour"], sort=False
@@ -136,25 +151,35 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
         cum_sum    = np.concatenate([[0.0], np.cumsum(delays)])
         cum_sq     = np.concatenate([[0.0], np.cumsum(delays ** 2)])
         cum_ontime = np.concatenate([[0.0], np.cumsum(delays <= 0).astype(float)])
-        left_bounds = np.searchsorted(times, times - seven_days_ns, side="left")
+        left_7d    = np.searchsorted(times, times - seven_days_ns,    side="left")
+        left_14d   = np.searchsorted(times, times - fourteen_days_ns, side="left")
 
         for j in range(len(idx)):
-            l = left_bounds[j]
-            k = j - l
-            if k > 0:
-                s  = cum_sum[j]    - cum_sum[l]
-                s2 = cum_sq[j]     - cum_sq[l]
-                so = cum_ontime[j] - cum_ontime[l]
-                m  = s / k
+            l7, l14 = left_7d[j], left_14d[j]
+            k7  = j - l7
+            k14 = j - l14
+            if k7 > 0:
+                s  = cum_sum[j] - cum_sum[l7]
+                s2 = cum_sq[j]  - cum_sq[l7]
+                so = cum_ontime[j] - cum_ontime[l7]
+                m  = s / k7
                 rolling_mean[idx[j]]   = np.float32(m)
-                rolling_std[idx[j]]    = np.float32(np.sqrt(max(0.0, s2 / k - m * m)))
-                rolling_ontime[idx[j]] = np.float32((so / k) * 100.0)
-            rolling_count[idx[j]] = k
+                rolling_std[idx[j]]    = np.float32(np.sqrt(max(0.0, s2 / k7 - m * m)))
+                rolling_ontime[idx[j]] = np.float32((so / k7) * 100.0)
+            rolling_count[idx[j]] = k7
+            if k14 > 0:
+                s14  = cum_sum[j] - cum_sum[l14]
+                s2_14 = cum_sq[j] - cum_sq[l14]
+                m14  = s14 / k14
+                rolling_mean14[idx[j]] = np.float32(m14)
+                rolling_std14[idx[j]]  = np.float32(np.sqrt(max(0.0, s2_14 / k14 - m14 * m14)))
 
     df["rolling_mean_7d"]   = rolling_mean
     df["rolling_std_7d"]    = rolling_std
     df["rolling_ontime_7d"] = rolling_ontime
     df["sample_count_log"]  = np.log1p(rolling_count).astype(np.float32)
+    df["rolling_mean_14d"]  = rolling_mean14
+    df["rolling_std_14d"]   = rolling_std14
     print(" done")
     return df
 
@@ -209,6 +234,95 @@ def compute_preceding_delay(df: pd.DataFrame) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Station congestion feature — rolling 30-min mean delay at same origin CRS
+# ---------------------------------------------------------------------------
+
+def compute_station_congestion(df: pd.DataFrame) -> np.ndarray:
+    """
+    For each record: mean delay of ALL trains at the same origin_crs in the
+    prior 30 minutes (inclusive of same UID — captures station-level chaos,
+    not just a single preceding service).  Returns float32 array (0 = no signal).
+    """
+    print("  Computing station_congestion_30m …", end="", flush=True)
+
+    df_sorted = df[["origin_crs", "recorded_at", "delay_mins"]].copy()
+    df_sorted = df_sorted.sort_values("recorded_at").reset_index(drop=False)
+
+    result = np.zeros(len(df), dtype=np.float32)
+    thirty_min = np.timedelta64(30, "m")
+
+    for _, group in df_sorted.groupby("origin_crs", sort=False):
+        times     = group["recorded_at"].values
+        delays    = group["delay_mins"].values.astype(np.float64)
+        orig_idx  = group["index"].values
+        cum_sum   = np.concatenate([[0.0], np.cumsum(delays)])
+        left_bounds = np.searchsorted(times, times - thirty_min, side="left")
+        for j in range(len(group)):
+            l = left_bounds[j]
+            k = j - l
+            if k > 0:
+                result[orig_idx[j]] = np.float32((cum_sum[j] - cum_sum[l]) / k)
+
+    pct_nonzero = (result != 0).mean() * 100
+    print(f" done  ({pct_nonzero:.1f}% rows have a congestion signal)")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Historical weather — Open-Meteo archive API (Heathrow, UK proxy)
+# ---------------------------------------------------------------------------
+
+def fetch_training_weather(start_date: str, end_date: str) -> dict:
+    """
+    Fetch hourly wind speed (mph) from Open-Meteo archive API for the training
+    period, anchored at London Heathrow (51.4775, -0.4614) as a UK-wide proxy.
+    Returns a dict keyed by "YYYY-MM-DDTHH:00" → wind_mph float.
+    Falls back to an empty dict on any network error.
+    """
+    import urllib.request as _req
+    url = (
+        "https://archive-api.open-meteo.com/v1/archive"
+        f"?latitude=51.4775&longitude=-0.4614"
+        f"&start_date={start_date}&end_date={end_date}"
+        "&hourly=wind_speed_10m&wind_speed_unit=mph&timezone=UTC"
+    )
+    try:
+        with _req.urlopen(url, timeout=30) as resp:
+            data = json.loads(resp.read())
+        times  = data["hourly"]["time"]
+        speeds = data["hourly"]["wind_speed_10m"]
+        lookup = {t: float(s) if s is not None else 0.0 for t, s in zip(times, speeds)}
+        print(f"  Fetched {len(lookup)} hourly wind readings from Open-Meteo")
+        return lookup
+    except Exception as exc:
+        print(f"  Warning: weather fetch failed ({exc}) — wind features will be 0")
+        return {}
+
+
+def assign_weather_features(df: pd.DataFrame, weather_lookup: dict) -> pd.DataFrame:
+    """Assign wind_mph and volatility_score from the hourly lookup dict."""
+    if not weather_lookup:
+        df["wind_mph"]         = np.float32(0)
+        df["volatility_score"] = np.float32(0)
+        return df
+
+    def _hour_key(ts):
+        return ts.strftime("%Y-%m-%dT%H:00")
+
+    wind = df["recorded_at"].apply(_hour_key).map(weather_lookup).fillna(0.0)
+    df["wind_mph"] = wind.astype(np.float32)
+    df["volatility_score"] = pd.cut(
+        df["wind_mph"],
+        bins=[-1, 20, 35, 50, 9999],
+        labels=[0, 1, 2, 3],
+    ).astype(np.float32)
+    nonzero = (df["wind_mph"] > 0).mean() * 100
+    print(f"  Weather assigned: mean wind={df['wind_mph'].mean():.1f} mph  "
+          f"non-zero={nonzero:.1f}%")
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Feature engineering
 # ---------------------------------------------------------------------------
 
@@ -245,9 +359,8 @@ def engineer_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     mins_raw = np.where(mins_raw < -720.0, mins_raw + 1440.0, mins_raw)
     df["mins_until_departure"] = mins_raw.clip(-360.0, 360.0).astype(np.float32)
 
-    # Weather features — no historical weather in DB; stay zero
-    df["wind_mph"]         = np.float32(0)
-    df["volatility_score"] = np.float32(0)
+    # Station congestion: mean delay at origin CRS in prior 30 min
+    df["station_congestion_30m"] = compute_station_congestion(df)
 
     meta = {"crs": crs_map, "uid_prefix": pfx_map}
     return df, meta
@@ -369,11 +482,17 @@ def main() -> None:
     for d, row in by_day.iterrows():
         print(f"    {d}  {row['rows']:>8,} rows  avg={row['avg_delay']:+.1f} min")
 
+    # Fetch historical weather for the training period (Open-Meteo archive, UTC)
+    print("\n══ Weather features ══════════════════════════════════════════")
+    dates = df["recorded_at"].dt.date
+    weather = fetch_training_weather(str(dates.min()), str(dates.max()))
+
     print("\n══ Rolling features ══════════════════════════════════════════")
     df = add_rolling_features(df)
 
     print("\n══ Feature engineering ═══════════════════════════════════════")
     df, meta = engineer_features(df)
+    df = assign_weather_features(df, weather)
 
     # Spot-check the two fixed features
     prec_pct = (df["preceding_delay_mins"] != 0).mean() * 100
@@ -438,7 +557,7 @@ def main() -> None:
 
     print("\n══ Day-ahead model (10 features) ════════════════════════════")
     r = evaluate_variant(
-        "v4 day-ahead", train, test, FEATURE_COLS_DAY,
+        "v5 day-ahead", train, test, FEATURE_COLS_DAY,
         sample_weight=sample_weights,
         export_onnx=True, model_name="day_ahead",
     )
@@ -449,7 +568,7 @@ def main() -> None:
     # ---------------------------------------------------------------------------
     print("\n══ Real-time model (15 features) ════════════════════════════")
     r = evaluate_variant(
-        "v4 real-time", train, test, FEATURE_COLS_RT,
+        "v5 real-time", train, test, FEATURE_COLS_RT,
         sample_weight=sample_weights,
         export_onnx=True, model_name="realtime",
     )
@@ -489,8 +608,8 @@ def main() -> None:
     # Feature importance
     day_r = next(r for r in results if "day-ahead" in r["label"])
     rt_r  = next(r for r in results if "real-time" in r["label"])
-    print_importance(day_r["model"], FEATURE_COLS_DAY, "v4 day-ahead")
-    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v4 real-time")
+    print_importance(day_r["model"], FEATURE_COLS_DAY, "v5 day-ahead")
+    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v5 real-time")
 
     print("\n  v4 models exported to models/ — restart the Rust server to activate.\n")
 

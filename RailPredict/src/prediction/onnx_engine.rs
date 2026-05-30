@@ -11,14 +11,15 @@
 //! script (`scripts/train_models.py`). Any change to column order in either place
 //! requires a corresponding change in the other.
 //!
-//! ## Day-ahead (10 features)
+//! ## Day-ahead (12 features)
 //! [0] weekday 0–6   [1] departure_hour 0–23   [2] month 1–12   [3] is_peak 0/1
 //! [4] origin_crs_enc   [5] uid_prefix_enc
 //! [6] rolling_mean_7d  [7] rolling_std_7d  [8] rolling_ontime_7d  [9] sample_count_log
+//! [10] rolling_mean_14d  [11] rolling_std_14d
 //!
-//! ## Real-time (15 features = day-ahead + 5)
-//! [10] current_delay_mins  [11] preceding_delay_mins  [12] wind_mph
-//! [13] volatility_score    [14] mins_until_departure
+//! ## Real-time (18 features = day-ahead + 6)
+//! [12] current_delay_mins  [13] preceding_delay_mins  [14] wind_mph
+//! [15] volatility_score    [16] mins_until_departure  [17] station_congestion_30m
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -33,8 +34,8 @@ use ort::value::TensorRef;
 
 use super::types::{LiveFeatures, RollingStats, ServicePattern};
 
-const N_DAY_FEATURES: usize = 10;
-const N_RT_FEATURES:  usize = 15;
+const N_DAY_FEATURES: usize = 12;
+const N_RT_FEATURES:  usize = 18;
 
 // ---------------------------------------------------------------------------
 // OnnxEngine
@@ -108,7 +109,7 @@ impl OnnxEngine {
         run_session(session, feats, N_DAY_FEATURES).map(|v| v + 6)
     }
 
-    /// Real-time prediction (15 features). Returns `None` when the model isn't loaded
+    /// Real-time prediction (18 features). Returns `None` when the model isn't loaded
     /// or the CRS code is unknown.
     pub fn predict_realtime(
         &self,
@@ -124,6 +125,7 @@ impl OnnxEngine {
         feats.push(live.wind_mph);
         feats.push(live.volatility_score);
         feats.push(live.mins_until_departure);
+        feats.push(live.station_congestion_30m);
         run_session(session, feats, N_RT_FEATURES)
     }
     // (sessions are Mutex<Session> so run_session can acquire &mut Session)
@@ -160,6 +162,8 @@ impl OnnxEngine {
             rolling.std_delay,
             rolling.on_time_pct,
             rolling.sample_count_log,
+            rolling.mean_delay_14d,
+            rolling.std_delay_14d,
         ])
     }
 }

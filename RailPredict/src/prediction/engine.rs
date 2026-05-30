@@ -190,8 +190,11 @@ impl PredictionEngine {
         // -----------------------------------------------------------------------
         let dep = &status.scheduled_departure.value;
 
+        // Station congestion: mean delay of all other trains at the same origin in the last 30 min.
+        let station_congestion_30m = station_congestion(status, registry_snapshot);
+
         let ml_prediction: Option<i32> = if let Some(reported) = status.reported_delay_mins.value {
-            // Real-time: we have a live Darwin delay signal — use the 15-feature model.
+            // Real-time: we have a live Darwin delay signal — use the 18-feature model.
             let preceding = status
                 .volatility
                 .correlation_signal
@@ -206,11 +209,12 @@ impl PredictionEngine {
             };
             let mins_until = (dep.timestamp() - Utc::now().timestamp()) as f32 / 60.0;
             let live = LiveFeatures {
-                current_delay_mins:   reported as f32,
-                preceding_delay_mins: preceding,
-                wind_mph:             wind,
+                current_delay_mins:     reported as f32,
+                preceding_delay_mins:   preceding,
+                wind_mph:               wind,
                 volatility_score,
-                mins_until_departure: mins_until,
+                mins_until_departure:   mins_until,
+                station_congestion_30m,
             };
             self.onnx.predict_realtime(&pattern, &rolling, dep, &live)
                 .or_else(|| self.onnx.predict_day_ahead(&pattern, &rolling, dep))
@@ -327,6 +331,31 @@ impl PredictionEngine {
         let predicted_delay_mins = status.predicted_delay_mins.value;
         self.store.insert(pattern, DelayRecord { delay_mins, predicted_delay_mins, recorded_at: now });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Station congestion helper
+// ---------------------------------------------------------------------------
+
+/// Mean delay of all trains at the same origin CRS (excluding this train) whose
+/// `reported_delay_mins` was updated in the last 30 minutes.  Returns 0.0 when
+/// no registry snapshot is supplied or no qualifying trains exist.
+fn station_congestion(status: &TrainStatus, snapshot: Option<&[TrainStatus]>) -> f32 {
+    let Some(snapshot) = snapshot else { return 0.0 };
+    let Some(ref origin) = status.origin_crs else { return 0.0 };
+    let cutoff = Utc::now() - chrono::Duration::minutes(30);
+    let mut sum = 0i64;
+    let mut count = 0u32;
+    for t in snapshot {
+        if t.id == status.id { continue; }
+        if t.origin_crs.as_deref() != Some(origin.as_str()) { continue; }
+        if t.reported_delay_mins.last_updated < cutoff { continue; }
+        if let Some(d) = t.reported_delay_mins.value {
+            sum += d as i64;
+            count += 1;
+        }
+    }
+    if count == 0 { 0.0 } else { sum as f32 / count as f32 }
 }
 
 // ---------------------------------------------------------------------------
