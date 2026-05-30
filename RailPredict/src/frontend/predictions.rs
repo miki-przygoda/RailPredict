@@ -8,6 +8,7 @@ use axum::extract::State;
 use maud::{Markup, PreEscaped, html};
 
 use crate::api::AppState;
+use crate::db::synthetic::{synthetic_stats, SyntheticStats};
 
 use super::layout::base;
 
@@ -50,14 +51,15 @@ struct ErrorRow {
 // ---------------------------------------------------------------------------
 
 pub async fn predictions_page(State(state): State<AppState>) -> Markup {
-    let (summary, stations, hours, errors) = tokio::join!(
+    let (summary, stations, hours, errors, synth) = tokio::join!(
         query_summary(&state),
         query_stations(&state),
         query_hours(&state),
         query_errors(&state),
+        synthetic_stats(&state.db),
     );
 
-    base("Predictions", render(summary, stations, hours, errors))
+    base("Predictions", render(summary, stations, hours, errors, synth.unwrap_or(None)))
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +162,7 @@ fn render(
     stations: Vec<StationRow>,
     hours: Vec<HourRow>,
     errors: Vec<ErrorRow>,
+    synth: Option<SyntheticStats>,
 ) -> Markup {
     html! {
         div .pred-page {
@@ -233,6 +236,50 @@ fn render(
                     h2 .pred-section-title { "Biggest recent errors" }
                     p .pred-section-sub { "Last 6 hours — predictions off by 30–299 min, sorted by absolute error." }
                     (errors_table(&errors))
+                }
+            }
+
+            // Synthetic training data
+            @if let Some(s) = &synth {
+                section .pred-section {
+                    h2 .pred-section-title {
+                        "Synthetic training data"
+                        span .pred-section-meta { " — " (s.generation) }
+                    }
+                    p .pred-section-sub {
+                        "3 synthetic weeks of on-time and average operating days injected into training "
+                        "to teach the model normal operations. Service patterns cloned from real Darwin data; "
+                        "delay signals and rolling features generated self-consistently per day type."
+                    }
+                    div .pred-summary-row {
+                        div .pred-stat-card {
+                            span .pred-stat-label { "Total rows" }
+                            span .pred-stat-value { (format_big(s.total_rows)) }
+                        }
+                        div .pred-stat-card {
+                            span .pred-stat-label { "Good-day rows" }
+                            span .pred-stat-value { (format_big(s.good_rows)) }
+                        }
+                        div .pred-stat-card {
+                            span .pred-stat-label { "Average-day rows" }
+                            span .pred-stat-value { (format_big(s.average_rows)) }
+                        }
+                        div .pred-stat-card {
+                            span .pred-stat-label { "On-time % (good days)" }
+                            span .pred-stat-value { (format!("{:.0}", s.ontime_pct_good)) "%" }
+                        }
+                        div .pred-stat-card {
+                            span .pred-stat-label { "On-time % (average days)" }
+                            span .pred-stat-value { (format!("{:.0}", s.ontime_pct_average)) "%" }
+                        }
+                        div .pred-stat-card {
+                            span .pred-stat-label { "Avg delay (good / avg)" }
+                            span .pred-stat-value {
+                                (format!("{:.1}", s.avg_delay_good)) " / "
+                                (format!("{:.1}", s.avg_delay_average)) " min"
+                            }
+                        }
+                    }
                 }
             }
         }

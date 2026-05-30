@@ -11,16 +11,17 @@
 //! script (`scripts/compare_models.py`). Any change to column order in either place
 //! requires a corresponding change in the other.
 //!
-//! ## Day-ahead (12 features)
+//! ## Day-ahead (14 features)
 //! [0] weekday 0–6   [1] departure_hour 0–23   [2] month 1–12   [3] is_peak 0/1
 //! [4] origin_crs_enc   [5] uid_prefix_enc
 //! [6] rolling_mean_7d  [7] rolling_std_7d  [8] rolling_ontime_7d  [9] sample_count_log
 //! [10] rolling_mean_14d  [11] rolling_std_14d
+//! [12] weekday_operator_enc  [13] operator_relative_delay
 //!
-//! ## Real-time (20 features = day-ahead + 8)
-//! [12] current_delay_mins  [13] preceding_delay_mins  [14] wind_mph
-//! [15] volatility_score    [16] mins_until_departure  [17] station_congestion_30m
-//! [18] operator_cascade_delay  [19] predecessor_train_delay
+//! ## Real-time (22 features = day-ahead + 8)
+//! [14] current_delay_mins  [15] preceding_delay_mins  [16] wind_mph
+//! [17] volatility_score    [18] mins_until_departure  [19] station_congestion_30m
+//! [20] operator_cascade_delay  [21] predecessor_train_delay
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -35,8 +36,8 @@ use ort::value::TensorRef;
 
 use super::types::{LiveFeatures, RollingStats, ServicePattern};
 
-const N_DAY_FEATURES: usize = 12;
-const N_RT_FEATURES:  usize = 20;
+const N_DAY_FEATURES: usize = 14;
+const N_RT_FEATURES:  usize = 22;
 
 // ---------------------------------------------------------------------------
 // OnnxEngine
@@ -58,6 +59,10 @@ pub struct OnnxEngine {
     crs_map: HashMap<String, i32>,
     /// First character of UID → integer label (encodes train operating company).
     uid_prefix_map: HashMap<String, i32>,
+    /// "weekday_prefix" (e.g. "0_G") → integer label for the combined interaction.
+    weekday_operator_map: HashMap<String, i32>,
+    /// UID prefix → mean rolling_mean_7d across all services of that operator in training.
+    operator_mean_delay: HashMap<String, f32>,
 }
 
 
@@ -69,15 +74,16 @@ impl OnnxEngine {
     /// for unknown encodings, triggering the statistical fallback.
     pub fn load(models_dir: &Path) -> Result<Self> {
         let meta_path = models_dir.join("feature_meta.json");
-        let (crs_map, uid_prefix_map) = if meta_path.exists() {
-            load_meta(&meta_path)?
-        } else {
-            tracing::warn!(
-                path = %meta_path.display(),
-                "feature_meta.json not found — run `make train` to enable ML predictions"
-            );
-            (HashMap::new(), HashMap::new())
-        };
+        let (crs_map, uid_prefix_map, weekday_operator_map, operator_mean_delay) =
+            if meta_path.exists() {
+                load_meta(&meta_path)?
+            } else {
+                tracing::warn!(
+                    path = %meta_path.display(),
+                    "feature_meta.json not found — run `make train` to enable ML predictions"
+                );
+                (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new())
+            };
 
         let day_ahead = load_session(models_dir, "day_ahead.onnx")?;
         let realtime  = load_session(models_dir, "realtime.onnx")?;
@@ -92,7 +98,7 @@ impl OnnxEngine {
             ),
         }
 
-        Ok(Self { day_ahead, realtime, crs_map, uid_prefix_map })
+        Ok(Self { day_ahead, realtime, crs_map, uid_prefix_map, weekday_operator_map, operator_mean_delay })
     }
 
     /// Day-ahead prediction (12 features). Returns `None` when the model isn't loaded
@@ -105,8 +111,8 @@ impl OnnxEngine {
     ) -> Option<i32> {
         let session = self.day_ahead.as_ref()?;
         let feats = self.day_ahead_features(pattern, rolling, scheduled_departure)?;
-        // +6 min post-inference offset corrects the model's systematic −6.34 min bias.
-        // Remove once v4 models are trained — the bias correction is baked into training.
+        // Day-ahead models carry a persistent ~−6 min bias from the disrupted training
+        // distribution. Correct at inference until a debiased training run closes the gap.
         run_session(session, feats, N_DAY_FEATURES).map(|v| v + 6)
     }
 
@@ -145,13 +151,20 @@ impl OnnxEngine {
     ) -> Option<Vec<f32>> {
         let crs_enc = *self.crs_map.get(&pattern.origin_crs).unwrap_or(&0) as f32;
         let uid_prefix = pattern.uid.chars().next().unwrap_or('_').to_string();
-        let pfx_enc = *self.uid_prefix_map.get(&uid_prefix).unwrap_or(&0) as f32;
+        let pfx_enc    = *self.uid_prefix_map.get(&uid_prefix).unwrap_or(&0) as f32;
 
-        let weekday = pattern.weekday.num_days_from_monday() as f32;
+        let weekday_idx = pattern.weekday.num_days_from_monday();
+        let wd_op_key   = format!("{}_{}", weekday_idx, uid_prefix);
+        let wd_op_enc   = *self.weekday_operator_map.get(&wd_op_key).unwrap_or(&0) as f32;
+
+        let op_mean              = *self.operator_mean_delay.get(&uid_prefix).unwrap_or(&0.0);
+        let operator_rel_delay   = rolling.mean_delay - op_mean;
+
+        let weekday = weekday_idx as f32;
         let hour    = pattern.departure_hour as f32;
         let month   = scheduled_departure.month() as f32;
         let is_peak = if [7u8, 8, 16, 17, 18].contains(&pattern.departure_hour)
-            && pattern.weekday.num_days_from_monday() < 5
+            && weekday_idx < 5
         { 1.0_f32 } else { 0.0_f32 };
 
         Some(vec![
@@ -167,6 +180,8 @@ impl OnnxEngine {
             rolling.sample_count_log,
             rolling.mean_delay_14d,
             rolling.std_delay_14d,
+            wd_op_enc,
+            operator_rel_delay,
         ])
     }
 }
@@ -187,13 +202,16 @@ fn load_session(models_dir: &Path, filename: &str) -> Result<Option<Mutex<Sessio
     Ok(Some(Mutex::new(session)))
 }
 
-fn load_meta(path: &Path) -> Result<(HashMap<String, i32>, HashMap<String, i32>)> {
+fn load_meta(
+    path: &Path,
+) -> Result<(HashMap<String, i32>, HashMap<String, i32>, HashMap<String, i32>, HashMap<String, f32>)>
+{
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let v: serde_json::Value = serde_json::from_str(&content)
         .context("feature_meta.json is not valid JSON")?;
 
-    let parse_map = |key: &str| -> Result<HashMap<String, i32>> {
+    let parse_i32_map = |key: &str| -> Result<HashMap<String, i32>> {
         v[key]
             .as_object()
             .with_context(|| format!("feature_meta.json missing '{key}' object"))?
@@ -205,7 +223,23 @@ fn load_meta(path: &Path) -> Result<(HashMap<String, i32>, HashMap<String, i32>)
             .collect()
     };
 
-    Ok((parse_map("crs")?, parse_map("uid_prefix")?))
+    // operator_mean_delay may be absent in older meta files — fall back to empty map.
+    let op_mean_map: HashMap<String, f32> = v["operator_mean_delay"]
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, val)| val.as_f64().map(|f| (k.clone(), f as f32)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let weekday_op_map = if v["weekday_operator"].is_object() {
+        parse_i32_map("weekday_operator")?
+    } else {
+        HashMap::new()
+    };
+
+    Ok((parse_i32_map("crs")?, parse_i32_map("uid_prefix")?, weekday_op_map, op_mean_map))
 }
 
 /// Build a [1 × n_features] tensor, run the session, return the rounded clamped result.

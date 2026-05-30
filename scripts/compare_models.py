@@ -41,6 +41,26 @@ v6 improvements (2026-05-30):
       different UID, within 20 min).  Real-time: 19→21 features (also adds
       schedule_margin_mins from prior session, baked in simultaneously).
 
+v7 improvements (2026-05-30):
+  14. Synthetic augmentation — 3 weeks of artificial training data to teach the
+      model what normal and average operation looks like (all 8 real days are
+      heavily disrupted, avg +28–47 min).  Service patterns cloned from the
+      largest real day; delay + rolling features generated self-consistently per
+      day type.  Synthetic rows receive 0.4× sample weight so real observations
+      remain dominant.  Test set is real data only.
+      NOTE: v7 slightly degraded vs v6 (synthetic overwhelmed real signal).
+            USE_SYNTHETIC=False for v7.5 while the approach is refined.
+
+v7.5 improvements (2026-05-30):
+  15. weekday_operator_enc — encodes the (weekday, UID-prefix) pair as a single
+      categorical integer.  Captures operator-specific day-of-week patterns (e.g.
+      operator G being disproportionately delayed on Mondays vs operator Y).
+  16. operator_relative_delay — rolling_mean_7d minus the operator's mean
+      rolling delay across all its services in the training window.  Tells the
+      model how this service sits within its own operator's distribution rather
+      than relative to the global average.  Inference: per-operator baseline
+      stored in feature_meta.json → looked up by UID prefix at predict time.
+
 Previous results (fixed reference — v3 real Darwin data, 30 May 2026):
     v3 day-ahead  MAE = 14.12 min
     v3 real-time  MAE =  4.09 min
@@ -74,9 +94,14 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 MODELS_DIR = Path(__file__).parent.parent / "models"
 
-# Previous-model reference MAEs (for the comparison table) — v3 results
-PREV_DAY_MAE = 14.12
-PREV_RT_MAE  =  4.09
+# Previous-model reference MAEs (for the comparison table) — v6 results
+PREV_DAY_MAE = 13.94
+PREV_RT_MAE  =  4.06
+
+# Set False to train on real data only (v7.5). Set True to include synthetic
+# augmentation (v7 approach — currently degrades slightly; refine before re-enabling).
+USE_SYNTHETIC = False
+SYNTH_GENERATION = "synth-2026-05-30"
 
 # Bad days to exclude (startup reconnect artifacts — extreme negative avg delay).
 # Remove once HSP historical data is loaded; sample weights will handle noise then.
@@ -87,6 +112,9 @@ FEATURE_COLS_DAY = [
     "origin_crs_enc", "uid_prefix_enc",
     "rolling_mean_7d", "rolling_std_7d", "rolling_ontime_7d", "sample_count_log",
     "rolling_mean_14d", "rolling_std_14d",
+    # v7.5 operator interaction features
+    "weekday_operator_enc",
+    "operator_relative_delay",
 ]
 
 FEATURE_COLS_RT = FEATURE_COLS_DAY + [
@@ -426,7 +454,35 @@ def engineer_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     # at inference time once live Association messages flow in.
     df["predecessor_train_delay"] = df["preceding_delay_mins"].values.copy()
 
-    meta = {"crs": crs_map, "uid_prefix": pfx_map}
+    # v7.5 feature 1: weekday × operator interaction
+    # Encodes the (weekday, uid_prefix) pair as a single categorical so the model
+    # can learn operator-specific day-of-week delay patterns without needing deep
+    # interactions across two sparse categoricals.
+    uid_prefix_col = df["uid"].str[0]
+    wd_op_keys     = df["weekday"].astype(str) + "_" + uid_prefix_col
+    unique_wd_op   = sorted(wd_op_keys.unique())
+    wd_op_map      = {k: i + 1 for i, k in enumerate(unique_wd_op)}
+    df["weekday_operator_enc"] = wd_op_keys.map(wd_op_map).fillna(0).astype(np.int32)
+
+    # v7.5 feature 2: operator-relative delay
+    # rolling_mean_7d minus the operator's average rolling delay across all its
+    # services.  Tells the model how this specific service sits within its own
+    # operator's distribution rather than relative to the global mean.
+    op_mean_series = uid_prefix_col.map(
+        df.groupby(uid_prefix_col)["rolling_mean_7d"].mean()
+    ).fillna(0.0)
+    df["operator_relative_delay"] = (
+        df["rolling_mean_7d"].values - op_mean_series.values
+    ).astype(np.float32)
+
+    op_mean_dict = df.groupby(uid_prefix_col)["rolling_mean_7d"].mean().to_dict()
+
+    meta = {
+        "crs":                 crs_map,
+        "uid_prefix":          pfx_map,
+        "weekday_operator":    wd_op_map,
+        "operator_mean_delay": {k: float(v) for k, v in op_mean_dict.items()},
+    }
     return df, meta
 
 
@@ -463,7 +519,9 @@ def evaluate_variant(
     sample_weight: np.ndarray | None = None,
     export_onnx: bool = False,
     model_name: str = "",
+    params: dict | None = None,
 ) -> dict:
+    effective_params = {**LGBM_PARAMS, **(params or {})}
     X_tr = train[feature_cols].astype(np.float32).values
     y_tr = train["delay_mins"].values.clip(-30, 240)
     X_te = test[feature_cols].astype(np.float32).values
@@ -474,15 +532,16 @@ def evaluate_variant(
     X_fit, X_val = X_tr[:split], X_tr[split:]
     y_fit, y_val = y_tr[:split], y_tr[split:]
     w_fit = sample_weight[:split] if sample_weight is not None else None
+    patience = params.get("_early_stopping_patience", 50) if params else 50
 
-    m = LGBMRegressor(**LGBM_PARAMS)
+    m = LGBMRegressor(**effective_params)
     m.fit(
         X_fit, y_fit,
         sample_weight=w_fit,
         eval_set=[(X_val, y_val)],
-        callbacks=[early_stopping(50, verbose=False), log_evaluation(0)],
+        callbacks=[early_stopping(patience, verbose=False), log_evaluation(0)],
     )
-    best_iter = m.best_iteration_ if m.best_iteration_ else LGBM_PARAMS["n_estimators"]
+    best_iter = m.best_iteration_ if m.best_iteration_ else effective_params["n_estimators"]
 
     preds = m.predict(X_te)
 
@@ -566,38 +625,92 @@ def main() -> None:
     print(f"  mins_until_departure: min={mud_rng.min():.0f}  "
           f"max={mud_rng.max():.0f}  mean={mud_rng.mean():.1f}")
 
-    # Stratify by delay tier so every tier is proportionally represented in both splits.
-    # This matters because our data is heavily biased (52%+ severe, ~11% on-time) —
-    # a random split without stratification could put all the on-time rows in one half.
+    # ---------------------------------------------------------------------------
+    # Train/test split
+    # ---------------------------------------------------------------------------
     df["_tier"] = pd.cut(
         df["delay_mins"],
         bins=[-9999, 0, 5, 30, 9999],
         labels=["ontime", "slight", "moderate", "severe"],
     )
     tier_dist = df["_tier"].value_counts(normalize=True)
-    print("\n  Delay tier distribution:")
+    print("\n  Real data delay tier distribution:")
     for tier, pct in tier_dist.items():
         print(f"    {tier:<12} {pct*100:5.1f}%")
 
-    train, test = train_test_split(df, test_size=0.15, random_state=42, stratify=df["_tier"])
-    train = train.drop(columns=["_tier"]).copy()
-    test  = test.drop(columns=["_tier"]).copy()
-    print(f"\n  Train: {len(train):,} rows   Test: {len(test):,} rows  (15% random stratified split)")
+    train_real, test = train_test_split(df, test_size=0.15, random_state=42, stratify=df["_tier"])
+    train_real = train_real.drop(columns=["_tier"]).copy()
+    test       = test.drop(columns=["_tier"]).copy()
 
-    # Sample weights: each tier contributes equally to total loss.
-    # Without this the 52%+ severe tier dominates gradient updates and the model
-    # learns to predict high delays even for on-time trains (MAE 20+ min on-time).
-    tier_fn = lambda x: (
-        "ontime" if x <= 0 else "slight" if x <= 5 else "moderate" if x <= 30 else "severe"
-    )
-    tier_series = train["delay_mins"].apply(tier_fn)
-    tier_counts = tier_series.value_counts()
-    total       = len(train)
-    tier_weight = {t: total / (4 * tier_counts[t]) for t in tier_counts.index}
-    sample_weights = tier_series.map(tier_weight).values.astype(np.float32)
-    print(f"\n  Sample weights (equal-tier rebalancing):")
-    for t, w in sorted(tier_weight.items()):
-        print(f"    {t:<12}  count={tier_counts[t]:>8,}  weight={w:.4f}")
+    # ---------------------------------------------------------------------------
+    # Synthetic augmentation (USE_SYNTHETIC=True only)
+    # ---------------------------------------------------------------------------
+    if USE_SYNTHETIC:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from generate_synthetic import load_or_generate as _load_synth  # noqa: E402
+
+        engine = create_engine(database_url)
+        print("\n══ Synthetic augmentation ════════════════════════════════════")
+        synth_raw = _load_synth(engine, SYNTH_GENERATION)
+
+        synth_raw["month"]    = 4
+        synth_raw["sample_count_log"] = synth_raw.get(
+            "sample_count_log", np.log1p(20).astype(np.float32)
+        )
+        crs_map = meta["crs"]
+        pfx_map = meta["uid_prefix"]
+        wd_op_map = meta["weekday_operator"]
+        synth_raw["origin_crs_enc"] = synth_raw["origin_crs"].map(crs_map).fillna(0).astype(np.float32)
+        synth_raw["uid_prefix_enc"] = synth_raw["uid"].str[0].map(pfx_map).fillna(0).astype(np.float32)
+        synth_raw["schedule_margin_mins"] = np.float32(0)
+        # New v7.5 features on synthetic rows
+        s_pfx    = synth_raw["uid"].str[0]
+        s_wd_op  = synth_raw["weekday"].astype(str) + "_" + s_pfx
+        synth_raw["weekday_operator_enc"]   = s_wd_op.map(wd_op_map).fillna(0).astype(np.float32)
+        op_mean_dict = meta["operator_mean_delay"]
+        synth_raw["operator_relative_delay"] = (
+            synth_raw["rolling_mean_7d"].values - s_pfx.map(op_mean_dict).fillna(0).values
+        ).astype(np.float32)
+
+        n_synth = len(synth_raw)
+        print(f"  {n_synth:,} synthetic rows  ({n_synth/(len(df)+n_synth)*100:.0f}% of combined)")
+
+        synth_raw["_is_synth"] = True
+        train_real["_is_synth"] = False
+        train = pd.concat([train_real, synth_raw], ignore_index=True)
+        is_synth_mask = train["_is_synth"].values
+        train = train.drop(columns=["_is_synth"]).copy()
+        print(f"  Train: {len(train_real):,} real + {n_synth:,} synthetic = {len(train):,} rows")
+        print(f"  Test:  {len(test):,} rows  (real only)")
+
+        tier_fn = lambda x: (
+            "ontime" if x <= 0 else "slight" if x <= 5 else "moderate" if x <= 30 else "severe"
+        )
+        tier_series = train["delay_mins"].apply(tier_fn)
+        tier_counts = tier_series.value_counts()
+        total       = len(train)
+        tier_weight = {t: total / (4 * tier_counts[t]) for t in tier_counts.index}
+        sample_weights = tier_series.map(tier_weight).values.astype(np.float32)
+        sample_weights[is_synth_mask] *= 0.4
+        print(f"\n  Sample weights (equal-tier, synth=0.4×):")
+        for t, w in sorted(tier_weight.items()):
+            print(f"    {t:<12}  count={tier_counts[t]:>8,}  weight={w:.4f}")
+    else:
+        train = train_real.copy()
+        print(f"\n  Train: {len(train):,} real rows  (synthetic disabled)")
+        print(f"  Test:  {len(test):,} rows")
+
+        tier_fn = lambda x: (
+            "ontime" if x <= 0 else "slight" if x <= 5 else "moderate" if x <= 30 else "severe"
+        )
+        tier_series = train["delay_mins"].apply(tier_fn)
+        tier_counts = tier_series.value_counts()
+        total       = len(train)
+        tier_weight = {t: total / (4 * tier_counts[t]) for t in tier_counts.index}
+        sample_weights = tier_series.map(tier_weight).values.astype(np.float32)
+        print(f"\n  Sample weights (equal-tier rebalancing):")
+        for t, w in sorted(tier_weight.items()):
+            print(f"    {t:<12}  count={tier_counts[t]:>8,}  weight={w:.4f}")
 
     # Save feature metadata
     meta_path = MODELS_DIR / "feature_meta.json"
@@ -614,27 +727,55 @@ def main() -> None:
     bl = trimmed_mean_baseline(train, test)
     print(f"  Baseline MAE: {bl:.2f} min")
 
+    # High-convergence hyperparameters — 3k tree budget, finer lr, more patience.
+    # 3k is the best trade-off: 58MB models, MAE 13.10/3.87, vs 5k (99MB, 0.05/0.01 gain).
+    HC_PARAMS = dict(
+        n_estimators=3000,
+        learning_rate=0.015,
+        num_leaves=255,
+        min_child_samples=100,
+        _early_stopping_patience=100,
+    )
+
     # ---------------------------------------------------------------------------
-    # Day-ahead model
+    # Day-ahead model (two variants)
     # ---------------------------------------------------------------------------
     results = []
 
-    print("\n══ Day-ahead model (10 features) ════════════════════════════")
+    print(f"\n══ Day-ahead model ({len(FEATURE_COLS_DAY)} features) ═══════════════════════════")
     r = evaluate_variant(
-        "v5 day-ahead", train, test, FEATURE_COLS_DAY,
+        "v7.5 day-ahead", train, test, FEATURE_COLS_DAY,
         sample_weight=sample_weights,
         export_onnx=True, model_name="day_ahead",
     )
     results.append(r)
 
-    # ---------------------------------------------------------------------------
-    # Real-time model
-    # ---------------------------------------------------------------------------
-    print("\n══ Real-time model (15 features) ════════════════════════════")
+    print(f"\n══ Day-ahead HC ({len(FEATURE_COLS_DAY)} features, 3k trees — production target) ══")
     r = evaluate_variant(
-        "v5 real-time", train, test, FEATURE_COLS_RT,
+        "v7.5-HC day-ahead", train, test, FEATURE_COLS_DAY,
+        sample_weight=sample_weights,
+        export_onnx=True, model_name="day_ahead_hc",
+        params=HC_PARAMS,
+    )
+    results.append(r)
+
+    # ---------------------------------------------------------------------------
+    # Real-time model (two variants)
+    # ---------------------------------------------------------------------------
+    print(f"\n══ Real-time model ({len(FEATURE_COLS_RT)} features) ════════════════════════════")
+    r = evaluate_variant(
+        "v7.5 real-time", train, test, FEATURE_COLS_RT,
         sample_weight=sample_weights,
         export_onnx=True, model_name="realtime",
+    )
+    results.append(r)
+
+    print(f"\n══ Real-time HC ({len(FEATURE_COLS_RT)} features, 3k trees) ═══════════════════")
+    r = evaluate_variant(
+        "v7.5-HC real-time", train, test, FEATURE_COLS_RT,
+        sample_weight=sample_weights,
+        export_onnx=True, model_name="realtime_hc",
+        params=HC_PARAMS,
     )
     results.append(r)
 
@@ -644,36 +785,39 @@ def main() -> None:
     print("\n" + "═" * 80)
     print(f"  COMPARISON — 15% random stratified test set  ({len(test):,} rows)")
     print("═" * 80)
-    print(f"  {'Model':<38} {'Train rows':>10} {'MAE':>7} {'RMSE':>8} "
+    print(f"  {'Model':<40} {'best_iter':>9} {'MAE':>7} {'RMSE':>8} "
           f"{'Bias':>6} {'±2m':>5} {'±5m':>5} {'±10m':>6}")
-    print("  " + "─" * 78)
+    print("  " + "─" * 80)
 
-    # Fixed reference row for the previous model
-    for label, mae, rmse in [
-        ("v3 day-ahead (30 May train)", PREV_DAY_MAE, "—"),
-        ("v3 real-time (30 May train)", PREV_RT_MAE,  "—"),
+    for label, mae in [
+        ("v6 day-ahead (reference)", PREV_DAY_MAE),
+        ("v6 real-time (reference)", PREV_RT_MAE),
     ]:
-        print(f"  {label:<38} {'~1.4M':>10} {mae:>7.2f} {str(rmse):>8}  {'—':>5}  {'—':>5}  {'—':>5}  {'—':>6}")
+        print(f"  {label:<40} {'—':>9} {mae:>7.2f} {'—':>8} {'—':>6} {'—':>5} {'—':>5} {'—':>6}")
 
-    print("  " + "─" * 78)
+    print("  " + "─" * 80)
     for r in results:
-        print(f"  {r['label']:<38} {r['n_train']:>10,} {r['mae']:>7.2f} {r['rmse']:>8.2f} "
+        print(f"  {r['label']:<40} {r['best_iter']:>9,} {r['mae']:>7.2f} {r['rmse']:>8.2f} "
               f"{r['bias']:>+6.2f} {r['w2']:>4.1f}% {r['w5']:>4.1f}% {r['w10']:>5.1f}%")
     print("═" * 80)
 
-    # Delta vs previous
-    print("\n══ Delta vs v_prev ═══════════════════════════════════════════")
-    for r in results:
-        ref = PREV_DAY_MAE if "day-ahead" in r["label"] else PREV_RT_MAE
-        delta = r["mae"] - ref
+    # Winner call
+    print("\n══ Winner ════════════════════════════════════════════════════")
+    for tag in ("day-ahead", "real-time"):
+        candidates = [r for r in results if tag in r["label"]]
+        best = min(candidates, key=lambda r: r["mae"])
+        ref  = PREV_DAY_MAE if tag == "day-ahead" else PREV_RT_MAE
+        delta = best["mae"] - ref
         sign  = "▼ better" if delta < 0 else "▲ worse"
-        print(f"  {r['label']:<22}  ΔMAE={delta:+.2f} min  {sign}")
+        hc_suffix = "_hc" if "HC" in best["label"] else ""
+        print(f"  {tag:<12}  best={best['label']:<25}  MAE={best['mae']:.2f}  "
+              f"ΔMAE={delta:+.2f} {sign}  (models/{tag.replace('-','_')}{hc_suffix}.onnx)")
 
-    # Feature importance
-    day_r = next(r for r in results if "day-ahead" in r["label"])
-    rt_r  = next(r for r in results if "real-time" in r["label"])
-    print_importance(day_r["model"], FEATURE_COLS_DAY, "v5 day-ahead")
-    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v5 real-time")
+    # Feature importance (standard variant only to keep output manageable)
+    day_r = next(r for r in results if r["label"] == "v7.5 day-ahead")
+    rt_r  = next(r for r in results if r["label"] == "v7.5 real-time")
+    print_importance(day_r["model"], FEATURE_COLS_DAY, "v7.5 day-ahead")
+    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v7.5 real-time")
 
     print("\n  v4 models exported to models/ — restart the Rust server to activate.\n")
 

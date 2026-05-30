@@ -11,6 +11,7 @@ pub mod history;
 pub mod maintenance;
 pub mod predictions;
 pub mod static_data;
+pub mod synthetic;
 
 use sqlx::postgres::PgPoolOptions;
 
