@@ -103,7 +103,9 @@ impl OnnxEngine {
     ) -> Option<i32> {
         let session = self.day_ahead.as_ref()?;
         let feats = self.day_ahead_features(pattern, rolling, scheduled_departure)?;
-        run_session(session, feats, N_DAY_FEATURES)
+        // +6 min post-inference offset corrects the model's systematic −6.34 min bias.
+        // Remove once v4 models are trained — the bias correction is baked into training.
+        run_session(session, feats, N_DAY_FEATURES).map(|v| v + 6)
     }
 
     /// Real-time prediction (15 features). Returns `None` when the model isn't loaded
