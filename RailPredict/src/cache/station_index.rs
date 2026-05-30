@@ -109,6 +109,10 @@ impl StationIndex {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// Split a station name into lowercase words, stripping punctuation.

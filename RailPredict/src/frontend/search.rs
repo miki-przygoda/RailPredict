@@ -338,7 +338,7 @@ pub fn departure_board_fragment(heading: &str, entries: &[DepartureBoardEntry]) 
                 @let stale      = entry.last_updated_secs_ago.is_some_and(|s| s > 120);
                 @let has_ml     = entry.predicted_delay_mins.is_some();
                 // Clamp midnight-wrap artifacts (e.g. -1404 min from crossing midnight)
-                @let display_delay = entry.delay_mins.filter(|&m| m >= -60 && m <= 300);
+                @let display_delay = entry.delay_mins.filter(|&m| (-60..=300).contains(&m));
                 a .train-card
                   data-stale=[if stale { Some("true") } else { None::<&str> }]
                   data-pred=[if has_ml { Some("ml") } else { Some("stat") }]

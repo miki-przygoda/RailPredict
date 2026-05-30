@@ -48,6 +48,7 @@ const N_RT_FEATURES:  usize = 15;
 ///
 /// Construct via `OnnxEngine::load(models_dir)` or `OnnxEngine::default()` for
 /// a no-op fallback (all predictions return `None`).
+#[derive(Default)]
 pub struct OnnxEngine {
     day_ahead: Option<Mutex<Session>>,
     realtime:  Option<Mutex<Session>>,
@@ -57,16 +58,6 @@ pub struct OnnxEngine {
     uid_prefix_map: HashMap<String, i32>,
 }
 
-impl Default for OnnxEngine {
-    fn default() -> Self {
-        Self {
-            day_ahead: None,
-            realtime: None,
-            crs_map: HashMap::new(),
-            uid_prefix_map: HashMap::new(),
-        }
-    }
-}
 
 impl OnnxEngine {
     /// Load both models and the feature encoding metadata from `models_dir`.

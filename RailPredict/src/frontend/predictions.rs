@@ -35,7 +35,6 @@ struct HourRow {
     hour: i64,
     n:    i64,
     mae:  f64,
-    bias: f64,
 }
 
 struct ErrorRow {
@@ -128,7 +127,7 @@ async fn query_hours(state: &AppState) -> Vec<HourRow> {
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(h, n, mae, bias)| HourRow { hour: h as i64, n, mae, bias })
+    .map(|(h, n, mae, _bias)| HourRow { hour: h as i64, n, mae })
     .collect()
 }
 
@@ -271,9 +270,9 @@ fn hour_chart(hours: &[HourRow]) -> Markup {
                 style={ "max-width:" (total_w * 2.0) "px" }
                 aria-label="Hour-of-day MAE bar chart"
             {
-                @for hr in 0_usize..24 {
+                @for (hr, slot) in by_hour.iter().copied().enumerate() {
                     @let x = hr as f64 * (bar_w + gap);
-                    @let (bar_height, colour, title_text) = if let Some(row) = by_hour[hr] {
+                    @let (bar_height, colour, title_text) = if let Some(row) = slot {
                         let h = (row.mae / max_mae * chart_h).max(2.0);
                         let c = if row.mae < 5.0 { "#00c896" }
                                 else if row.mae < 15.0 { "#f5a624" }
