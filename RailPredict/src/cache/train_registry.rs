@@ -118,7 +118,7 @@ impl TrainRegistry {
                 Some(o) => o.to_uppercase(),
                 None => continue,
             };
-            if !codes_upper.iter().any(|c| *c == origin) {
+            if !codes_upper.contains(&origin) {
                 continue;
             }
 
