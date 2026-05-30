@@ -45,6 +45,10 @@ pub struct TrainRegistry {
     /// Updated whenever a train's `calling_points` changes.
     /// Used by the TIPLOC cascade (Phase 2 AdvancedAnalytics).
     tiploc_index: DashMap<String, Vec<TrainId>>,
+    /// Fleet turnround map: next_rid → prev_rid for NP (Next Part) associations.
+    /// Populated from Darwin Association messages (category="NP").
+    /// Used to look up the predecessor service's delay at prediction time.
+    turnround_map: DashMap<String, String>,
 }
 
 impl TrainRegistry {
@@ -52,6 +56,7 @@ impl TrainRegistry {
         Self {
             trains: DashMap::new(),
             tiploc_index: DashMap::new(),
+            turnround_map: DashMap::new(),
         }
     }
 
@@ -198,6 +203,35 @@ impl TrainRegistry {
         for (id, status) in statuses {
             self.upsert(id, status);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fleet turnround (NP Association tracking)
+    // -----------------------------------------------------------------------
+
+    /// Record an NP (Next Part) association: the physical train from `prev_rid`
+    /// is turning round to form `next_rid`.  Overwrites any existing entry for `next_rid`.
+    pub fn record_association(&self, prev_rid: &str, next_rid: &str) {
+        self.turnround_map.insert(next_rid.to_string(), prev_rid.to_string());
+    }
+
+    /// Return the RID of the predecessor service for `rid`, if a turnround link is known.
+    pub fn predecessor_rid(&self, rid: &str) -> Option<String> {
+        self.turnround_map.get(rid).map(|v| v.clone())
+    }
+
+    /// Return the current reported delay in minutes for a given RID, or `None` if
+    /// the train is not in the registry or has no reported delay.
+    pub fn delay_for_rid(&self, rid: &str) -> Option<i32> {
+        // The registry is keyed by `TrainId`. Try constructing a RID key directly.
+        let id = crate::types::TrainId::rid(rid).ok()?;
+        let arc = self.trains.get(&id)?;
+        // We need a blocking read here — this method is called from synchronous
+        // prediction code inside a registry write closure, so we use `try_read`
+        // to avoid a deadlock.  If the lock is contended we return `None` (the
+        // prediction path treats that as "no signal", not an error).
+        let status = arc.try_read().ok()?;
+        status.reported_delay_mins.value
     }
 
     // -----------------------------------------------------------------------

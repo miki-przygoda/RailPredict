@@ -214,13 +214,6 @@ impl PredictionEngine {
                 .volatility
                 .predecessor_train_delay_mins
                 .unwrap_or(0) as f32;
-            let schedule_margin_mins = match (status.scheduled_departure.value, status.working_departure) {
-                (ptd, Some(wtd)) => {
-                    let diff = (ptd - wtd).num_seconds() as f32 / 60.0;
-                    diff.clamp(0.0, 30.0)
-                }
-                _ => 0.0,
-            };
             let live = LiveFeatures {
                 current_delay_mins:      reported as f32,
                 preceding_delay_mins:    preceding,
@@ -230,7 +223,6 @@ impl PredictionEngine {
                 station_congestion_30m,
                 operator_cascade_delay,
                 predecessor_train_delay,
-                schedule_margin_mins,
             };
             self.onnx.predict_realtime(&pattern, &rolling, dep, &live)
                 .or_else(|| self.onnx.predict_day_ahead(&pattern, &rolling, dep))
