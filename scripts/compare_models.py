@@ -21,8 +21,8 @@ v4 improvements (2026-05-30):
   9. Timezone fix — bad-day filter now casts recorded_at to UTC before date
      comparison; BST (+01:00) edge case was leaking ~11K rows from 21/27 May
      into training despite those days being listed as excluded.
-  10. Per-day row cap (400K) — prevents any single day dominating gradients.
-      28 May had 1.34M of 3M rows (44% of training data); capped to 400K.
+     Per-day cap was tested and reverted — it removed 44% of training data and
+     hurt the day-ahead model (MAE 14.12 → 20.57). More data wins.
 
 Previous results (fixed reference — v3 real Darwin data, 30 May 2026):
     v3 day-ahead  MAE = 14.12 min
@@ -60,9 +60,6 @@ MODELS_DIR = Path(__file__).parent.parent / "models"
 # Previous-model reference MAEs (for the comparison table) — v3 results
 PREV_DAY_MAE = 14.12
 PREV_RT_MAE  =  4.09
-
-# Maximum rows per calendar day — prevents any single day dominating gradients.
-MAX_ROWS_PER_DAY = 400_000
 
 # Bad days to exclude (startup reconnect artifacts — extreme negative avg delay).
 # Remove once HSP historical data is loaded; sample weights will handle noise then.
@@ -112,17 +109,6 @@ def load_data(database_url: str) -> pd.DataFrame:
     if df["recorded_at"].dt.tz is None:
         df["recorded_at"] = df["recorded_at"].dt.tz_localize("UTC")
     print(f"  Loaded {len(df):,} observations  (excluded: {', '.join(BAD_DAYS)})")
-
-    # Cap rows per calendar day to prevent any single day dominating gradients.
-    before = len(df)
-    df = (
-        df.groupby(df["recorded_at"].dt.date, group_keys=False)
-        .apply(lambda g: g.sample(n=min(len(g), MAX_ROWS_PER_DAY), random_state=42))
-        .reset_index(drop=True)
-    )
-    if len(df) < before:
-        print(f"  Per-day cap ({MAX_ROWS_PER_DAY:,}/day): {before:,} → {len(df):,} rows")
-
     return df
 
 
