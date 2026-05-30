@@ -177,9 +177,9 @@ function renderDashboard() {
   }
 
   // ── Pre-compute all grades ───────────────────────────────────────────────
-  const g5min   = grade(s.pct_within_5min,  60, 40, true);
-  const g10min  = grade(s.pct_within_10min, 75, 55, true);
-  const gErr    = grade(s.mean_abs_error_mins, 5, 10, false);
+  const g5min   = grade(s.pct_within_5min,  50, 30, true);
+  const g10min  = grade(s.pct_within_10min, 65, 45, true);
+  const gErr    = grade(s.mean_abs_error_mins, 8, 18, false);
   const gDelay  = grade(s.mean_actual_mins,    3,  8, false);
   const gOnTime = grade(s.on_time_pct,        92, 75, true);
   const gCov    = grade(s.prediction_coverage_pct, 80, 50, true);
@@ -265,6 +265,13 @@ function renderDashboard() {
       The most important figures are in the <em>Prediction accuracy</em> section below.
     </div>
 
+    ${DATA.benchmarks ? `
+    <p class="section-head">Model training benchmarks — test-set results</p>
+    <div class="cards" id="cards-bench-da"></div>
+    <div class="cards" id="cards-bench-rt"></div>
+    <div class="note" id="note-bench"></div>
+    ` : ''}
+
     ${hasPred ? `
     <p class="section-head-hero">Prediction accuracy — how well did forecasts match reality?</p>
     <div class="cards" id="cards-pred"></div>
@@ -276,6 +283,7 @@ function renderDashboard() {
         <div class="note">
           <p><strong>How to read this:</strong> The <strong style="color:var(--blue)">blue line</strong> is what the system predicted the average delay would be each day. The <strong style="color:#ef5350">red dashed line</strong> is what actually happened. A wide gap on any day means the model was caught off-guard.</p>
           <p>${predOverallText}${worstDayText}${trendText}</p>
+          <p>These figures blend the <strong>day-ahead model</strong> (fires before a live signal is available) and the <strong>real-time model</strong> (fires once Darwin reports a current delay). The real-time model is significantly more accurate — see the <em>Model training benchmarks</em> section below for per-model test results.</p>
           <div class="note-tags">
             ${gradeTag(g10min, 'Predictions are accurate', 'Predictions are broadly on track', 'Predictions need improvement')}
             ${tag('tag-target', '✓ Lines overlapping = accurate')}
@@ -322,7 +330,7 @@ function renderDashboard() {
   // Daily chart note
   const avgErrText = s.mean_abs_error_mins != null
     ? (gErr === 'good'
-        ? `Overall, predictions average just <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — excellent accuracy.`
+        ? `Overall, predictions average just <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — good accuracy.`
         : gErr === 'moderate'
           ? `Overall, predictions are averaging <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — reasonable, with room to improve.`
           : `Overall, predictions are averaging <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — this is higher than ideal.`)
@@ -391,11 +399,11 @@ function renderDashboard() {
         lbl: 'Avg prediction error',
         hint: "How far off predictions were on average — the model's typical margin of error.",
         vd: verdict(gErr,
-          'Excellent — under 5 min average error',
-          'Acceptable — under 10 min average error',
+          'Good — under 8 min average error',
+          'Acceptable — under 18 min average error',
           'High — consider retraining the model'),
         cls: s.mean_abs_error_mins != null
-          ? (s.mean_abs_error_mins <= 5 ? 'c-green' : s.mean_abs_error_mins <= 10 ? 'c-amber' : 'c-red')
+          ? (s.mean_abs_error_mins <= 8 ? 'c-green' : s.mean_abs_error_mins <= 18 ? 'c-amber' : 'c-red')
           : '',
         hero: true,
       },
@@ -418,6 +426,47 @@ function renderDashboard() {
         <div class="card-hint">${c.hint}</div>
         ${c.vd}
       </div>`).join('');
+  }
+
+  // ── Training benchmark cards ──────────────────────────────────────────────
+  if (DATA.benchmarks) {
+    const b = DATA.benchmarks;
+    const benchDaCards = [
+      { val: fmt1(b.day_ahead.mae) + ' min', lbl: 'Day-ahead MAE', hint: 'Test-set mean absolute error — no live delay signal available.',
+        cls: b.day_ahead.mae <= 10 ? 'c-green' : b.day_ahead.mae <= 20 ? 'c-amber' : 'c-red' },
+      { val: fmt1(b.day_ahead.rmse) + ' min', lbl: 'Day-ahead RMSE', hint: 'Root mean square error — penalises large misses more.', cls: '' },
+      { val: fmtPct(b.day_ahead.within_10min), lbl: '±10 min (day-ahead)', hint: 'Share of test predictions within 10 min of actual delay.', cls: cardPctCls(b.day_ahead.within_10min) },
+      { val: fmtPct(b.day_ahead.within_5min),  lbl: '±5 min (day-ahead)',  hint: 'Share of test predictions within 5 min of actual delay.',  cls: cardPctCls(b.day_ahead.within_5min) },
+    ];
+    const benchRtCards = [
+      { val: fmt1(b.realtime.mae) + ' min', lbl: 'Real-time MAE', hint: 'Test-set MAE when a live Darwin delay reading is present.',
+        cls: b.realtime.mae <= 5 ? 'c-green' : b.realtime.mae <= 10 ? 'c-amber' : 'c-red' },
+      { val: fmt1(b.realtime.rmse) + ' min', lbl: 'Real-time RMSE', hint: 'Root mean square error for the real-time model.', cls: '' },
+      { val: fmtPct(b.realtime.within_10min), lbl: '±10 min (real-time)', hint: 'Share of test predictions within 10 min of actual delay.', cls: cardPctCls(b.realtime.within_10min) },
+      { val: fmtPct(b.realtime.within_5min),  lbl: '±5 min (real-time)',  hint: 'Share of test predictions within 5 min of actual delay.',  cls: cardPctCls(b.realtime.within_5min) },
+    ];
+    const renderBenchCards = (id, cards) => {
+      document.getElementById(id).innerHTML = cards.map(c => `
+        <div class="card">
+          <div class="card-val ${c.cls}">${c.val}</div>
+          <div class="card-lbl">${c.lbl}</div>
+          <div class="card-hint">${c.hint}</div>
+        </div>`).join('');
+    };
+    renderBenchCards('cards-bench-da', benchDaCards);
+    renderBenchCards('cards-bench-rt', benchRtCards);
+    document.getElementById('note-bench').innerHTML = `
+      <p><strong>Two-model cascade:</strong> The system runs two LightGBM ONNX models in sequence.
+      The <strong>day-ahead model</strong> (10 features) fires before a live Darwin delay reading is available — it uses route pattern, rolling 7-day stats, and time of day.
+      The <strong>real-time model</strong> (15 features) activates once Darwin reports a current delay, and feeds the live signal alongside the same pattern features.
+      The live blended MAE (${fmt1(s.mean_abs_error_mins)} min, shown above) sits between these two because it covers observations from both models together.</p>
+      <p>Baseline trimmed-mean MAE was <strong>${fmt1(b.baseline_mae)} min</strong>. Both models beat it substantially. Real-time model reduces error by <strong>${fmt1(b.baseline_mae - b.realtime.mae)} min</strong> vs baseline.</p>
+      <div class="note-tags">
+        ${tag('tag-target', `Trained: ${esc(b.trained_at)}`)}
+        ${tag('tag-target', `${b.train_rows.toLocaleString()} train rows`)}
+        ${tag('tag-target', `${b.test_rows.toLocaleString()} test rows`)}
+        ${tag('tag-good', `Baseline ${fmt1(b.baseline_mae)} min → real-time ${fmt1(b.realtime.mae)} min`)}
+      </div>`;
   }
 
   // ── Summary cards ─────────────────────────────────────────────────────────

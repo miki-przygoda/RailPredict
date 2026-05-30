@@ -487,6 +487,35 @@ def main() -> None:
 
     print("\n  v3 models exported to models/ — restart the Rust server to activate.\n")
 
+    # Write benchmarks.json — picked up by the export module for the index page.
+    from datetime import datetime as _dt
+    benchmarks = {
+        "trained_at":    _dt.now().strftime("%Y-%m-%d"),
+        "train_rows":    int(len(train)),
+        "test_rows":     int(len(test)),
+        "baseline_mae":  round(float(bl), 2),
+        "day_ahead": {
+            "mae":          round(float(day_r["mae"]),  2),
+            "rmse":         round(float(day_r["rmse"]), 2),
+            "bias":         round(float(day_r["bias"]), 2),
+            "within_2min":  round(float(day_r["w2"]),   1),
+            "within_5min":  round(float(day_r["w5"]),   1),
+            "within_10min": round(float(day_r["w10"]),  1),
+        },
+        "realtime": {
+            "mae":          round(float(rt_r["mae"]),  2),
+            "rmse":         round(float(rt_r["rmse"]), 2),
+            "bias":         round(float(rt_r["bias"]), 2),
+            "within_2min":  round(float(rt_r["w2"]),   1),
+            "within_5min":  round(float(rt_r["w5"]),   1),
+            "within_10min": round(float(rt_r["w10"]),  1),
+        },
+    }
+    benchmarks_path = MODELS_DIR / "benchmarks.json"
+    with open(benchmarks_path, "w") as f:
+        json.dump(benchmarks, f, indent=2)
+    print(f"  Benchmarks → {benchmarks_path}\n")
+
 
 if __name__ == "__main__":
     main()
