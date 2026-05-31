@@ -1,15 +1,15 @@
 {
   "trained_at": "2026-05-31",
-  "train_rows": 3158743,
-  "test_rows": 557426,
-  "baseline_mae": 18.01,
+  "train_rows": 3729314,
+  "test_rows": 569879,
+  "baseline_mae": 18.07,
   "day_ahead": {
-    "mae": 13.61,
-    "rmse": 21.09,
-    "bias": -5.78,
-    "within_2min": 14.5,
-    "within_5min": 33.0,
-    "within_10min": 55.6
+    "mae": 13.44,
+    "rmse": 20.48,
+    "bias": -4.02,
+    "within_2min": 14.0,
+    "within_5min": 32.1,
+    "within_10min": 54.9
   },
   "realtime": {
     "mae": 4.00,
@@ -17,6 +17,6 @@
     "bias": -0.15,
     "within_2min": 43.4,
     "within_5min": 73.2,
-    "within_10min": 90.8
+    "within_10min": 91.0
   }
 }

@@ -98,10 +98,16 @@ MODELS_DIR = Path(__file__).parent.parent / "models"
 PREV_DAY_MAE = 13.94
 PREV_RT_MAE  =  4.06
 
-# Set False to train on real data only (v7.5). Set True to include synthetic
-# augmentation (v7 approach — currently degrades slightly; refine before re-enabling).
-USE_SYNTHETIC = False
+# Synthetic augmentation config.
+# USE_SYNTHETIC=True: inject a small slice of good-day synthetic rows to teach
+# the model what on-time operation looks like (all 7 real days are 9-20% on-time).
+# SYNTH_GOOD_ROWS: cap at 2 good-day batches worth (~500k) — 13% of training set,
+# so real signal stays dominant. SYNTH_WEIGHT 0.15× (vs 0.4× in v7) keeps gradient
+# influence at ~3% — enough to nudge on-time predictions without overwhelming.
+USE_SYNTHETIC    = True
 SYNTH_GENERATION = "synth-2026-05-30"
+SYNTH_GOOD_ROWS  = 500_000
+SYNTH_WEIGHT     = 0.15
 
 # Bad days to exclude (startup reconnect artifacts — extreme negative avg delay).
 # Remove once HSP historical data is loaded; sample weights will handle noise then.
@@ -650,8 +656,14 @@ def main() -> None:
         from generate_synthetic import load_or_generate as _load_synth  # noqa: E402
 
         engine = create_engine(database_url)
-        print("\n══ Synthetic augmentation ════════════════════════════════════")
-        synth_raw = _load_synth(engine, SYNTH_GENERATION)
+        print("\n══ Synthetic augmentation (good-days only) ═══════════════════")
+        synth_all = _load_synth(engine, SYNTH_GENERATION)
+        good_pool = synth_all[synth_all["day_type"] == "good"]
+        synth_raw = good_pool.sample(
+            n=min(SYNTH_GOOD_ROWS, len(good_pool)), random_state=42
+        ).copy()
+        print(f"  Sampled {len(synth_raw):,} good-day rows from "
+              f"{len(good_pool):,} available  ({len(synth_raw)/len(good_pool)*100:.0f}%)")
 
         synth_raw["month"]    = 4
         synth_raw["sample_count_log"] = synth_raw.get(
@@ -691,8 +703,8 @@ def main() -> None:
         total       = len(train)
         tier_weight = {t: total / (4 * tier_counts[t]) for t in tier_counts.index}
         sample_weights = tier_series.map(tier_weight).values.astype(np.float32)
-        sample_weights[is_synth_mask] *= 0.4
-        print(f"\n  Sample weights (equal-tier, synth=0.4×):")
+        sample_weights[is_synth_mask] *= SYNTH_WEIGHT
+        print(f"\n  Sample weights (equal-tier, synth={SYNTH_WEIGHT}×):")
         for t, w in sorted(tier_weight.items()):
             print(f"    {t:<12}  count={tier_counts[t]:>8,}  weight={w:.4f}")
     else:
@@ -743,8 +755,9 @@ def main() -> None:
     results = []
 
     print(f"\n══ Day-ahead model ({len(FEATURE_COLS_DAY)} features) ═══════════════════════════")
+    label_sfx = "-synth" if USE_SYNTHETIC else ""
     r = evaluate_variant(
-        "v7.5 day-ahead", train, test, FEATURE_COLS_DAY,
+        f"v7.5{label_sfx} day-ahead", train, test, FEATURE_COLS_DAY,
         sample_weight=sample_weights,
         export_onnx=True, model_name="day_ahead",
     )
@@ -752,7 +765,7 @@ def main() -> None:
 
     print(f"\n══ Day-ahead HC ({len(FEATURE_COLS_DAY)} features, 3k trees — production target) ══")
     r = evaluate_variant(
-        "v7.5-HC day-ahead", train, test, FEATURE_COLS_DAY,
+        f"v7.5{label_sfx}-HC day-ahead", train, test, FEATURE_COLS_DAY,
         sample_weight=sample_weights,
         export_onnx=True, model_name="day_ahead_hc",
         params=HC_PARAMS,
@@ -764,7 +777,7 @@ def main() -> None:
     # ---------------------------------------------------------------------------
     print(f"\n══ Real-time model ({len(FEATURE_COLS_RT)} features) ════════════════════════════")
     r = evaluate_variant(
-        "v7.5 real-time", train, test, FEATURE_COLS_RT,
+        f"v7.5{label_sfx} real-time", train, test, FEATURE_COLS_RT,
         sample_weight=sample_weights,
         export_onnx=True, model_name="realtime",
     )
@@ -772,7 +785,7 @@ def main() -> None:
 
     print(f"\n══ Real-time HC ({len(FEATURE_COLS_RT)} features, 3k trees) ═══════════════════")
     r = evaluate_variant(
-        "v7.5-HC real-time", train, test, FEATURE_COLS_RT,
+        f"v7.5{label_sfx}-HC real-time", train, test, FEATURE_COLS_RT,
         sample_weight=sample_weights,
         export_onnx=True, model_name="realtime_hc",
         params=HC_PARAMS,
@@ -814,10 +827,10 @@ def main() -> None:
               f"ΔMAE={delta:+.2f} {sign}  (models/{tag.replace('-','_')}{hc_suffix}.onnx)")
 
     # Feature importance (standard variant only to keep output manageable)
-    day_r = next(r for r in results if r["label"] == "v7.5 day-ahead")
-    rt_r  = next(r for r in results if r["label"] == "v7.5 real-time")
-    print_importance(day_r["model"], FEATURE_COLS_DAY, "v7.5 day-ahead")
-    print_importance(rt_r["model"],  FEATURE_COLS_RT,  "v7.5 real-time")
+    day_r = next(r for r in results if "day-ahead" in r["label"] and "HC" not in r["label"])
+    rt_r  = next(r for r in results if "real-time" in r["label"] and "HC" not in r["label"])
+    print_importance(day_r["model"], FEATURE_COLS_DAY, day_r["label"])
+    print_importance(rt_r["model"],  FEATURE_COLS_RT,  rt_r["label"])
 
     print("\n  v4 models exported to models/ — restart the Rust server to activate.\n")
 
