@@ -47,6 +47,7 @@
 use std::sync::Arc;
 
 use chrono::{Datelike, Timelike, Utc};
+use serde_json::Value as JsonValue;
 
 use crate::types::train_status::Stamped;
 use crate::types::volatility::CorrelationSignal;
@@ -195,8 +196,8 @@ impl PredictionEngine {
         // Operator cascade: mean delay of all other trains from the same operator in the last 60 min.
         let operator_cascade_delay = operator_cascade(status, registry_snapshot);
 
-        let ml_prediction: Option<i32> = if let Some(reported) = status.reported_delay_mins.value {
-            // Real-time: we have a live Darwin delay signal — use the 19-feature model.
+        let ml_result: Option<(i32, JsonValue)> = if let Some(reported) = status.reported_delay_mins.value {
+            // Real-time: we have a live Darwin delay signal — use the 22-feature model.
             let preceding = status
                 .volatility
                 .correlation_signal
@@ -231,8 +232,9 @@ impl PredictionEngine {
             self.onnx.predict_day_ahead(&pattern, &rolling, dep)
         };
 
-        if let Some(pred) = ml_prediction {
+        if let Some((pred, features)) = ml_result {
             status.predicted_delay_mins = Stamped::new(Some(pred));
+            status.volatility.prediction_features = Some(features);
             // Confidence for ML path: use rolling sample coverage as proxy.
             status.volatility.historical_reliability = Some(
                 (rolling.sample_count_log / 4.0_f32).min(1.0),

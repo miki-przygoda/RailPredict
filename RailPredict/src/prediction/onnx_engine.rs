@@ -33,11 +33,25 @@ use ndarray::Array2;
 use ort::inputs;
 use ort::session::Session;
 use ort::value::TensorRef;
+use serde_json::Value as JsonValue;
 
 use super::types::{LiveFeatures, RollingStats, ServicePattern};
 
 const N_DAY_FEATURES: usize = 14;
 const N_RT_FEATURES:  usize = 22;
+
+const DAY_FEATURE_NAMES: [&str; N_DAY_FEATURES] = [
+    "weekday", "departure_hour", "month", "is_peak",
+    "origin_crs_enc", "uid_prefix_enc",
+    "rolling_mean_7d", "rolling_std_7d", "rolling_ontime_7d", "sample_count_log",
+    "rolling_mean_14d", "rolling_std_14d",
+    "weekday_operator_enc", "operator_relative_delay",
+];
+const RT_EXTRA_NAMES: [&str; 8] = [
+    "current_delay_mins", "preceding_delay_mins", "wind_mph", "volatility_score",
+    "mins_until_departure", "station_congestion_30m", "operator_cascade_delay",
+    "predecessor_train_delay",
+];
 
 // ---------------------------------------------------------------------------
 // OnnxEngine
@@ -101,30 +115,31 @@ impl OnnxEngine {
         Ok(Self { day_ahead, realtime, crs_map, uid_prefix_map, weekday_operator_map, operator_mean_delay })
     }
 
-    /// Day-ahead prediction (12 features). Returns `None` when the model isn't loaded
-    /// or the CRS code is unknown.
+    /// Day-ahead prediction (14 features). Returns `None` when the model isn't loaded
+    /// or the CRS code is unknown. Returns `(predicted_minutes, feature_json)`.
     pub fn predict_day_ahead(
         &self,
         pattern: &ServicePattern,
         rolling: &RollingStats,
         scheduled_departure: &DateTime<Utc>,
-    ) -> Option<i32> {
+    ) -> Option<(i32, JsonValue)> {
         let session = self.day_ahead.as_ref()?;
         let feats = self.day_ahead_features(pattern, rolling, scheduled_departure)?;
+        let json  = feats_to_json(&feats, &DAY_FEATURE_NAMES);
         // Day-ahead models carry a persistent ~−6 min bias from the disrupted training
         // distribution. Correct at inference until a debiased training run closes the gap.
-        run_session(session, feats, N_DAY_FEATURES).map(|v| v + 6)
+        run_session(session, feats, N_DAY_FEATURES).map(|v| (v + 6, json))
     }
 
-    /// Real-time prediction (20 features). Returns `None` when the model isn't loaded
-    /// or the CRS code is unknown.
+    /// Real-time prediction (22 features). Returns `None` when the model isn't loaded
+    /// or the CRS code is unknown. Returns `(predicted_minutes, feature_json)`.
     pub fn predict_realtime(
         &self,
         pattern: &ServicePattern,
         rolling: &RollingStats,
         scheduled_departure: &DateTime<Utc>,
         live: &LiveFeatures,
-    ) -> Option<i32> {
+    ) -> Option<(i32, JsonValue)> {
         let session = self.realtime.as_ref()?;
         let mut feats = self.day_ahead_features(pattern, rolling, scheduled_departure)?;
         feats.push(live.current_delay_mins);
@@ -135,7 +150,9 @@ impl OnnxEngine {
         feats.push(live.station_congestion_30m);
         feats.push(live.operator_cascade_delay);
         feats.push(live.predecessor_train_delay);
-        run_session(session, feats, N_RT_FEATURES)
+        let all_names: Vec<&str> = DAY_FEATURE_NAMES.iter().chain(RT_EXTRA_NAMES.iter()).copied().collect();
+        let json = feats_to_json(&feats, &all_names);
+        run_session(session, feats, N_RT_FEATURES).map(|v| (v, json))
     }
     // (sessions are Mutex<Session> so run_session can acquire &mut Session)
 
@@ -240,6 +257,15 @@ fn load_meta(
     };
 
     Ok((parse_i32_map("crs")?, parse_i32_map("uid_prefix")?, weekday_op_map, op_mean_map))
+}
+
+fn feats_to_json(feats: &[f32], names: &[&str]) -> JsonValue {
+    let obj: serde_json::Map<String, JsonValue> = names
+        .iter()
+        .zip(feats.iter())
+        .map(|(name, val)| (name.to_string(), JsonValue::from(*val as f64)))
+        .collect();
+    JsonValue::Object(obj)
 }
 
 /// Build a [1 × n_features] tensor, run the session, return the rounded clamped result.
