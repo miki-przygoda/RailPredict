@@ -341,6 +341,26 @@ impl IngestionPipeline {
                                             "Failed to persist first prediction"
                                         );
                                     }
+                                    // Snapshot every initial ML prediction for replay training.
+                                    if let (Some(uid), Some(pred)) = (
+                                        status_snapshot.uid.as_deref(),
+                                        status_snapshot.predicted_delay_mins.value,
+                                    ) {
+                                        let features = status_snapshot.volatility.prediction_features.as_ref();
+                                        if let Err(e) = crate::db::predictions::insert_snapshot(
+                                            &db_clone,
+                                            status_snapshot.id.as_str(),
+                                            uid,
+                                            pred,
+                                            features,
+                                        ).await {
+                                            tracing::warn!(
+                                                error = %e,
+                                                rid = %status_snapshot.id,
+                                                "Failed to insert prediction snapshot"
+                                            );
+                                        }
+                                    }
                                 });
                             }
                         })

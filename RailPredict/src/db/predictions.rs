@@ -14,6 +14,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
 use crate::types::{TrainId, TrainStatus};
@@ -61,13 +62,16 @@ pub async fn insert_first_prediction(db: &Db, status: &TrainStatus) -> sqlx::Res
         None => (None, None),
     };
 
+    let features = status.volatility.prediction_features.as_ref();
+
     let result = sqlx::query(
         r#"
         INSERT INTO prediction_outcomes
             (rid, uid, origin_crs, destination_crs, scheduled_departure,
              predicted_delay_mins, prediction_confidence,
-             correlation_preceding_rid, correlation_preceding_delay_mins)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             correlation_preceding_rid, correlation_preceding_delay_mins,
+             features)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (rid) DO NOTHING
         "#,
     )
@@ -80,10 +84,35 @@ pub async fn insert_first_prediction(db: &Db, status: &TrainStatus) -> sqlx::Res
     .bind(status.volatility.historical_reliability)
     .bind(corr_rid)
     .bind(corr_delay)
+    .bind(features.cloned())
     .execute(db)
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Append a prediction snapshot — one row per significant prediction event per train.
+/// Returns `Ok(())` on success; errors are non-fatal (logged by the caller).
+pub async fn insert_snapshot(
+    db: &Db,
+    rid: &str,
+    uid: &str,
+    predicted_delay_mins: i32,
+    features: Option<&JsonValue>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO prediction_snapshots (rid, uid, predicted_delay_mins, features)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(rid)
+    .bind(uid)
+    .bind(predicted_delay_mins)
+    .bind(features.cloned())
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Record the final observed delay for a train. Only updates rows that haven't
