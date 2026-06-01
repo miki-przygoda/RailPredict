@@ -39,3 +39,4 @@ scripts/.venv/
 fetch_progress_shard*.txt
 /dataset
 docs/railpredict-site-integration.md
+/scripts/__pycache__
