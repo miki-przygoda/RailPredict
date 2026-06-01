@@ -2,9 +2,26 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.3" -- 30/05/2026**
+**version = "1.12.4" -- 31/05/2026**
 
 ---
+
+## v1.12.4 — 31/05/2026 — Prediction feature logging (schema + Rust wiring)
+
+- **`migrations/20240417120013_prediction_features.sql`**: adds `features JSONB` column to
+  `prediction_outcomes`; creates `prediction_snapshots` table (one row per significant prediction
+  event per RID, indexed by rid and snapshotted_at).
+- **`RailPredict/src/prediction/onnx_engine.rs`**: `predict_day_ahead` and `predict_realtime` now
+  return `Option<(i32, JsonValue)>` — the predicted delay plus a named feature vector as JSON.
+  `DAY_FEATURE_NAMES` and `RT_EXTRA_NAMES` constants added; `feats_to_json` helper zips names onto values.
+- **`RailPredict/src/types/volatility.rs`**: `VolatilityContext.prediction_features: Option<JsonValue>`
+  added; populated by `engine.rs` on every ML prediction; cleared on statistical fallback.
+- **`RailPredict/src/prediction/engine.rs`**: handles `(i32, JsonValue)` from ONNX; stores features
+  in `status.volatility.prediction_features`.
+- **`RailPredict/src/db/predictions.rs`**: `insert_first_prediction` binds `features` column;
+  new `insert_snapshot(db, rid, uid, predicted_delay_mins, features)` function.
+- **`RailPredict/src/ingestion/mod.rs`**: `insert_snapshot` called alongside
+  `insert_first_prediction` in the same `tokio::spawn` block for every initial ML prediction.
 
 ## v1.12.3 — 30/05/2026 — v7.5-HC models activated (3k trees, operator features)
 
