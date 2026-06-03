@@ -2,9 +2,13 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.4" -- 31/05/2026**
+**version = "1.12.5" -- 03/06/2026**
 
 ---
+
+## [1.12.5] — 2026-06-03
+### Added
+- Dashboard overhaul **Phase 0 (Foundation)**: "Signal Terminal" design system — IBM Plex Mono/Sans typography, an amber terminal accent with green/amber/red reserved for punctuality semantics, vendored uPlot, `frontend/charts.rs` inline-SVG helpers (KPI cards, sparklines, trend arrows, bar cells), an upgraded nav with active states + a Dashboard link, a global time-range picker, and a KPI strip on the dashboard proving the system.
 
 ## v1.12.4 — 31/05/2026 — Prediction feature logging (schema + Rust wiring)
 
