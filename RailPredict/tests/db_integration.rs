@@ -552,3 +552,36 @@ async fn overview_headline_metrics_basic(pool: sqlx::PgPool) -> sqlx::Result<()>
     assert_eq!(cov.synthetic_records, 0);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Test 13: operator_league_ranks_by_on_time
+//
+// Two operators (GW: 100% on time, VT: 0% on time). Verify the league table
+// returns both rows ranked GW first, with correct on_time_pct values.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn operator_league_ranks_by_on_time(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO stations (crs, name) VALUES ('AAA','Alpha'),('BBB','Beta')").execute(&pool).await?;
+    sqlx::query("INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, toc) VALUES
+                 ('C00001','AAA','BBB',127,'GW'),
+                 ('C00002','AAA','BBB',127,'VT')").execute(&pool).await?;
+    sqlx::query("INSERT INTO operators (toc, name, brand_color) VALUES
+                 ('GW','Great Western','#0a493e'),
+                 ('VT','Avanti','#11354e')").execute(&pool).await?;
+    // GW: 2/2 on time. VT: 0/2 on time.
+    // Use distinct departure_hour values so (uid, weekday, origin_crs, departure_hour, recorded_at)
+    // unique index is satisfied when recorded_at falls at the same instant.
+    sqlx::query("INSERT INTO delay_history (uid, weekday, origin_crs, departure_hour, delay_mins) VALUES
+                 ('C00001',0,'AAA',9, 0),
+                 ('C00001',0,'AAA',10,-2),
+                 ('C00002',0,'AAA',9, 9),
+                 ('C00002',0,'AAA',10,12)").execute(&pool).await?;
+
+    let rows = railpredict::db::operators::operator_league(&pool, 24, 1, 10).await?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].toc, "GW", "GW ranks first (100% on time)");
+    assert!((rows[0].on_time_pct.unwrap() - 100.0).abs() < 0.001);
+    assert_eq!(rows[1].toc, "VT");
+    assert!(rows[1].on_time_pct.unwrap() < 1.0);
+    Ok(())
+}
