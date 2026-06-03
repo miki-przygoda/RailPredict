@@ -6,23 +6,34 @@
 
 use maud::{Markup, html};
 
-/// Small triangular trend indicator. Colour is set by the caller via the
-/// `.trend-up` / `.trend-down` / `.trend-flat` classes (semantics are caller's
-/// choice — for delays, "down" is good).
-pub fn trend_arrow(delta: f64) -> Markup {
-    let (cls, path) = if delta > 0.0 {
+/// Whether a rising value is good or bad — controls the red/green of a trend arrow.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Polarity {
+    /// Higher is better (e.g. on-time %): up = green.
+    HigherIsBetter,
+    /// Lower is better (e.g. delay minutes): down = green. This is the default convention.
+    LowerIsBetter,
+}
+
+/// Small triangular trend indicator. `polarity` decides whether a rising value
+/// is coloured good (green) or bad (red). Shape (up/down/flat) always reflects
+/// the sign so colour is never the sole signal.
+pub fn trend_arrow(delta: f64, polarity: Polarity) -> Markup {
+    let (dir, path) = if delta > 0.0 {
         ("trend-up", "M5 2 L9 8 L1 8 Z")
     } else if delta < 0.0 {
         ("trend-down", "M1 2 L9 2 L5 8 Z")
     } else {
         ("trend-flat", "M1 5 H9")
     };
+    let good = if polarity == Polarity::HigherIsBetter { "good-up " } else { "" };
+    let label = if delta == 0.0 { "0".to_string() } else { format!("{delta:+.1}") };
     html! {
-        span class=(format!("trend {cls}")) {
+        span class=(format!("trend {good}{dir}")) {
             svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" {
                 path d=(path) fill="currentColor" stroke="currentColor" {}
             }
-            span .trend-val { (format!("{delta:+.1}")) }
+            span .trend-val { (label) }
         }
     }
 }
@@ -58,8 +69,8 @@ pub fn sparkline(values: &[f64]) -> Markup {
     }
 }
 
-/// KPI stat card: big mono figure + optional unit, trend, and sparkline.
-pub fn kpi_card(label: &str, value: &str, unit: Option<&str>, delta: Option<f64>, spark: Option<&[f64]>) -> Markup {
+/// KPI stat card: big mono figure + optional unit, trend (with polarity), and sparkline.
+pub fn kpi_card(label: &str, value: &str, unit: Option<&str>, delta: Option<(f64, Polarity)>, spark: Option<&[f64]>) -> Markup {
     html! {
         div .kpi-card {
             div .kpi-label { (label) }
@@ -68,7 +79,7 @@ pub fn kpi_card(label: &str, value: &str, unit: Option<&str>, delta: Option<f64>
                 @if let Some(u) = unit { span .kpi-unit { (u) } }
             }
             div .kpi-foot {
-                @if let Some(d) = delta { (trend_arrow(d)) }
+                @if let Some((d, pol)) = delta { (trend_arrow(d, pol)) }
                 @if let Some(s) = spark { span .kpi-spark { (sparkline(s)) } }
             }
         }
@@ -104,10 +115,23 @@ mod tests {
 
     #[test]
     fn trend_arrow_direction_classes() {
-        assert!(trend_arrow(2.5).into_string().contains("trend-up"));
-        assert!(trend_arrow(-2.5).into_string().contains("trend-down"));
-        assert!(trend_arrow(0.0).into_string().contains("trend-flat"));
-        assert!(trend_arrow(2.5).into_string().contains("+2.5"));
+        assert!(trend_arrow(2.5, Polarity::LowerIsBetter).into_string().contains("trend-up"));
+        assert!(trend_arrow(-2.5, Polarity::LowerIsBetter).into_string().contains("trend-down"));
+        assert!(trend_arrow(0.0, Polarity::LowerIsBetter).into_string().contains("trend-flat"));
+        assert!(trend_arrow(2.5, Polarity::LowerIsBetter).into_string().contains("+2.5"));
+    }
+
+    #[test]
+    fn trend_arrow_flat_shows_zero_without_sign() {
+        let s = trend_arrow(0.0, Polarity::LowerIsBetter).into_string();
+        assert!(!s.contains("+0.0"), "flat should not show +0.0: {s}");
+        assert!(s.contains(">0<") || s.contains("\"trend-val\">0"), "flat shows plain 0: {s}");
+    }
+
+    #[test]
+    fn trend_arrow_polarity_emits_good_up() {
+        assert!(trend_arrow(1.0, Polarity::HigherIsBetter).into_string().contains("good-up"));
+        assert!(!trend_arrow(1.0, Polarity::LowerIsBetter).into_string().contains("good-up"));
     }
 
     #[test]
@@ -119,7 +143,7 @@ mod tests {
 
     #[test]
     fn kpi_card_renders_label_value_unit() {
-        let m = kpi_card("On-time", "92.4", Some("%"), Some(-1.2), Some(&[1.0, 2.0, 3.0])).into_string();
+        let m = kpi_card("On-time", "92.4", Some("%"), Some((-1.2, Polarity::LowerIsBetter)), Some(&[1.0, 2.0, 3.0])).into_string();
         assert!(m.contains("On-time"));
         assert!(m.contains("92.4"));
         assert!(m.contains("kpi-unit"));

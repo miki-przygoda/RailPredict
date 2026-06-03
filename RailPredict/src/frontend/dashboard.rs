@@ -8,6 +8,7 @@ use maud::{Markup, html};
 
 use crate::api::AppState;
 use crate::frontend::{charts, components};
+use crate::frontend::charts::Polarity;
 
 use super::layout::{base, NavPage};
 
@@ -107,10 +108,10 @@ fn render(
                 (components::time_range_picker("/", "7d"))
             }
             div .kpi-strip style="margin-bottom:22px;" {
-                (charts::kpi_card("On-time", "92.4", Some("%"), Some(1.1), Some(&[88.0,89.5,90.1,91.0,92.4])))
-                (charts::kpi_card("Avg delay", "2.6", Some("min"), Some(-0.4), Some(&[3.4,3.1,2.9,2.7,2.6])))
-                (charts::kpi_card("Prediction MAE", "4.06", Some("min"), Some(-0.1), Some(&[4.3,4.2,4.1,4.1,4.06])))
-                (charts::kpi_card("Trains tracked", "1,284", None, Some(36.0), None))
+                (charts::kpi_card("On-time", "92.4", Some("%"), Some((1.1, Polarity::HigherIsBetter)), Some(&[88.0,89.5,90.1,91.0,92.4])))
+                (charts::kpi_card("Avg delay", "2.6", Some("min"), Some((-0.4, Polarity::LowerIsBetter)), Some(&[3.4,3.1,2.9,2.7,2.6])))
+                (charts::kpi_card("Prediction MAE", "4.06", Some("min"), Some((-0.1, Polarity::LowerIsBetter)), Some(&[4.3,4.2,4.1,4.1,4.06])))
+                (charts::kpi_card("Trains tracked", "1,284", None, Some((36.0, Polarity::HigherIsBetter)), None))
             }
 
             // ── Hero ──────────────────────────────────────────────────────────
