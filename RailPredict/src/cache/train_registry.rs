@@ -32,6 +32,25 @@ use dashmap::DashMap;
 
 use crate::types::{TrainId, TrainStatus};
 
+/// A single live delayed train, for the cockpit "worst right now" list.
+#[derive(Debug, Clone)]
+pub struct LiveDelay {
+    pub rid: String,
+    pub origin_crs: Option<String>,
+    pub destination_crs: Option<String>,
+    pub delay_mins: i32,
+}
+
+/// Live network state derived from the registry snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkSummary {
+    pub tracked: usize,
+    pub on_time: usize,
+    pub delayed: usize,
+    pub cancelled: usize,
+    pub worst: Vec<LiveDelay>,
+}
+
 /// How long after estimated departure a train remains in the registry.
 const EVICTION_BUFFER_SECS: i64 = 300; // 5 minutes post-departure
 
@@ -341,6 +360,39 @@ impl TrainRegistry {
         }
         result
     }
+
+    /// Summarise live network state from the current registry snapshot.
+    /// `worst_n` caps the returned worst-delays list. Acquires a read lock per
+    /// train (consistent with `departure_snapshot`); cancelled trains are counted
+    /// as cancelled and excluded from the on-time/delayed tallies.
+    pub async fn network_summary(&self, worst_n: usize) -> NetworkSummary {
+        let mut s = NetworkSummary::default();
+        let mut delays: Vec<LiveDelay> = Vec::new();
+        for arc in self.snapshot_all() {
+            let status = arc.read().await;
+            s.tracked += 1;
+            if status.is_cancelled.value == Some(true) {
+                s.cancelled += 1;
+                continue;
+            }
+            match status.best_delay_mins() {
+                Some(d) if d > 0 => {
+                    s.delayed += 1;
+                    delays.push(LiveDelay {
+                        rid: status.id.as_str().to_string(),
+                        origin_crs: status.origin_crs.clone(),
+                        destination_crs: status.destination_crs.clone(),
+                        delay_mins: d,
+                    });
+                }
+                _ => s.on_time += 1,
+            }
+        }
+        delays.sort_by_key(|d| std::cmp::Reverse(d.delay_mins));
+        delays.truncate(worst_n);
+        s.worst = delays;
+        s
+    }
 }
 
 impl Default for TrainRegistry {
@@ -553,6 +605,36 @@ mod tests {
         let cascade = reg.cascade_trains_for_tiploc(&id_a, "YORKAT", affected_time, 20).await;
         assert_eq!(cascade.len(), 1);
         assert_eq!(cascade[0], id_b);
+    }
+
+    #[tokio::test]
+    async fn network_summary_counts_and_ranks() {
+        let reg = TrainRegistry::new();
+        let now = Utc::now();
+
+        // On-time train: no delay, not cancelled.
+        let (id_on_time, status_on_time) = make_status("202404170000010");
+        reg.upsert(id_on_time, status_on_time);
+
+        // Delayed train: best_delay_mins() == 12 via reported_delay_mins.
+        let id_delayed = TrainId::rid("202404170000011").unwrap();
+        let mut status_delayed = TrainStatus::new(id_delayed.clone(), now, now);
+        status_delayed.reported_delay_mins = crate::types::train_status::Stamped::new(Some(12));
+        reg.upsert(id_delayed, status_delayed);
+
+        // Cancelled train.
+        let id_cancelled = TrainId::rid("202404170000012").unwrap();
+        let mut status_cancelled = TrainStatus::new(id_cancelled.clone(), now, now);
+        status_cancelled.is_cancelled = crate::types::train_status::Stamped::new(Some(true));
+        reg.upsert(id_cancelled, status_cancelled);
+
+        let s = reg.network_summary(5).await;
+        assert_eq!(s.tracked, 3);
+        assert_eq!(s.cancelled, 1);
+        assert_eq!(s.delayed, 1);
+        assert_eq!(s.on_time, 1);
+        assert_eq!(s.worst.len(), 1);
+        assert_eq!(s.worst[0].delay_mins, 12);
     }
 
     #[tokio::test]
