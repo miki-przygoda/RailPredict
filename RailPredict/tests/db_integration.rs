@@ -446,6 +446,45 @@ async fn cheapest_fare_returns_cheapest_valid_fare(pool: sqlx::PgPool) {
 }
 
 // ---------------------------------------------------------------------------
+// Test 12: operator_toc_join_and_reference
+//
+// Verify that:
+//   1. services.toc can be set and JOINed to delay_history via services.uid.
+//   2. list_operators returns the inserted operator with the correct fields.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn operator_toc_join_and_reference(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO stations (crs, name) VALUES ('AAA','Alpha'),('BBB','Beta')")
+        .execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, toc) \
+         VALUES ('C12345','AAA','BBB',127,'GW')",
+    )
+    .execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO operators (toc, name, brand_color) VALUES ('GW','Great Western Railway','#0a493e')",
+    )
+    .execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO delay_history (uid, weekday, origin_crs, delay_mins) \
+         VALUES ('C12345',0,'AAA',5)",
+    )
+    .execute(&pool).await?;
+
+    // The JOIN labels the history row with its operator — no toc on delay_history.
+    let toc: String = sqlx::query_scalar(
+        "SELECT s.toc FROM delay_history d JOIN services s ON s.uid = d.uid LIMIT 1",
+    ).fetch_one(&pool).await?;
+    assert_eq!(toc, "GW");
+
+    let ops = railpredict::db::operators::list_operators(&pool).await?;
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].name, "Great Western Railway");
+    assert_eq!(ops[0].brand_color, "#0a493e");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Test 11: cheapest_fare excludes fares not yet valid (valid_from in future)
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
