@@ -8,7 +8,7 @@ use maud::{Markup, html};
 
 use crate::api::AppState;
 
-use super::layout::base;
+use super::layout::{base, NavPage};
 
 struct DataCounts {
     real: i64,
@@ -37,7 +37,7 @@ pub async fn dashboard_page(State(state): State<AppState>) -> Markup {
     let train_count = state.registry.len();
     let stomp_ok = !state.registry.is_empty();
 
-    base("Dashboard", render(
+    base("Dashboard", NavPage::Dashboard, render(
         db_ok, stomp_ok, train_count,
         station_count, data_counts, pred_stats,
     ))

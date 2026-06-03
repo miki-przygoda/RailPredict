@@ -29,7 +29,7 @@ use crate::{
     types::TrainId,
 };
 
-use super::{components::platform_chip, layout::base};
+use super::{components::platform_chip, layout::{base, NavPage}};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,7 +103,7 @@ pub struct IngestStartForm {
 // ---------------------------------------------------------------------------
 
 pub async fn demo_page() -> Markup {
-    base("Developer Console", html! {
+    base("Developer Console", NavPage::DevConsole, html! {
         div .demo-console {
 
             // ── Page header ──────────────────────────────────────────────
