@@ -27,6 +27,7 @@
   --text:        #e6edf3;
   --text-muted:  #9aa7b4;
   --text-dim:    #6b7785;
+  --text-faint:  #6b7785;  /* alias of --text-dim; design-system "faint" tone */
 
   /* Brand / interactive accent — amber. NEVER used to encode data. */
   --accent:      #f5a623;
