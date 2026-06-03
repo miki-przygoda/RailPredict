@@ -2,9 +2,13 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.6" -- 03/06/2026**
+**version = "1.12.7" -- 03/06/2026**
 
 ---
+
+## [1.12.7] — 2026-06-03
+### Changed
+- Dashboard overhaul **Phase 2 (Overview cockpit)**: `/` rebuilt into a live Signal-Terminal cockpit — KPI strip (on-time %, avg delay, prediction MAE, trains tracked) with sparklines + trend arrows, re-scopable by the global time-range picker (24h/7d/30d/all via htmx); a live network-state panel (tracked/on-time/delayed/cancelled + worst current delays) from the registry; a mini operator league (top 8 by on-time %, empty until the GTFS operator ingest runs); and a data-coverage footer (stations, real & synthetic record counts). New read helpers `db/overview.rs` and `operator_league`, plus `TrainRegistry::network_summary`. Emoji nav icons replaced with inline SVG.
 
 ## [1.12.6] — 2026-06-03
 ### Added
