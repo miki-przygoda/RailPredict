@@ -1,35 +1,62 @@
+/* --- Fonts: IBM Plex (self-hosted, Latin subset) --- */
+@font-face { font-family:"IBM Plex Sans"; font-style:normal; font-weight:400; font-display:swap; src:url("/static/fonts/IBMPlexSans-Regular.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-style:normal; font-weight:500; font-display:swap; src:url("/static/fonts/IBMPlexSans-Medium.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Sans"; font-style:normal; font-weight:600; font-display:swap; src:url("/static/fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Mono"; font-style:normal; font-weight:400; font-display:swap; src:url("/static/fonts/IBMPlexMono-Regular.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Mono"; font-style:normal; font-weight:500; font-display:swap; src:url("/static/fonts/IBMPlexMono-Medium.woff2") format("woff2"); }
+@font-face { font-family:"IBM Plex Mono"; font-style:normal; font-weight:600; font-display:swap; src:url("/static/fonts/IBMPlexMono-SemiBold.woff2") format("woff2"); }
+
 /* ============================================================
    RailPredict — Design System
    ============================================================ */
 
 /* --- Design Tokens --- */
 :root {
-  /* Backgrounds */
-  --bg:          #0d0e13;
-  --surface:     #13141b;
-  --surface-2:   #1a1b25;
+  /* Backgrounds (OLED dark, layered) */
+  --bg:          #0a0e12;
+  --surface:     #12181f;
+  --surface-2:   #1a2129;
   --surface-3:   #20212e;
 
   /* Borders */
-  --border:      #22242e;
-  --border-2:    #2c2e3d;
-  --border-focus: rgba(0,200,150,0.45);
+  --border:      #232c36;
+  --border-2:    #2c3744;
+  --border-focus: rgba(245,166,35,0.50);
 
   /* Text */
-  --text:        #e8e9f0;
-  --text-muted:  #636579;
-  --text-dim:    #35374a;
+  --text:        #e6edf3;
+  --text-muted:  #9aa7b4;
+  --text-dim:    #6b7785;
 
-  /* Brand palette */
-  --green:       #00c896;
-  --green-dim:   rgba(0,200,150,0.12);
-  --green-glow:  rgba(0,200,150,0.06);
-  --amber:       #f5a624;
-  --amber-dim:   rgba(245,166,36,0.14);
-  --red:         #f04f4f;
-  --red-dim:     rgba(240,79,79,0.14);
-  --blue:        #4d8ef7;
-  --blue-dim:    rgba(77,142,247,0.14);
+  /* Brand / interactive accent — amber. NEVER used to encode data. */
+  --accent:      #f5a623;
+  --accent-press:#d98c12;
+  --accent-dim:  rgba(245,166,35,0.14);
+
+  /* Semantic punctuality scale — data only */
+  --ok:          #34d399;   /* on time */
+  --ok-dim:      rgba(52,211,153,0.14);
+  --warn:        #f2c14e;   /* minor delay (yellow, distinct from accent orange) */
+  --warn-dim:    rgba(242,193,78,0.14);
+  --bad:         #f04545;   /* severe / cancelled */
+  --bad-dim:     rgba(240,69,69,0.14);
+  --info:        #4a9eff;   /* neutral data */
+  --info-dim:    rgba(74,158,255,0.14);
+
+  /* Back-compat aliases (existing CSS references these names) */
+  --green:       var(--ok);
+  --green-dim:   var(--ok-dim);
+  --green-glow:  var(--ok-dim);
+  --amber:       var(--warn);
+  --amber-dim:   var(--warn-dim);
+  --red:         var(--bad);
+  --red-dim:     var(--bad-dim);
+  --blue:        var(--info);
+  --blue-dim:    var(--info-dim);
+
+  /* Type families */
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Menlo", monospace;
 
   /* Radius scale */
   --r-sm: 5px;
@@ -52,12 +79,15 @@ html { scroll-behavior: smooth; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.6;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
+
+/* All figures use tabular mono so columns never shift */
+.mono, .kpi-number, .num, table td.num, .bar-cell + .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 a { color: inherit; text-decoration: none; }
 
