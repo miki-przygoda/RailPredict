@@ -110,7 +110,7 @@ The headline operator feature is blocked until real TOC identity exists. Require
 
 1. **Ingest operator identity** — parse GTFS `agency.txt` + `routes.txt` + `route_id` in `ingestion/gtfs.rs` to derive a per-UID TOC code (and, where available, parse the Darwin `toc` attribute on schedule messages). Document exactly which source is authoritative.
 2. **Schema** — add a `services.toc` column via a new sqlx migration; index it.
-3. **Backfill** — populate `toc` for historic rows by joining on `uid`, retroactively labelling the ~4.7M `delay_history` rows and the `prediction_outcomes` ledger (both keyed by/joinable on `uid`).
+3. **Backfill** — populate `toc` for historic rows by joining on `uid`, retroactively labelling the ~6.7M `delay_history` rows (and growing daily) and the `prediction_outcomes` ledger (both keyed by/joinable on `uid`).
 4. **Reference data** — a small `toc → friendly name + brand colour` map (sourced from the public RDG/ATOC operator list), held as static reference data.
 5. (Stretch) Persist cancellations (currently parsed but not stored) so "% cancelled" is real rather than estimated.
 
