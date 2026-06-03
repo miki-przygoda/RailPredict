@@ -10,6 +10,7 @@
 pub mod history;
 pub mod maintenance;
 pub mod operators;
+pub mod overview;
 pub mod predictions;
 pub mod static_data;
 pub mod synthetic;

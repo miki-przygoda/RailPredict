@@ -526,3 +526,29 @@ async fn cheapest_fare_excludes_future_fares(pool: sqlx::PgPool) {
         "cheapest_fare must not return fares with valid_from in the future"
     );
 }
+
+#[sqlx::test(migrations = "../migrations")]
+async fn overview_headline_metrics_basic(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO delay_history (uid, weekday, origin_crs, delay_mins, predicted_delay_mins) VALUES
+         ('C00001',0,'AAA',0,2),
+         ('C00002',0,'AAA',-1,NULL),
+         ('C00003',0,'AAA',10,6)",
+    )
+    .execute(&pool)
+    .await?;
+
+    let m = railpredict::db::overview::headline_metrics(&pool, 24).await?;
+    assert_eq!(m.sample_count, 3);
+    assert!((m.on_time_pct.unwrap() - 66.6667).abs() < 0.1, "on_time_pct = {:?}", m.on_time_pct);
+    assert!((m.avg_delay_mins.unwrap() - 3.0).abs() < 0.001);
+    assert!((m.mae_mins.unwrap() - 3.0).abs() < 0.001, "mae = {:?}", m.mae_mins);
+
+    let series = railpredict::db::overview::daily_series(&pool, 24).await?;
+    assert_eq!(series.len(), 1, "all rows fall on one day");
+
+    let cov = railpredict::db::overview::coverage_counts(&pool).await?;
+    assert_eq!(cov.real_records, 3);
+    assert_eq!(cov.synthetic_records, 0);
+    Ok(())
+}
