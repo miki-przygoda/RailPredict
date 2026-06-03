@@ -36,6 +36,7 @@
 
 pub mod filter;
 pub mod gtfs;
+pub mod operators;
 pub mod parser;
 pub mod stomp_client;
 
