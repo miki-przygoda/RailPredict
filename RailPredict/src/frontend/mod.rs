@@ -10,6 +10,7 @@
 //! - `detail`  — `GET /trains/:rid/view`       → full detail page
 //! - `detail`  — `GET /ui/trains/:rid/live`    → SSE stream of HTML OOB swap fragments
 
+pub mod charts;
 pub mod components;
 pub mod dashboard;
 pub mod demo;
