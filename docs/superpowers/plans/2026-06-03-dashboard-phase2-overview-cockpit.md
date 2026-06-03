@@ -148,7 +148,7 @@ Expected: clean.
 
 Match the existing test style (the `railpredict::` crate path + `sqlx::PgPool` param confirmed by the existing tests). Insert a couple of `delay_history` rows and assert the aggregates:
 ```rust
-#[sqlx::test]
+#[sqlx::test(migrations = "../migrations")]
 async fn overview_headline_metrics_basic(pool: sqlx::PgPool) -> sqlx::Result<()> {
     // 3 rows: two on-time (delay <= 0), one delayed; one has a prediction.
     sqlx::query(
@@ -256,7 +256,7 @@ cd RailPredict && cargo build 2>&1 | tail -3
 
 - [ ] **Step 3: Add a sqlx::test to `tests/db_integration.rs`**
 ```rust
-#[sqlx::test]
+#[sqlx::test(migrations = "../migrations")]
 async fn operator_league_ranks_by_on_time(pool: sqlx::PgPool) -> sqlx::Result<()> {
     sqlx::query("INSERT INTO stations (crs, name) VALUES ('AAA','Alpha'),('BBB','Beta')").execute(&pool).await?;
     sqlx::query("INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, toc) VALUES
