@@ -79,7 +79,6 @@ pub struct GtfsStation {
 #[derive(Debug, Deserialize)]
 struct GtfsTrip {
     #[serde(default)]
-    #[allow(dead_code)]
     route_id: String,
     trip_id: String,
     service_id: String,
@@ -88,7 +87,6 @@ struct GtfsTrip {
 }
 
 /// A single row from GTFS `agency.txt`.
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GtfsAgency {
     #[serde(default)]
@@ -97,7 +95,6 @@ struct GtfsAgency {
 }
 
 /// A single row from GTFS `routes.txt`.
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GtfsRoute {
     route_id: String,
@@ -214,7 +211,6 @@ fn parse_stop_times(csv_bytes: &[u8]) -> anyhow::Result<Vec<GtfsStopTime>> {
 
 /// Parse `agency.txt` into a map of `agency_id → agency_name`.
 /// Rows with an empty agency_id are skipped.
-#[allow(dead_code)]
 fn parse_agency(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
     let mut reader = csv::Reader::from_reader(csv_bytes);
     let mut map = HashMap::new();
@@ -232,7 +228,6 @@ fn parse_agency(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
 
 /// Parse `routes.txt` into a map of `route_id → agency_id`.
 /// Rows with an empty agency_id are skipped.
-#[allow(dead_code)]
 fn parse_routes(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
     let mut reader = csv::Reader::from_reader(csv_bytes);
     let mut map = HashMap::new();
@@ -251,7 +246,6 @@ fn parse_routes(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
 /// Derive `uid → toc (agency_id)` from trips and a `route_id → agency_id` map.
 /// First-seen UID wins (mirrors the service-build rule). UIDs whose route does
 /// not resolve to a non-empty agency are omitted (they get NULL toc).
-#[allow(dead_code)]
 fn derive_uid_toc(
     trips: &[GtfsTrip],
     route_to_agency: &HashMap<String, String>,
@@ -378,17 +372,17 @@ async fn upsert_stations(db: &Db, stations: &[GtfsStation]) -> anyhow::Result<()
     Ok(())
 }
 
-/// Upsert services rows. Each tuple is `(uid, origin_crs, destination_crs, runs_on_days)`.
+/// Upsert services rows. Each tuple is `(uid, origin_crs, destination_crs, runs_on_days, toc)`.
 /// Only services whose origin_crs and destination_crs are in `known_stations` are inserted
 /// to avoid FK violations.
 async fn upsert_services(
     db: &Db,
-    services: &[(String, String, String, i16)],
+    services: &[(String, String, String, i16, Option<String>)],
     known_stations: &HashSet<String>,
 ) -> anyhow::Result<usize> {
-    let filtered: Vec<&(String, String, String, i16)> = services
+    let filtered: Vec<&(String, String, String, i16, Option<String>)> = services
         .iter()
-        .filter(|(_, origin, dest, _)| {
+        .filter(|(_, origin, dest, _, _)| {
             known_stations.contains(origin) && known_stations.contains(dest)
         })
         .collect();
@@ -396,13 +390,14 @@ async fn upsert_services(
     let mut total = 0usize;
     for chunk in filtered.chunks(SERVICES_CHUNK) {
         let mut qb = QueryBuilder::new(
-            "INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, updated_at) ",
+            "INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, toc, updated_at) ",
         );
-        qb.push_values(chunk, |mut b, (uid, origin, dest, days)| {
+        qb.push_values(chunk, |mut b, (uid, origin, dest, days, toc)| {
             b.push_bind(uid)
                 .push_bind(origin)
                 .push_bind(dest)
                 .push_bind(days)
+                .push_bind(toc.clone())
                 .push_bind(chrono::Utc::now());
         });
         qb.push(
@@ -410,7 +405,38 @@ async fn upsert_services(
                 origin_crs      = EXCLUDED.origin_crs,
                 destination_crs = EXCLUDED.destination_crs,
                 runs_on_days    = EXCLUDED.runs_on_days,
+                toc             = COALESCE(EXCLUDED.toc, services.toc),
                 updated_at      = EXCLUDED.updated_at",
+        );
+        qb.build().execute(db).await?;
+        total += chunk.len();
+    }
+    Ok(total)
+}
+
+/// Upsert operator reference rows from `agency_id → agency_name`, attaching a
+/// brand colour from the curated map.
+async fn upsert_operators(db: &Db, agencies: &HashMap<String, String>) -> anyhow::Result<usize> {
+    if agencies.is_empty() {
+        return Ok(0);
+    }
+    let rows: Vec<(&String, &String)> = agencies.iter().collect();
+    let mut total = 0usize;
+    for chunk in rows.chunks(SERVICES_CHUNK) {
+        let mut qb = QueryBuilder::new(
+            "INSERT INTO operators (toc, name, brand_color, updated_at) ",
+        );
+        qb.push_values(chunk, |mut b, (toc, name)| {
+            b.push_bind(*toc)
+                .push_bind(*name)
+                .push_bind(crate::ingestion::operators::brand_color(name))
+                .push_bind(chrono::Utc::now());
+        });
+        qb.push(
+            " ON CONFLICT (toc) DO UPDATE SET
+                name        = EXCLUDED.name,
+                brand_color = EXCLUDED.brand_color,
+                updated_at  = EXCLUDED.updated_at",
         );
         qb.build().execute(db).await?;
         total += chunk.len();
@@ -595,8 +621,30 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watc
         stops.sort_by_key(|s| s.stop_sequence);
     }
 
+    // --- Operator identity: agency.txt + routes.txt → uid → toc ---
+    let agencies = match extract_file(zip_bytes, "agency.txt") {
+        Ok(bytes) => parse_agency(&bytes).unwrap_or_default(),
+        Err(_) => {
+            tracing::warn!("agency.txt not found in GTFS archive; operators will be unlabelled");
+            HashMap::new()
+        }
+    };
+    let route_to_agency = match extract_file(zip_bytes, "routes.txt") {
+        Ok(bytes) => parse_routes(&bytes).unwrap_or_default(),
+        Err(_) => {
+            tracing::warn!("routes.txt not found in GTFS archive; operators will be unlabelled");
+            HashMap::new()
+        }
+    };
+    let uid_toc = derive_uid_toc(&trips, &route_to_agency);
+    tracing::info!(agencies = agencies.len(), uid_toc = uid_toc.len(), "Resolved operator identity");
+    if !agencies.is_empty() {
+        let n = upsert_operators(db, &agencies).await?;
+        emit(progress, |s| s.push_log(format!("Operators: {n}")));
+    }
+
     // --- Phase 6: Build services list ---
-    let mut services: Vec<(String, String, String, i16)> = Vec::new();
+    let mut services: Vec<(String, String, String, i16, Option<String>)> = Vec::new();
     // Track uid → bitmask so we can know which UIDs made it in
     let mut uid_to_days: HashMap<String, i16> = HashMap::new();
 
@@ -629,8 +677,9 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watc
             None => continue,
         };
 
+        let toc = uid_toc.get(&uid).cloned();
         uid_to_days.insert(uid.clone(), days);
-        services.push((uid, origin_crs, dest_crs, days));
+        services.push((uid, origin_crs, dest_crs, days, toc));
     }
 
     emit(progress, |s| { s.phase = IngestPhase::Services; s.push_log(format!("Upserting {} services", services.len())); });
@@ -641,10 +690,10 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watc
     // Build known UIDs set (those actually persisted)
     let known_uids: HashSet<String> = services
         .iter()
-        .filter(|(_, origin, dest, _)| {
+        .filter(|(_, origin, dest, _, _)| {
             known_stations.contains(origin) && known_stations.contains(dest)
         })
-        .map(|(uid, _, _, _)| uid.clone())
+        .map(|(uid, _, _, _, _)| uid.clone())
         .collect();
 
     // --- Phase 7: Build timetable_calls ---
