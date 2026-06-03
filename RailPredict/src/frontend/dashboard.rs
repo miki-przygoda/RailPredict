@@ -7,6 +7,7 @@ use axum::extract::State;
 use maud::{Markup, html};
 
 use crate::api::AppState;
+use crate::frontend::{charts, components};
 
 use super::layout::{base, NavPage};
 
@@ -99,6 +100,18 @@ fn render(
 ) -> Markup {
     html! {
         div .dashboard {
+
+            // ── KPI strip ─────────────────────────────────────────────────────
+            div .dash-header style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap;" {
+                h1 style="font-size:20px;font-weight:600;" { "Network Overview" }
+                (components::time_range_picker("/", "7d"))
+            }
+            div .kpi-strip style="margin-bottom:22px;" {
+                (charts::kpi_card("On-time", "92.4", Some("%"), Some(1.1), Some(&[88.0,89.5,90.1,91.0,92.4])))
+                (charts::kpi_card("Avg delay", "2.6", Some("min"), Some(-0.4), Some(&[3.4,3.1,2.9,2.7,2.6])))
+                (charts::kpi_card("Prediction MAE", "4.06", Some("min"), Some(-0.1), Some(&[4.3,4.2,4.1,4.1,4.06])))
+                (charts::kpi_card("Trains tracked", "1,284", None, Some(36.0), None))
+            }
 
             // ── Hero ──────────────────────────────────────────────────────────
             div .dash-hero {
