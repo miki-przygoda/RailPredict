@@ -69,3 +69,36 @@ pub fn platform_chip(platform: Option<&str>, is_planned: bool) -> Markup {
         }
     }
 }
+
+/// Global time-range picker. `base_path` is the page it re-scopes (htmx swaps
+/// the page `<main>`), `active` is one of "24h" | "7d" | "30d" | "all".
+pub fn time_range_picker(base_path: &str, active: &str) -> Markup {
+    let ranges = [("24h", "24h"), ("7d", "7d"), ("30d", "30d"), ("all", "All")];
+    html! {
+        div .range-picker role="group" aria-label="Time range" {
+            @for (val, label) in ranges {
+                button
+                    class=(if val == active { "active" } else { "" })
+                    hx-get=(format!("{base_path}?range={val}"))
+                    hx-target="main"
+                    hx-push-url="true"
+                    aria-pressed=(if val == active { "true" } else { "false" })
+                    { (label) }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn range_picker_marks_active_and_targets_path() {
+        let m = time_range_picker("/", "7d").into_string();
+        assert!(m.contains("range-picker"));
+        assert!(m.contains("hx-get=\"/?range=24h\""));
+        assert!(m.contains("hx-get=\"/?range=7d\""));
+        assert!(m.contains("active"));
+    }
+}
