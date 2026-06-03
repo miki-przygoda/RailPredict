@@ -78,10 +78,31 @@ pub struct GtfsStation {
 /// A single row from GTFS `trips.txt`.
 #[derive(Debug, Deserialize)]
 struct GtfsTrip {
+    #[serde(default)]
+    #[allow(dead_code)]
+    route_id: String,
     trip_id: String,
     service_id: String,
     #[allow(dead_code)]
     trip_headsign: Option<String>,
+}
+
+/// A single row from GTFS `agency.txt`.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct GtfsAgency {
+    #[serde(default)]
+    agency_id: String,
+    agency_name: String,
+}
+
+/// A single row from GTFS `routes.txt`.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct GtfsRoute {
+    route_id: String,
+    #[serde(default)]
+    agency_id: String,
 }
 
 /// A single row from GTFS `calendar.txt`.
@@ -189,6 +210,65 @@ fn parse_stop_times(csv_bytes: &[u8]) -> anyhow::Result<Vec<GtfsStopTime>> {
         }
     }
     Ok(stop_times)
+}
+
+/// Parse `agency.txt` into a map of `agency_id → agency_name`.
+/// Rows with an empty agency_id are skipped.
+#[allow(dead_code)]
+fn parse_agency(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
+    let mut reader = csv::Reader::from_reader(csv_bytes);
+    let mut map = HashMap::new();
+    for result in reader.deserialize::<GtfsAgency>() {
+        match result {
+            Ok(row) if !row.agency_id.is_empty() => {
+                map.insert(row.agency_id, row.agency_name);
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "Skipping malformed GTFS agency.txt row"),
+        }
+    }
+    Ok(map)
+}
+
+/// Parse `routes.txt` into a map of `route_id → agency_id`.
+/// Rows with an empty agency_id are skipped.
+#[allow(dead_code)]
+fn parse_routes(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
+    let mut reader = csv::Reader::from_reader(csv_bytes);
+    let mut map = HashMap::new();
+    for result in reader.deserialize::<GtfsRoute>() {
+        match result {
+            Ok(row) if !row.agency_id.is_empty() => {
+                map.insert(row.route_id, row.agency_id);
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "Skipping malformed GTFS routes.txt row"),
+        }
+    }
+    Ok(map)
+}
+
+/// Derive `uid → toc (agency_id)` from trips and a `route_id → agency_id` map.
+/// First-seen UID wins (mirrors the service-build rule). UIDs whose route does
+/// not resolve to a non-empty agency are omitted (they get NULL toc).
+#[allow(dead_code)]
+fn derive_uid_toc(
+    trips: &[GtfsTrip],
+    route_to_agency: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut map: HashMap<String, String> = HashMap::new();
+    for trip in trips {
+        let Some(uid) = extract_uid(&trip.trip_id) else {
+            continue;
+        };
+        if map.contains_key(uid) {
+            continue;
+        }
+        if let Some(agency) = route_to_agency.get(&trip.route_id).filter(|a| !a.is_empty()) {
+            map.insert(uid.to_owned(), agency.clone());
+        }
+    }
+    map
 }
 
 /// Parse a GTFS time string "HH:MM:SS" where HH may be ≥ 24 (overnight services).
@@ -795,5 +875,40 @@ abc,lowercase should be skipped,,
                    WE,0,0,0,0,0,1,1\n";
         let map = parse_calendar(csv.as_bytes()).unwrap();
         assert_eq!(map.get("WE").copied(), Some(96i16));
+    }
+
+    #[test]
+    fn parse_agency_maps_id_to_name() {
+        let csv = "agency_id,agency_name,agency_url,agency_timezone\n\
+                   GW,Great Western Railway,http://x,Europe/London\n\
+                   VT,Avanti West Coast,http://y,Europe/London\n";
+        let m = parse_agency(csv.as_bytes()).unwrap();
+        assert_eq!(m.get("GW").map(String::as_str), Some("Great Western Railway"));
+        assert_eq!(m.get("VT").map(String::as_str), Some("Avanti West Coast"));
+    }
+
+    #[test]
+    fn parse_routes_maps_route_to_agency() {
+        let csv = "route_id,agency_id,route_short_name,route_type\n\
+                   R1,GW,GWR,2\n\
+                   R2,VT,AWC,2\n";
+        let m = parse_routes(csv.as_bytes()).unwrap();
+        assert_eq!(m.get("R1").map(String::as_str), Some("GW"));
+        assert_eq!(m.get("R2").map(String::as_str), Some("VT"));
+    }
+
+    #[test]
+    fn derive_uid_toc_resolves_via_route_first_seen_wins() {
+        let trips = vec![
+            GtfsTrip { route_id: "R1".into(), trip_id: "C12345_20240417".into(), service_id: "WD".into(), trip_headsign: None },
+            GtfsTrip { route_id: "R2".into(), trip_id: "C12345_20240418".into(), service_id: "WD".into(), trip_headsign: None },
+            GtfsTrip { route_id: "RX".into(), trip_id: "D99999_20240417".into(), service_id: "WD".into(), trip_headsign: None },
+        ];
+        let mut routes = HashMap::new();
+        routes.insert("R1".to_string(), "GW".to_string());
+        routes.insert("R2".to_string(), "VT".to_string());
+        let m = derive_uid_toc(&trips, &routes);
+        assert_eq!(m.get("C12345").map(String::as_str), Some("GW"));
+        assert_eq!(m.get("D99999"), None);
     }
 }
