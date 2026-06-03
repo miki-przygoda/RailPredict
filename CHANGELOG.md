@@ -2,9 +2,13 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.5" -- 03/06/2026**
+**version = "1.12.6" -- 03/06/2026**
 
 ---
+
+## [1.12.6] — 2026-06-03
+### Added
+- Dashboard overhaul **Phase 1 (Operator data plumbing)**: GTFS `agency.txt`/`routes.txt` parsing derives a per-UID operator (`toc`) written onto the small `services` table, plus an `operators` reference table (friendly name from the feed + curated brand colour). Operator grouping on all 6.7M+ historic `delay_history` / `prediction_outcomes` rows is unlocked via a query-time JOIN on `uid` — **no rewrite of the large tables**. Re-run the GTFS ingest to populate `toc` ("backfill").
 
 ## [1.12.5] — 2026-06-03
 ### Added
