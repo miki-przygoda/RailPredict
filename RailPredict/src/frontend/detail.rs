@@ -21,7 +21,7 @@ use crate::{
 };
 
 use super::components::{delay_badge, platform_chip, prediction_chip};
-use super::layout::base;
+use super::layout::{base, NavPage};
 
 fn pence_to_pounds(pence: i32) -> String {
     format!("£{:.2}", pence as f64 / 100.0)
@@ -148,6 +148,7 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
 
     base(
         &format!("Train {rid}"),
+        NavPage::Departures,
         html! {
             @if let Some((origin, scheduled, delay, platform, cancelled, _dest, pred, conf)) = snapshot {
                 div .train-header {

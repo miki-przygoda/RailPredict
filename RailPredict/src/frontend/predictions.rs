@@ -10,7 +10,7 @@ use maud::{Markup, PreEscaped, html};
 use crate::api::AppState;
 use crate::db::synthetic::{synthetic_stats, SyntheticStats};
 
-use super::layout::base;
+use super::layout::{base, NavPage};
 
 // ---------------------------------------------------------------------------
 // Query result types
@@ -59,7 +59,7 @@ pub async fn predictions_page(State(state): State<AppState>) -> Markup {
         synthetic_stats(&state.db),
     );
 
-    base("Predictions", render(summary, stations, hours, errors, synth.unwrap_or(None)))
+    base("Predictions", NavPage::Predictions, render(summary, stations, hours, errors, synth.unwrap_or(None)))
 }
 
 // ---------------------------------------------------------------------------

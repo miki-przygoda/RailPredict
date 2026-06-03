@@ -9,7 +9,7 @@ use crate::api::types::DepartureBoardEntry;
 use crate::api::AppState;
 
 use super::components::{delay_badge, platform_chip, prediction_chip};
-use super::layout::base;
+use super::layout::{base, NavPage};
 
 /// Shared JS injected on the search page.
 ///
@@ -143,6 +143,7 @@ const PRED_FILTER_JS: &str = r#"
 pub async fn search_page() -> Markup {
     base(
         "Search",
+        NavPage::Departures,
         html! {
             div .search-container {
                 div .search-hero {
