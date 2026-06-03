@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.5" -- 03/06/2026**
+**version = "1.12.6" -- 03/06/2026**
 
 ---
 
@@ -72,3 +72,4 @@ These are cross-cutting design decisions to keep in mind across all epics:
 - **The Waiter Pattern:** The coalescer in Epic 3 is the most impactful single piece of work for latency. Prioritise it.
 - **Backpressure:** GBR will revoke API keys for aggressive polling. The rate limiter and circuit breaker are not optional.
 - **The Ingestion Filter:** Apply the region/route filter as step one of ingestion. CPU cost compounds fast on an unfiltered firehose.
+- After deploying Phase 1, run the GTFS ingest once to populate `services.toc` and seed `operators` (CLI `ingest-static`, or the Dev Console → Ingest panel). This is the operator "backfill" — it only writes the small `services`/`operators` tables; `delay_history` is untouched.
