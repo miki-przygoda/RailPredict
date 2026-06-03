@@ -108,6 +108,29 @@ pub async fn daily_series(db: &Db, hours: i32) -> sqlx::Result<Vec<DailyPoint>> 
     .fetch_all(db)
     .await
 }
+
+/// Range-independent data-coverage totals shown in the cockpit footer strip.
+#[derive(Debug, Clone, Default, FromRow)]
+pub struct CoverageCounts {
+    pub stations: i64,
+    pub real_records: i64,
+    pub synthetic_records: i64,
+}
+
+/// Total station and delay-history row counts (all-time, not windowed).
+/// Exact counts, mirroring the previous dashboard behaviour.
+pub async fn coverage_counts(db: &Db) -> sqlx::Result<CoverageCounts> {
+    sqlx::query_as::<_, CoverageCounts>(
+        r#"
+        SELECT
+            (SELECT COUNT(*) FROM stations)                  AS stations,
+            (SELECT COUNT(*) FROM delay_history)             AS real_records,
+            (SELECT COUNT(*) FROM delay_history_synthetic)   AS synthetic_records
+        "#,
+    )
+    .fetch_one(db)
+    .await
+}
 ```
 
 - [ ] **Step 2: Register in `db/mod.rs`** (alongside the other `pub mod` lines):
@@ -146,6 +169,10 @@ async fn overview_headline_metrics_basic(pool: sqlx::PgPool) -> sqlx::Result<()>
 
     let series = railpredict::db::overview::daily_series(&pool, 24).await?;
     assert_eq!(series.len(), 1, "all rows fall on one day");
+
+    let cov = railpredict::db::overview::coverage_counts(&pool).await?;
+    assert_eq!(cov.real_records, 3);
+    assert_eq!(cov.synthetic_records, 0);
     Ok(())
 }
 ```
@@ -439,10 +466,11 @@ pub async fn dashboard_page(
 
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
 
-    let (headline, series, league) = tokio::join!(
+    let (headline, series, league, coverage) = tokio::join!(
         overview::headline_metrics(&state.db, hours),
         overview::daily_series(&state.db, hours),
         operators::operator_league(&state.db, hours, 20, 8),
+        overview::coverage_counts(&state.db),
     );
     let net = state.registry.network_summary(6).await;
 
@@ -452,6 +480,7 @@ pub async fn dashboard_page(
         headline.unwrap_or_default(),
         series.unwrap_or_default(),
         league.unwrap_or_default(),
+        coverage.unwrap_or_default(),
         net,
     );
 
@@ -498,6 +527,7 @@ fn render_cockpit(
     headline: overview::HeadlineMetrics,
     series: Vec<overview::DailyPoint>,
     league: Vec<operators::OperatorLeagueRow>,
+    coverage: overview::CoverageCounts,
     net: crate::cache::train_registry::NetworkSummary,
 ) -> Markup {
     let ontime_spark = col(&series, |p| p.on_time_pct);
@@ -608,8 +638,31 @@ fn render_cockpit(
                     (nav_card("/demo", ICON_GEAR, "Dev Console", "Ingest data, probe the registry, simulate checkout."))
                 }
             }
+
+            // ── Data coverage (range-independent totals) ──────────────────
+            div .coverage-strip {
+                (coverage_chip("Stations", fmt_big(coverage.stations)))
+                (coverage_chip("Real delay records", fmt_big(coverage.real_records)))
+                (coverage_chip("Synthetic records", fmt_big(coverage.synthetic_records)))
+            }
         }
     }
+}
+
+fn coverage_chip(label: &str, value: String) -> Markup {
+    html! {
+        div .cov-chip {
+            span .cov-value { (value) }
+            span .cov-label { (label) }
+        }
+    }
+}
+
+/// Compact human count: 1_284 → "1.3k", 6_700_000 → "6.7M".
+fn fmt_big(n: i64) -> String {
+    if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
+    else if n >= 1_000 { format!("{:.1}k", n as f64 / 1_000.0) }
+    else { n.to_string() }
 }
 
 fn net_stat(label: &str, value: usize, cls: &str) -> Markup {
@@ -644,7 +697,7 @@ const ICON_CHART: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" heigh
 const ICON_TROPHY: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12v3a6 6 0 0 1-12 0V4z"/><path d="M6 6H4v1a3 3 0 0 0 3 3M18 6h2v1a3 3 0 0 1-3 3M9 17h6M10 21h4M12 13v4"/></svg>"#);
 const ICON_GEAR: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>"#);
 ```
-Delete the old `struct DataCounts`, `struct PredStats`, all the old `fetch_*` functions, the old `render(...)`, and the old `fmt_big` if now unused. (Keep nothing dead — `cargo build` will flag leftovers.)
+Delete the old `struct DataCounts`, `struct PredStats`, all the old `fetch_*` functions, and the old `render(...)`. The cockpit reuses `fmt_big` (defined in Step 2's render block) for the coverage strip — keep exactly one `fmt_big`; if the old file already had one, remove the duplicate. (Keep nothing dead — `cargo build` will flag leftovers.)
 
 - [ ] **Step 4: Build + clippy**
 ```bash
@@ -706,6 +759,11 @@ git commit -m "feat(ui): rebuild dashboard into live overview cockpit"
 .op-chip { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:7px; vertical-align:middle; }
 
 .dash-nav-card .dnc-icon { color:var(--accent); display:inline-flex; }
+
+.coverage-strip { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); }
+.cov-chip { display:flex; flex-direction:column; gap:2px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:8px 12px; }
+.cov-value { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:16px; font-weight:600; }
+.cov-label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; }
 ```
 
 > This reuses Phase-0 `.kpi-strip`/`.kpi-card` rules. If older dashboard CSS (`.dash-hero`, `.dash-metrics`, `.dm-*`) is now unused after the rewrite, leave it in place (harmless) — do not hunt unrelated CSS.
