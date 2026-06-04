@@ -1,113 +1,54 @@
 # Tech Debt & Deferred Refactors
 
-A structured ledger of known-but-deferred work: approved-but-unstarted refactors,
-verified dead code, and the Tier-C production-handoff checklist. Every item below was
-confirmed against the source at the `ui/page-improvements` tip and cross-referenced to
-the read-only refactor audit in `data/refactor-audit/` (six files). When in doubt, the
-audit files carry the full file:line detail and reasoning — this ledger is the index.
-
-Severity/category tags (`[HIGH] DEAD`, `[MED] RISK`, …) match the audit's own taxonomy.
+Forward-looking ledger of deferred work. The two approved refactor surgeries (§A) and the
+full dead-code / no-value sweep (§B) from the read-only audit are **complete** — see the
+summary below and `CHANGELOG.md` (v1.12.9–v1.12.11). What remains live is the **Tier-C
+production-handoff checklist (§C)**. Full per-finding detail for everything lives in the
+audit in `data/refactor-audit/` (six files).
 
 ---
 
-## A. Decided refactors — completed
+## Completed (this session)
 
-Both were reviewed, a direction chosen, and **implemented**. Retained here for provenance.
+**Robustness pass (v1.12.9):** typed circuit-breaker routing (no more `msg.contains("503")`);
+`journey_handler` no longer leaks raw DB errors; request-path query failures now logged;
+`/report` moved onto the rate-limited router; `run_date` rejects a bad date instead of
+fabricating "today"; dead `Config` fields removed; startup ingest channel unified.
 
-### A1. State-machine cut (rule engine + registration are production-dead)
+**§A — approved surgeries (v1.12.10):**
+- **State-machine cut** (`be012f7`) — removed the dead rule engine (`from_departure`/`emergency_promote`/`poll_interval`/`PromotionReason`) and the inert `PollManager` (deleted `poll_manager.rs` + its `main.rs` spawn). Kept the live inline transition logic; `StateChangeEvent` moved to `train_state.rs` and still drives the ingestion→broadcast→SSE path.
+- **NP association fix & wire** (`caab859`) — the filter now routes the capital `<Association>` local-name (`Conditional`) to the parser, so the turnround predecessor-delay signal flows end-to-end (covered by an integration test).
 
-- **Refs:**
-  - `state_machine/train_state.rs:92` (`from_departure`), `:117` (`emergency_promote`) — zero production callers; only their own `#[cfg(test)]` tests.
-  - `state_machine/poll_manager.rs:76` (`RegistrationMsg`), `:88` (`PollManagerHandles` / `register_tx`), `:157` (`push_registration`) — registration plumbing nothing feeds.
-  - `state_machine/poll_manager.rs:67` (`StateChangeEvent.reason`) — always written (`PromotionReason::TimeBased`/`IncidentDetected`), never read by any consumer.
-  - `main.rs:306` — `let (poll_manager, _pm_handles) = PollManager::new(...)`: the handles are bound to `_pm_handles` and never sent a single registration.
-  - `ingestion/mod.rs:381-382,440-441` — ingestion hardcodes `TrainState::Active` / `Critical` / `Terminal` inline, bypassing the rule set.
-- **Current state:** The authoritative transition rule set (`from_departure`/`emergency_promote`) and the whole `PollManager` registration channel are dead in production. No train is ever registered, so the spawned `PollManager::run()` loop sits forever on an empty heap and the global scheduler does nothing live. Real state transitions are emitted inline from the ingestion pipeline.
-- **Decision / status:** **DONE — commit `be012f7`.** Cut `from_departure`, `emergency_promote`, `poll_interval`, and `PromotionReason`; deleted `poll_manager.rs` entirely (PollManager + registration + the `main.rs` spawn and `pm_task` threading through both shutdown paths) and removed `StateChangeEvent.reason`. `StateChangeEvent` moved to `train_state.rs`; the live ingestion→broadcast→SSE path is intact (verified by the Critical/Terminal integration tests). Net −525/+42.
-- **Audit:** `data/refactor-audit/core-types-statemachine.md` §2 (HIGH/MED rows) + §3 first bullet.
-
-### A2. Association feature fix & wire (NP predecessor-delay signal is unreachable)
-
-- **Refs:**
-  - `ingestion/filter.rs:77` — taxonomy needle is lowercase `(b"association", MessageDecision::Drop)`; `contains_element` matches `<association`/`:association` only, never the real `<Association>`.
-  - `ingestion/parser.rs:206,229,237` — the parser's `Association` arm and `ParsedUpdate::Association { prev_rid, next_rid }`, plus its own capital-`A` test fixture at `:477`.
-  - `cache/train_registry.rs:227` — `record_association(prev_rid, next_rid)`, populating the turnround map.
-  - `ingestion/mod.rs:275` — reads `predecessor_delay` from the registry into the volatility context.
-  - `types/volatility.rs:61` (`predecessor_train_delay_mins`), `prediction/types.rs:64` (`predecessor_train_delay`), `prediction/engine.rs:203`, `prediction/onnx_engine.rs:62,161` — the downstream ML feature.
-- **Current state:** Real Darwin frames are `<Association>` (capital A), but the filter-first taxonomy drops them on a lowercase needle before the parser that handles them ever runs. The entire predecessor-delay / turnround predictive signal — parser arm → `record_association` → volatility `predecessor_train_delay` → ONNX real-time feature — is therefore unreachable in the live pipeline. Only the synthetic lowercase test frame exercises the DROP branch.
-- **Decision / status:** **DONE — commit `caab859`.** Taxonomy is now `(b"Association", MessageDecision::Conditional)`; `contains_element` simplified (the redundant second clause removed). A new end-to-end integration test (`np_association_frame_records_turnround_link`) drives a real `<Association category="NP">` frame through the full pipeline and asserts `registry.predecessor_rid()` is populated; the filter unit test now asserts Conditional, not Drop.
-- **Audit:** `data/refactor-audit/networking-ingestion.md` §2 (first HIGH row) + §3 second bullet.
+**§B — dead-code / no-value sweep (v1.12.11):** removed `trains_at_tiploc`, `TrainStatus.cancellation_reason`, `ParseError::Empty`, `GtfsTrip.trip_headsign`, the `extract_stops_txt` wrapper, the orphan JSON `/stations/search` route + `trains_today`, and the stale `#[allow]`s; moved the journey self-join SQL into `db::static_data::direct_journeys`; deduped the two startup paths (`build_station_index` + `assemble_app_state`). **Kept on purpose:** `db::operators::list_operators` (Phase 3 `/operators` UI), `TrainId::headcode` (public API), `Stamped::is_stale`, and the Tier-C-staged `check_tiploc_cascade`.
 
 ---
 
-## B. Dead code / no-value items — cleared
+## C. Tier-C production-handoff readiness  *(the live section)*
 
-Verified by the audit (zero production callers, crate-wide grep). **The `remove`/`move`/`dedup`
-items were all done in the §B sweep this session (v1.12.11);** the remaining `keep` items
-are intentional public API or Tier-C-staged.
-
-| Item | Refs | State | Disposition |
-|------|------|-------|-------------|
-| `trains_at_tiploc` | `cache/train_registry.rs:290` | Test-only; only `cascade_trains_for_tiploc` is wired (into the currently-dead `check_tiploc_cascade`). | ✓ **removed** (`ac25d5c`) — incl. `TIPLOC_WINDOW_MINS` + its no-op test. |
-| `is_empty` | `cache/train_registry.rs:186` | Carried `#[allow(dead_code)]`; used only by tests. | ✓ **stale `#[allow]` dropped** (`ac25d5c`); method kept (satisfies clippy `len_without_is_empty`). |
-| `check_tiploc_cascade` + `cascade_trains_for_tiploc` | `ingestion/filter.rs:210`, `cache/train_registry.rs:323` | Tier-C-staged; no production caller. CLAUDE.md says wired "when Tier C is active". | **keep (Tier-C-staged)** — see §C2; gate behind a tracking issue rather than a free-floating TODO. |
-| `StateChangeEvent.reason` | (was `state_machine/poll_manager.rs:67`) | Write-only; no consumer read it. | ✓ **removed** (A1, `be012f7`). |
-| `TrainStatus.cancellation_reason` | `types/train_status.rs:115,171` | Initialised `Stamped::new(None)`; never written nor read. Dead data on the hot-path struct (and SSE payloads). | ✓ **removed** (`ac25d5c`). |
-| `TrainId::headcode` constructor | `types/train_id.rs:60` | Constructor + its `InvalidHeadcodeLength/Format` errors have no production caller (only tests); `rid`/`uid` are used. Re-exported via `lib.rs`. | **keep (intentional API)** — Headcode variant is plausibly deliberate public surface; drop only if Darwin headcode ingestion is ruled out. |
-| `Stamped::is_stale` | `types/train_status.rs:47` | Carries `#[allow(dead_code)]`; only tests call it. Per-field staleness was the stated reason `Stamped` exists, yet nothing in production checks it. | **keep (honest allow / unfinished feature)** — or wire into a consumer (e.g. `api/types.rs` "seconds since updated" computes age manually). |
-| JSON `/stations/search` route + `StationResult.trains_today` | `api/mod.rs`, `api/handlers.rs`, `frontend/search.rs` | The JSON route had no template consumer (only the htmx `/ui/stations/search` fragment); `trains_today` was hardcoded `0` (the `@if > 0` branch unreachable, so suggestions always showed a misleading "no service"). | ✓ **removed** JSON route + handler + `trains_today` (`20b4f0f`); `StationResult`/`StationSearchQuery` kept (shared with the htmx fragment). Minor visual change logged in the visual-changes-plan. |
-| Journey self-join SQL living in `frontend/` | `frontend/search.rs`, `frontend/demo.rs` | The `timetable_calls` self-join direct-journey query was duplicated across two render modules (search unbounded, demo LIMIT 8). Raw SQL belongs in `db/`. | ✓ **moved** to `db::static_data::direct_journeys(from, to, date, limit)` (`c906110`), called from both, with a new sqlx::test. |
-| `wait_for_shutdown` startup-tail duplication | `main.rs` | Near-clone of the normal startup tail (rebuilt `StationIndex`, assembled a second `AppState`). Easy for the two `AppState` assemblies to drift. | ✓ **deduped** (`503ae9b`) — extracted `build_station_index` + `assemble_app_state`; the divergent serve/shutdown control flow left as-is. |
-
-Additional masked-dead items — **all cleared** across this session's commits:
-`ParseError::Empty`, `GtfsTrip::trip_headsign`, the `extract_stops_txt` wrapper, and the
-stale `#[allow(unused_imports)]` on `types/mod.rs` (`ac25d5c`); `PredictionEngine::with_store`/`arc_store`
-and the `cache/mod.rs` allow (`263486a`); `MockGbrClient::set_error` (`14d145d`);
-`ENDPOINT_DEPARTURES` (`1809421`); the `state_machine/mod.rs` allows (`be012f7`).
-**Kept:** `db::operators::list_operators` — retained for the upcoming Phase 3 `/operators` UI
-(operator index/filter), not removed.
-
-> Note: the audit's `[HIGH] RISK` on circuit-breaker error routing
-> (`main.rs` string-matching `msg.contains("503")`) is **already fixed** — see commit
-> `1809421 fix(networking): route circuit breaker on typed error kind, not message text`.
-
----
-
-## C. Tier-C production-handoff readiness
-
-Deferred until the project moves to production with company credentials and their historical
-data. These are **not** bugs in the current (Tier A/B) system — they are the checklist for
-flipping Tier C on.
+Deferred until the project moves to production with the company's credentials and their
+historical data. These are **not** bugs in the current (Tier A/B) system — they are the
+checklist for flipping Tier C on.
 
 ### C1. Reconcile the GBR/RTT client contract before enabling Tier C
-
-- **Refs:** `networking/gbr_client.rs:34-37` (consts / base URL), `:65` (`RttServiceResponse`), `:206` (run_date parse).
-- **Issue:** `base_url` is `https://api.rtt.io/api`, but the client's doc table claims `x-apikey` header auth and `/v1/train/{rid}/status` + `/v1/station/{crs}/departures` paths. The real Realtime Trains (RTT) API uses **HTTP Basic** auth (username + token, not `x-apikey`), keys services by **UID + date** (`/json/service/{uid}/{yyyy}/{mm}/{dd}`, not RID), and has no `/v1/.../status` path. The response struct is even documented as keyed on `{uid}` while the const it uses is `{rid}`.
-- **Action:** Before Tier C goes live, reconcile endpoint shape, auth scheme, and UID-vs-RID keying against the real RTT (or whatever company/GBR Retail) API — otherwise the client will 401/404. Also harden `run_date` parsing (`:206` currently `.unwrap_or_else(|_| Utc::now().date_naive())`, a silent data-corruption fallback on the per-poll hot path).
-- **Audit:** `data/refactor-audit/networking-ingestion.md` §2 (DRIFT/RISK rows on `gbr_client.rs`).
+- **Refs:** `networking/gbr_client.rs` endpoint consts / base URL, `RttServiceResponse`.
+- **Issue:** `base_url` is `https://api.rtt.io/api`, but the client uses an `x-apikey` header and a RID-keyed `/v1/train/{rid}/status` path. The real Realtime Trains (RTT) API uses **HTTP Basic** auth (username + token) and keys services by **UID + date** (`/json/service/{uid}/{yyyy}/{mm}/{dd}`), with no `/v1/.../status` path.
+- **Action:** reconcile endpoint shape, auth scheme, and UID-vs-RID keying against the real RTT (or the company/GBR Retail) API before Tier C goes live — otherwise the client will 401/404. (The `run_date` silent-fallback was already hardened in v1.12.9.)
+- **Audit:** `data/refactor-audit/networking-ingestion.md` §2 (DRIFT rows on `gbr_client.rs`).
 
 ### C2. Wire `check_tiploc_cascade` into the delay path when Tier C is active
-
-- **Refs:** `ingestion/filter.rs:210` (`check_tiploc_cascade`), `cache/train_registry.rs:323` (`cascade_trains_for_tiploc`), `:290` (`trains_at_tiploc`).
-- **Issue:** The knock-on-delay cascade detector and its registry helper are built and tested but have no production call site — staged for Tier C. Currently inert (see §B).
-- **Action:** Wire into `ingestion/mod.rs` when Tier C is active; until then keep behind a tracking issue, not a free-floating TODO.
+- **Refs:** `ingestion/filter.rs` (`check_tiploc_cascade`), `cache/train_registry.rs` (`cascade_trains_for_tiploc`).
+- **Issue:** the knock-on-delay cascade detector and its registry helper are built and tested but have no production call site — staged for Tier C, currently inert. (The unrelated dead `trains_at_tiploc` probe was removed in v1.12.11.)
+- **Action:** wire into `ingestion/mod.rs` when Tier C is active.
 
 ### C3. Operator league / drill-down render empty until GTFS populates `services.toc`
-
-- **Refs:** `db/operators.rs:37` (`operator_league`, "Returns empty until `services.toc` is populated"), `:54,:57` (`LEFT JOIN operators o ON o.toc = s.toc`, `WHERE s.toc IS NOT NULL`); dashboard links at `frontend/dashboard.rs` (`/operators` panel + nav card link a route not yet registered).
-- **Issue:** The operator analytics queries filter on `services.toc`; until the GTFS static ingest runs (CLI `ingest-static`, or Dev Console → Ingest panel), `toc` is null and these render empty. The dashboard also links to a not-yet-registered `/operators` page (Phase 3-5).
-- **Action:** Run the GTFS ingest once on deploy to backfill `services.toc` + seed `operators` (small tables; `delay_history` untouched). Gate the `/operators` links behind the page landing, or ship a placeholder route.
-- **Audit:** `data/refactor-audit/db-layer.md` (awaiting-UI section) + `data/refactor-audit/frontend.md` (`/operators` 404 finding).
+- **Refs:** `db/operators.rs` (`operator_league`/drill-down filter on `services.toc`); dashboard `/operators` links in `frontend/dashboard.rs`.
+- **Issue:** the operator analytics queries filter on `services.toc`; until the GTFS static ingest runs (CLI `ingest-static`, or Dev Console → Ingest panel), `toc` is null and these render empty. The dashboard also links to a not-yet-registered `/operators` page (Phase 3 UI).
+- **Action:** run the GTFS ingest once on deploy to backfill `services.toc` + seed `operators` (small tables; `delay_history` untouched). The `/operators` links land with the Phase 3 page (see the visual-changes-plan).
+- **Audit:** `data/refactor-audit/db-layer.md` (awaiting-UI section) + `data/refactor-audit/frontend.md`.
 
 ---
 
 ## Where to read more
 
 Full file:line detail and per-finding reasoning live in the read-only refactor audit:
-
-- `data/refactor-audit/core-types-statemachine.md`
-- `data/refactor-audit/networking-ingestion.md`
-- `data/refactor-audit/cache-prediction-weather.md`
-- `data/refactor-audit/db-layer.md`
-- `data/refactor-audit/api-wiring.md`
-- `data/refactor-audit/frontend.md`
+`data/refactor-audit/{core-types-statemachine, networking-ingestion, cache-prediction-weather, db-layer, api-wiring, frontend}.md`.
