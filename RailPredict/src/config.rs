@@ -15,6 +15,8 @@
 //! | `DARWIN_DESTINATION`    | no       | /topic/darwin.pushport-v16            | STOMP subscription topic                               |
 //! | `DARWIN_TLS`            | no       | true                                  | Wrap STOMP stream in TLS (set false for local mocks)   |
 //! | `WATCHED_ROUTES`        | no       | "" (watch everything)                 | Comma-separated CRS codes                              |
+//! | `GTFS_URL`              | no       | —                                     | GTFS feed URL; auto-ingested at startup if stations empty (read in main.rs) |
+//! | `METRICS_ENABLED`       | no       | true                                  | `false`/`0` disables the /metrics endpoint (read in api/mod.rs) |
 //! | `LOG_LEVEL`             | no       | info                                  | tracing level filter                                   |
 //! | `LOG_FORMAT`            | no       | pretty                                | `pretty` or `json`                                     |
 //! | `API_BIND_ADDR`         | no       | 0.0.0.0:3000                          | axum server bind address                               |
@@ -60,17 +62,14 @@ pub struct Config {
     pub database_url: String,
 
     // GBR Retail API
-    pub gbr_api_key: String,
-    pub gbr_api_base_url: String,
+    // The GBR client (`gbr_client.rs`) re-reads `GBR_API_KEY` / `GBR_API_BASE_URL`
+    // directly via its own `from_env()`, so only the gate boolean lives here.
     /// `true` iff `GBR_API_KEY` is set — gates the poll consumer task.
     pub gbr_configured: bool,
 
     // Darwin Push Port (STOMP)
-    pub darwin_host: String,
-    pub darwin_port: u16,
-    pub darwin_username: String,
-    pub darwin_password: String,
-    pub darwin_destination: String,
+    // The STOMP client (`stomp_client.rs`) re-reads the `DARWIN_*` vars directly
+    // via its own `from_env()`, so only the gate boolean lives here.
     /// `true` iff all three of `DARWIN_HOST`, `DARWIN_USERNAME`, `DARWIN_PASSWORD` are set.
     pub darwin_configured: bool,
 
@@ -155,11 +154,6 @@ impl Config {
         let darwin_configured =
             !darwin_host.is_empty() && !darwin_username.is_empty() && !darwin_password.is_empty();
 
-        let darwin_port = std::env::var("DARWIN_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(61613u16);
-
         let watched_routes = std::env::var("WATCHED_ROUTES")
             .unwrap_or_default()
             .split(',')
@@ -212,18 +206,8 @@ impl Config {
 
         Ok(Self {
             database_url,
-            gbr_api_key,
-            gbr_api_base_url: optional!("GBR_API_BASE_URL", "https://api.rtt.io/api"),
             gbr_configured,
-            darwin_host,
-            darwin_port,
-            darwin_username,
-            darwin_password,
             darwin_configured,
-            darwin_destination: optional!(
-                "DARWIN_DESTINATION",
-                "/topic/darwin.pushport-v16"
-            ),
             watched_routes,
             log_level,
             log_format,
@@ -242,14 +226,7 @@ impl Config {
     pub fn for_testing() -> Self {
         Self {
             database_url: "postgres://railpredict:railpredict@localhost:5432/railpredict".to_string(),
-            gbr_api_key: "test-key".to_string(),
-            gbr_api_base_url: "http://localhost:9999".to_string(),
             gbr_configured: true,
-            darwin_host: "localhost".to_string(),
-            darwin_port: 61613,
-            darwin_username: "test".to_string(),
-            darwin_password: "test".to_string(),
-            darwin_destination: "/topic/test".to_string(),
             darwin_configured: true,
             watched_routes: HashSet::new(),
             log_level: "debug".to_string(),
@@ -306,7 +283,7 @@ mod tests {
     #[test]
     fn for_testing_does_not_require_env() {
         let config = Config::for_testing();
-        assert!(!config.gbr_api_key.is_empty());
+        assert!(config.gbr_configured);
         assert!(config.watched_routes.is_empty());
     }
 
