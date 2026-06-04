@@ -1,8 +1,8 @@
 //! ONNX-backed ML prediction engine for day-ahead and real-time delay forecasting.
 //!
 //! Wraps two ONNX Runtime sessions loaded from `models/`:
-//!   - `day_ahead.onnx`  — pattern + 7-day rolling history (12 features)
-//!   - `realtime.onnx`   — above + live Darwin signals (20 features)
+//!   - `day_ahead.onnx`  — pattern + 7-day rolling history (14 features)
+//!   - `realtime.onnx`   — above + live Darwin signals (22 features)
 //!
 //! Both models are optional: if a file is absent the corresponding method returns `None`
 //! and `PredictionEngine` falls back to the trimmed-mean statistical engine.
@@ -39,6 +39,15 @@ use super::types::{LiveFeatures, RollingStats, ServicePattern};
 
 const N_DAY_FEATURES: usize = 14;
 const N_RT_FEATURES:  usize = 22;
+/// Extra live features the real-time model takes beyond the day-ahead set.
+const N_RT_EXTRA: usize = N_RT_FEATURES - N_DAY_FEATURES;
+/// Day-ahead models carry a persistent ~−6 min bias from the disrupted training
+/// distribution; corrected at inference until a debiased training run closes the gap.
+const DAY_AHEAD_BIAS_MINS: i32 = 6;
+/// Prediction output clamp (minutes) — must match the delay range used in the
+/// export/training SQL (`scripts/compare_models.py`, `delay_mins BETWEEN -120 AND 600`).
+const PRED_CLAMP_MIN: f32 = -120.0;
+const PRED_CLAMP_MAX: f32 = 600.0;
 
 const DAY_FEATURE_NAMES: [&str; N_DAY_FEATURES] = [
     "weekday", "departure_hour", "month", "is_peak",
@@ -47,7 +56,7 @@ const DAY_FEATURE_NAMES: [&str; N_DAY_FEATURES] = [
     "rolling_mean_14d", "rolling_std_14d",
     "weekday_operator_enc", "operator_relative_delay",
 ];
-const RT_EXTRA_NAMES: [&str; 8] = [
+const RT_EXTRA_NAMES: [&str; N_RT_EXTRA] = [
     "current_delay_mins", "preceding_delay_mins", "wind_mph", "volatility_score",
     "mins_until_departure", "station_congestion_30m", "operator_cascade_delay",
     "predecessor_train_delay",
@@ -115,8 +124,9 @@ impl OnnxEngine {
         Ok(Self { day_ahead, realtime, crs_map, uid_prefix_map, weekday_operator_map, operator_mean_delay })
     }
 
-    /// Day-ahead prediction (14 features). Returns `None` when the model isn't loaded
-    /// or the CRS code is unknown. Returns `(predicted_minutes, feature_json)`.
+    /// Day-ahead prediction (14 features). Returns `None` only when the model isn't
+    /// loaded; an unknown origin CRS is encoded as 0 (OOV), not rejected.
+    /// Returns `(predicted_minutes, feature_json)`.
     pub fn predict_day_ahead(
         &self,
         pattern: &ServicePattern,
@@ -126,13 +136,12 @@ impl OnnxEngine {
         let session = self.day_ahead.as_ref()?;
         let feats = self.day_ahead_features(pattern, rolling, scheduled_departure)?;
         let json  = feats_to_json(&feats, &DAY_FEATURE_NAMES);
-        // Day-ahead models carry a persistent ~−6 min bias from the disrupted training
-        // distribution. Correct at inference until a debiased training run closes the gap.
-        run_session(session, feats, N_DAY_FEATURES).map(|v| (v + 6, json))
+        run_session(session, feats, N_DAY_FEATURES).map(|v| (v + DAY_AHEAD_BIAS_MINS, json))
     }
 
-    /// Real-time prediction (22 features). Returns `None` when the model isn't loaded
-    /// or the CRS code is unknown. Returns `(predicted_minutes, feature_json)`.
+    /// Real-time prediction (22 features). Returns `None` only when the model isn't
+    /// loaded; an unknown origin CRS is encoded as 0 (OOV), not rejected.
+    /// Returns `(predicted_minutes, feature_json)`.
     pub fn predict_realtime(
         &self,
         pattern: &ServicePattern,
@@ -286,5 +295,5 @@ fn run_session(session: &Mutex<Session>, feats: Vec<f32>, expected: usize) -> Op
     let (_, data) = outputs[0].try_extract_tensor::<f32>().ok()?;
     let raw = *data.first()?;
     // Clamp to the same range used in the export SQL query, round to nearest minute.
-    Some(raw.clamp(-120.0, 600.0).round() as i32)
+    Some(raw.clamp(PRED_CLAMP_MIN, PRED_CLAMP_MAX).round() as i32)
 }

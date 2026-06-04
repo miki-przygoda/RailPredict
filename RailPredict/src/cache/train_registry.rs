@@ -6,12 +6,6 @@
 //! The outer `DashMap` shard lock is held only for the initial lookup; the inner
 //! `RwLock` is held only for the duration of the read or write operation.
 //!
-//! ## Hot-path flat array (HFT pattern, ref CLAUDE.md §5)
-//! The registry also maintains a compact `Vec` index of trains currently in `Active` or
-//! `Critical` state. The poll manager holds indices into this vec for O(1) lookups on the
-//! hot polling path, avoiding a DashMap lookup per poll tick.
-//! This vec is rebuilt whenever a train enters or leaves the hot states.
-//!
 //! ## Eviction policy
 //! Trains are evicted `EVICTION_BUFFER_SECS` after their `actual_estimated_departure`
 //! (or `scheduled_departure` if actual is unknown). A background task calls
