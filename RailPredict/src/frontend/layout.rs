@@ -46,6 +46,7 @@ pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
                     }
                     div .nav-links {
                         (link("/", "Overview", NavPage::Dashboard))
+                        (link("/operators", "Operators", NavPage::Operators))
                         (link("/predictions", "Predictions", NavPage::Predictions))
                         (link("/explore", "Explore", NavPage::Explore))
                     }

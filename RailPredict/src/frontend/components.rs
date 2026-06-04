@@ -87,6 +87,36 @@ pub fn platform_chip(platform: Option<&str>, is_planned: bool) -> Markup {
     }
 }
 
+/// Normalise an incoming `?range=` value to one of the four supported buckets.
+pub fn normalize_range(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some("24h") => "24h",
+        Some("30d") => "30d",
+        Some("all") => "all",
+        _ => "7d",
+    }
+}
+
+/// Window length in hours for a normalised range value.
+pub fn range_to_hours(range: &str) -> i32 {
+    match range {
+        "24h" => 24,
+        "30d" => 720,
+        "all" => 876_000,
+        _ => 168,
+    }
+}
+
+/// Human label for a normalised range value, for captions.
+pub fn range_label(range: &str) -> &'static str {
+    match range {
+        "24h" => "last 24 h",
+        "30d" => "last 30 days",
+        "all" => "all time",
+        _ => "last 7 days",
+    }
+}
+
 /// Global time-range picker. `base_path` is the page it re-scopes (htmx swaps
 /// the page `<main>`), `active` is one of "24h" | "7d" | "30d" | "all".
 pub fn time_range_picker(base_path: &str, active: &str) -> Markup {

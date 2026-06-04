@@ -23,42 +23,13 @@ pub struct DashParams {
     pub range: Option<String>,
 }
 
-/// Normalise an incoming range string to one of the four supported values.
-fn normalize_range(raw: Option<&str>) -> &'static str {
-    match raw {
-        Some("24h") => "24h",
-        Some("30d") => "30d",
-        Some("all") => "all",
-        _ => "7d",
-    }
-}
-
-fn range_to_hours(range: &str) -> i32 {
-    match range {
-        "24h" => 24,
-        "30d" => 720,
-        "all" => 876_000,
-        _ => 168,
-    }
-}
-
-/// Human label for the active range, used in panel captions.
-fn range_label(range: &str) -> &'static str {
-    match range {
-        "24h" => "last 24 h",
-        "30d" => "last 30 days",
-        "all" => "all time",
-        _ => "last 7 days",
-    }
-}
-
 pub async fn dashboard_page(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<DashParams>,
 ) -> Markup {
-    let range = normalize_range(params.range.as_deref());
-    let hours = range_to_hours(range);
+    let range = components::normalize_range(params.range.as_deref());
+    let hours = components::range_to_hours(range);
 
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
 
@@ -216,7 +187,7 @@ fn render_cockpit(
                                         }
                                         @if mae_series.len() >= 2 {
                                             div .acc-chart { (charts::area_spark(&mae_series, "acc-trend")) }
-                                            span .acc-cap { "MAE trend · " (range_label(range)) }
+                                            span .acc-cap { "MAE trend · " (components::range_label(range)) }
                                         }
                                     }
                                 }
