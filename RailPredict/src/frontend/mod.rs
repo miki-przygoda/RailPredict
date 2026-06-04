@@ -17,6 +17,7 @@ pub mod components;
 pub mod dashboard;
 pub mod demo;
 pub mod detail;
+pub mod explore;
 pub mod layout;
 pub mod predictions;
 pub mod search;

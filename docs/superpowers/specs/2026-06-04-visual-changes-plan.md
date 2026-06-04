@@ -47,6 +47,14 @@ Replace the demo console with product surfaces that already have backing data/qu
 ### `/predictions` — rebuild (Phase 4)
 - **[PROPOSED]** `hour_chart()` hardcodes data-colour hex (`predictions.rs:324-329, 351`) instead of `currentColor` + `--ok/--warn/--bad` classes. Move to the token system during the rebuild.
 
+### `/explore` — Query Explorer (NEW, shipped with a functional baseline — needs reskin)
+The constrained "fill-in-the-gaps" data explorer is **built and live** (`frontend/explore.rs`, engine `db/explore.rs`, route `/explore`, nav link). It ships with **functional, minimally-styled markup** (`.explore-form` flex row of `<select>`/inputs reading as a sentence; `.explore-table` result table). Reskin targets:
+- **[PROPOSED]** Style the builder as proper **chips/segmented controls** reading like a sentence (currently a plain flex row of native selects/inputs). Consider an "active filters" summary line.
+- **[PROPOSED]** Replace `origin`/`destination` CRS text inputs with the **station autocomplete** (`/ui/stations/search`) used on `/search`, so admins pick from the list rather than typing CRS.
+- **[PROPOSED]** **Chart views** for grouped results (bar for hour/operator, heatmap for weekday×hour, trend for day) using `charts.rs` SVG helpers — currently every result renders as a table.
+- **[PROPOSED]** A "save view" / shareable-URL affordance (the URL is already bookmarkable via `hx-push-url`) and quick-preset chips (e.g. "morning peak", "worst routes").
+- The fixed Tier-A catalogue pages (`/operators/:toc`, `/stations/:crs`) can be built as **curated explorer presets** rather than bespoke pages.
+
 ### `/demo` — retire/fold (see §1)
 - **[PROPOSED]** 🔒 **colour emoji** in the "Confirm & Pay" button (`demo.rs:910`) violates the no-emoji/inline-SVG rule → inline lock SVG (or removed with the purchase flow).
 - **[PROPOSED]** Dingbat status glyphs `✓ ✗ ⚠ ▶` used as icons across demo fragments → shared inline-SVG status-icon helper (reuse the dashboard `ICON_*` `PreEscaped` pattern).

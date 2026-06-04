@@ -8,6 +8,7 @@ pub enum NavPage {
     Dashboard,
     Departures,
     Predictions,
+    Explore,
     DevConsole,
     None,
 }
@@ -43,6 +44,7 @@ pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
                         (link("/", "Dashboard", NavPage::Dashboard))
                         (link("/search", "Departures", NavPage::Departures))
                         (link("/predictions", "Predictions", NavPage::Predictions))
+                        (link("/explore", "Explore", NavPage::Explore))
                         (link("/demo", "Dev Console", NavPage::DevConsole))
                     }
                 }
