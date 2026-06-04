@@ -7,12 +7,14 @@
 //!   - `static_data`: queries for Tier A read-only tables (stations, timetable_calls, fares)
 //!   - `history`:     load/flush for the Tier B delay_history table
 
+pub mod analytics;
 pub mod history;
 pub mod maintenance;
 pub mod operators;
 pub mod overview;
 pub mod predictions;
 pub mod static_data;
+pub mod stations;
 pub mod synthetic;
 
 use sqlx::postgres::PgPoolOptions;
