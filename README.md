@@ -142,7 +142,7 @@ The server starts on `0.0.0.0:3000` by default. Visit:
 |:-----------|:----------------------------------------------------------------|
 | `/`        | Dashboard — live system health, navigation                      |
 | `/search`  | Departure board — station autocomplete, live trains             |
-| `/demo`    | Developer Console — registry probe, event monitor, booking demo |
+| `/dev`     | Diagnostics — registry probe, event monitor, ingest UI          |
 | `/metrics` | Prometheus metrics endpoint                                     |
 | `/health`  | DB health probe                                                 |
 
@@ -155,7 +155,7 @@ src/
 ├── api/            REST handlers, SSE endpoint, response types
 ├── cache/          TrainRegistry (DashMap-backed, concurrent)
 ├── db/             sqlx queries — history flush, static data, timetables
-├── frontend/       maud page handlers (dashboard, search, detail, demo)
+├── frontend/       maud page handlers (dashboard, search, detail, dev)
 ├── ingestion/      Darwin STOMP client, XML parser, GTFS ingest
 ├── networking/     Coalescer, circuit breaker, rate limiter, GBR client
 ├── prediction/     Tier B engine — delay probability, confidence scoring
@@ -185,7 +185,7 @@ scripts/            Python ML training, data export, and DB seeding utilities
 
 ## What Isn't Here Yet
 
-**Live ticket purchase (Tier C).** The GBR Retail API purchase endpoint (`POST /bookings`) is not wired. The full booking UI exists — search, select, checkout, payment confirmation — and the `/demo` page simulates the complete flow, including the exact request body and idempotency key that would be sent. The blocker is API tier access: the GBR sandbox grants read access freely, but write (purchase) access requires a separate commercial agreement. The circuit breaker, idempotency layer, and `purchase_attempts` table are already built and ready to connect.
+**Live ticket purchase (Tier C).** The GBR Retail API purchase endpoint (`POST /bookings`) is not wired; the product surfaces a "Ticketing — coming soon" stub in its place. The blocker is API tier access: the GBR sandbox grants read access freely, but write (purchase) access requires a separate commercial agreement. The circuit breaker, idempotency layer, and `purchase_attempts` table are already built and ready to connect.
 
 ---
 
@@ -197,7 +197,7 @@ scripts/            Python ML training, data export, and DB seeding utilities
 
 **No JavaScript frameworks.** The frontend is `maud` (server-side HTML) + `htmx` for partial updates + a small amount of vanilla JS for the autocomplete event delegation and SSE event feed. No build step, no bundler, no hydration.
 
-**Predictability over cleverness.** The state machine, circuit breaker, and coalescer all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/demo`, `/metrics`, and the live event monitor.
+**Predictability over cleverness.** The state machine, circuit breaker, and coalescer all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/dev`, `/metrics`, and the live event monitor.
 
 **Dependency hygiene.** `cargo deny` enforces licence compatibility and blocks known-vulnerable crate versions on every build. Secrets are documented with rotation cadence in `SECURITY.md`; none are committed or logged.
 

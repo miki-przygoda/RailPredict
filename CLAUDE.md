@@ -130,7 +130,7 @@ RailPredict/                        ← repo root
             ├── layout.rs           ← base chrome; SSE error/reconnect banner JS
             ├── components.rs       ← delay_badge, platform_chip, prediction_chip
             ├── dashboard.rs        ← /  — hero + metrics grid + nav cards (with ML accuracy)
-            ├── demo.rs             ← /demo — Feature Lab, Purchase Demo, Predictions ledger
+            ├── dev.rs              ← /dev — internal diagnostics console (status, registry probe, ingest UI)
             ├── search.rs           ← departure board + journey search; uses station_index
             ├── detail.rs           ← train detail page + prediction card; htmx SSE live section
             └── predictions.rs      ← /predictions — public ML accuracy analytics page
