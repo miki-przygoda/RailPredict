@@ -64,6 +64,21 @@ See `TODOs/Improvements.md` (sections 8.3, 6.4, 5.6, 2.8) for full detail on eac
 
 ---
 
+## Tech Debt & Deferred Refactors
+
+Full ledger: **`docs/tech-debt.md`** (indexed against the read-only audit in `data/refactor-audit/`).
+
+**A. Approved refactors, pending implementation:**
+
+- **State-machine cut** — `from_departure`/`emergency_promote` + the `PollManager` registration plumbing (`PollManagerHandles`/`RegistrationMsg`) + `StateChangeEvent.reason` are production-dead; ingestion sets `TrainState` inline and the spawned `PollManager` loops on an empty heap. Decision: cut the dead rule engine + registration, keep the live inline logic.
+- **Association fix & wire** — the filter taxonomy needle is lowercase `b"association"` but real Darwin frames are `<Association>`, so every NP-association frame is dropped before the parser. The whole predecessor-delay / turnround signal is unreachable. Decision: fix the case-match, wire end-to-end, add a capital-`A` fixture.
+
+**B. Verified dead code / no-value items** (marked remove vs keep in the ledger): `trains_at_tiploc`, `is_empty`, `check_tiploc_cascade`/`cascade_trains_for_tiploc` (Tier-C-staged), `StateChangeEvent.reason`, `TrainStatus.cancellation_reason`, `TrainId::headcode` (keep — intentional API), `Stamped::is_stale`, JSON `/stations/search` + `StationResult.trains_today`, the journey self-join SQL in `frontend/` (move to `db/static_data.rs`), `wait_for_shutdown` startup-tail duplication, plus a masked-dead `#[allow]` sweep.
+
+**C. Tier-C production-handoff readiness** (deferred until prod with company creds + their historical data): reconcile `gbr_client.rs` RTT endpoint/auth/UID-vs-RID contract; wire `check_tiploc_cascade` into the delay path; operator league/drill-down stay empty until the GTFS ingest populates `services.toc`.
+
+---
+
 ## Strategic Notes (Carry-Forward)
 
 These are cross-cutting design decisions to keep in mind across all epics:
