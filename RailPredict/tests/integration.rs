@@ -232,3 +232,43 @@ async fn cancelled_train_emits_critical_state_change() {
     }
     assert!(saw_critical, "Expected Critical StateChangeEvent for cancelled train");
 }
+
+// ---------------------------------------------------------------------------
+// Test 3: NP Association turnround link is recorded end-to-end.
+//
+// Regression for the filter taxonomy bug: `<Association>` frames were classified
+// Drop (lowercase needle never matched the capital local-name), so they were filtered
+// out before the parser and the NP turnround predecessor-delay feature never ran.
+// This drives a real capital `<Association category="NP">` frame through the full
+// pipeline and asserts the registry recorded the predecessor link.
+// ---------------------------------------------------------------------------
+fn make_np_association_xml(main_rid: &str, assoc_rid: &str, ts: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?>
+<Pport ts="{ts}" version="16.0">
+  <uR>
+    <Association tiploc="LEEDS" category="NP">
+      <main rid="{main_rid}"/>
+      <assoc rid="{assoc_rid}"/>
+    </Association>
+  </uR>
+</Pport>"#
+    )
+}
+
+#[tokio::test]
+async fn np_association_frame_records_turnround_link() {
+    let main_rid = "202404170000010";
+    let assoc_rid = "202404170000011";
+    let payloads = vec![make_np_association_xml(main_rid, assoc_rid, "2024-04-17T12:00:01Z")];
+
+    let (pipeline, _sc_rx, registry) = build_pipeline(payloads);
+    let _ = pipeline.run().await;
+
+    assert_eq!(
+        registry.predecessor_rid(assoc_rid).as_deref(),
+        Some(main_rid),
+        "NP Association frame should record the turnround predecessor link \
+         (filter must route <Association> to the parser, not drop it)"
+    );
+}

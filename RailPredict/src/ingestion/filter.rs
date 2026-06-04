@@ -15,7 +15,7 @@
 //! | SF (forecast)   | `SF`                 | CONDITIONAL   | Supplementary; process only for known RIDs  |
 //! | Station Message | `OW`                 | DROP          | Passenger announcements; not machine-useful |
 //! | Train Alert     | `trainAlert`         | DROP          | Redundant with TS cancellation flag         |
-//! | Association     | `association`        | DROP          | Splitting/joining trains; out of scope v1   |
+//! | Association     | `Association` (NP)   | CONDITIONAL   | NP turnround → predecessor-delay feature    |
 //! | Alarm           | `alarm`              | DROP          | Internal NR system alarm; not relevant      |
 //!
 //! ## Sequence guard
@@ -74,16 +74,18 @@ static TAXONOMY: &[(&[u8], MessageDecision)] = &[
     (b"SF",          MessageDecision::Conditional),
     (b"OW",          MessageDecision::Drop),
     (b"trainAlert",  MessageDecision::Drop),
-    (b"association", MessageDecision::Drop),
+    // Capital `Association` (the parser's local-name) so NP turnround frames reach the
+    // parser instead of falling through to the default Drop. Conditional == Keep in
+    // `should_parse`; grouped with the supplementary tier.
+    (b"Association", MessageDecision::Conditional),
     (b"alarm",       MessageDecision::Drop),
 ];
 
 /// Returns `true` if the XML bytes contain `<{name}` or `:{name}` (namespace-qualified).
 fn contains_element(xml: &[u8], name: &[u8]) -> bool {
-    xml.windows(name.len() + 1).any(|w| {
-        (w[0] == b'<' || w[0] == b':') && &w[1..] == name
-            || w[0] == b'<' && w[1..].starts_with(name)
-    })
+    // Matches `<{name}` or `:{name}` (namespace-qualified, e.g. `<ns3:TS`).
+    xml.windows(name.len() + 1)
+        .any(|w| (w[0] == b'<' || w[0] == b':') && &w[1..] == name)
 }
 
 // ---------------------------------------------------------------------------
@@ -324,9 +326,14 @@ mod tests {
     }
 
     #[test]
-    fn association_classified_as_drop() {
-        let xml = b"<Pport><uR><association/></uR></Pport>";
-        assert_eq!(classify_message(xml), MessageDecision::Drop);
+    fn np_association_classified_as_conditional_not_dropped() {
+        // Real Darwin frames use the capital local-name `<Association>` (the parser
+        // matches that). It must reach the parser, not fall through to the default Drop,
+        // so the NP turnround predecessor-delay feature can run.
+        let xml = b"<Pport><uR><Association tiploc=\"X\" category=\"NP\"></Association></uR></Pport>";
+        assert_eq!(classify_message(xml), MessageDecision::Conditional);
+        // And it survives should_parse just like a TS message.
+        assert!(Filter::passthrough().should_parse(xml, None));
     }
 
     #[test]
