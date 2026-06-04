@@ -397,11 +397,6 @@ pub fn render_suggestion_list(
                 {
                     span .suggestion-name { (result.name) }
                     span .suggestion-crs { (result.crs) }
-                    @if result.trains_today > 0 {
-                        span .suggestion-trains { (result.trains_today) " today" }
-                    } @else {
-                        span .suggestion-trains .suggestion-no-service { "no service" }
-                    }
                 }
             }
         }
@@ -438,7 +433,7 @@ pub async fn station_suggestions_fragment(
     let hits = state.station_index.search(&q, 10);
     let results: Vec<StationResult> = hits
         .into_iter()
-        .map(|h| StationResult { crs: h.crs, name: h.name, trains_today: 0 })
+        .map(|h| StationResult { crs: h.crs, name: h.name })
         .collect();
 
     render_suggestion_list(&results, &crs_id, &q_id, &suggestions_id)
@@ -561,7 +556,7 @@ mod tests {
     }
 
     fn make_station(crs: &str, name: &str) -> StationResult {
-        StationResult { crs: crs.to_string(), name: name.to_string(), trains_today: 0 }
+        StationResult { crs: crs.to_string(), name: name.to_string() }
     }
 
     // ── departure_board_fragment ────────────────────────────────────────────
