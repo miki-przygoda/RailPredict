@@ -9,13 +9,13 @@
 //! - `search`      — `/search`           departure board + journey search (+ `/ui/stations/*`, `/ui/journeys`)
 //! - `predictions` — `/predictions`      prediction-accuracy analytics
 //! - `detail`      — `/trains/:rid/view` train detail (+ `/ui/trains/:rid/live` SSE)
-//! - `demo`        — `/demo`             developer console (+ `/ui/demo/*`)
+//! - `dev`         — `/dev`              internal diagnostics console (+ `/ui/dev/*`)
 //! - `charts` / `components` / `layout`  shared SVG, fragment, and chrome helpers
 
 pub mod charts;
 pub mod components;
 pub mod dashboard;
-pub mod demo;
+pub mod dev;
 pub mod detail;
 pub mod explore;
 pub mod layout;
