@@ -15,7 +15,6 @@
 //! | Constant                  | Method | Path                                          | Purpose                        |
 //! |---------------------------|--------|-----------------------------------------------|--------------------------------|
 //! | `ENDPOINT_TRAIN_STATUS`   | GET    | `/v1/train/{rid}/status`                      | Live status for one service    |
-//! | `ENDPOINT_DEPARTURES`     | GET    | `/v1/station/{crs}/departures`                | Departure board for a station  |
 //!
 //! Response shapes are defined as `serde` structs below. If GBR changes its schema,
 //! update here; nothing else in the codebase should parse raw GBR JSON.
@@ -34,7 +33,6 @@ use crate::types::{TrainId, TrainStatus};
 pub const GBR_API_BASE_URL: &str = "https://api.rtt.io/api";
 
 pub const ENDPOINT_TRAIN_STATUS: &str = "/v1/train/{rid}/status";
-pub const ENDPOINT_DEPARTURES: &str = "/v1/station/{crs}/departures";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -56,6 +54,50 @@ pub enum GbrClientError {
 
     #[error("Train {0} not found in GBR response")]
     NotFound(TrainId),
+}
+
+/// Cloneable classification of a [`GbrClientError`], preserved after the typed error
+/// is fanned out to many coalescer waiters (the error itself isn't `Clone` because of
+/// `reqwest::Error`). The circuit breaker routes on this, never on message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GbrErrorKind {
+    /// 503 — upstream unavailable; counts toward the breaker.
+    Unavailable,
+    /// 429 — rate limited; back off, do NOT trip the breaker.
+    RateLimited,
+    /// Transport failure (timeout, connection refused, DNS, TLS); counts toward the breaker.
+    Transport,
+    /// 5xx other than 503 (500/502/504); counts toward the breaker.
+    ServerError,
+    /// An unexpected non-5xx status that isn't 429.
+    ClientError,
+    /// Train not present in the GBR response.
+    NotFound,
+}
+
+impl GbrErrorKind {
+    /// Whether a failure of this kind should increment the circuit breaker. Only
+    /// genuine upstream brownouts (503 / transport / 5xx) do — rate-limiting and
+    /// client/not-found errors are not breaker failures.
+    pub fn is_breaker_failure(self) -> bool {
+        matches!(self, Self::Unavailable | Self::Transport | Self::ServerError)
+    }
+}
+
+impl GbrClientError {
+    /// Classify this error for circuit-breaker / rate-limit routing.
+    pub fn kind(&self) -> GbrErrorKind {
+        match self {
+            GbrClientError::ServiceUnavailable => GbrErrorKind::Unavailable,
+            GbrClientError::RateLimited => GbrErrorKind::RateLimited,
+            GbrClientError::Http(_) => GbrErrorKind::Transport,
+            GbrClientError::UnexpectedStatus { status, .. } if *status >= 500 => {
+                GbrErrorKind::ServerError
+            }
+            GbrClientError::UnexpectedStatus { .. } => GbrErrorKind::ClientError,
+            GbrClientError::NotFound(_) => GbrErrorKind::NotFound,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

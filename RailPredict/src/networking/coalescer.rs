@@ -24,21 +24,23 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::types::{TrainId, TrainStatus};
 
-use super::gbr_client::{GbrClient, GbrClientError};
+use super::gbr_client::{GbrClient, GbrClientError, GbrErrorKind};
 
 type Waiters = Vec<oneshot::Sender<Result<TrainStatus, CoalescerError>>>;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CoalescerError {
-    #[error("GBR request failed: {0}")]
-    GbrError(String),
+    /// A GBR call failed. `kind` carries the breaker-routing classification
+    /// (the underlying `GbrClientError` isn't `Clone`); `detail` is for logging.
+    #[error("GBR request failed [{kind:?}]: {detail}")]
+    Gbr { kind: GbrErrorKind, detail: String },
     #[error("In-flight request was dropped before completing")]
     InFlightDropped,
 }
 
 impl From<GbrClientError> for CoalescerError {
     fn from(e: GbrClientError) -> Self {
-        Self::GbrError(e.to_string())
+        Self::Gbr { kind: e.kind(), detail: e.to_string() }
     }
 }
 
@@ -91,7 +93,7 @@ impl Coalescer {
                 for tx in waiters {
                     let payload = match &result {
                         Ok(status) => Ok(status.clone()),
-                        Err(e) => Err(CoalescerError::GbrError(e.to_string())),
+                        Err(e) => Err(CoalescerError::Gbr { kind: e.kind(), detail: e.to_string() }),
                     };
                     // Ignore send errors: receiver may have timed out or been dropped.
                     let _ = tx.send(payload);
@@ -168,6 +170,27 @@ mod tests {
 
         // Only 1 HTTP call should have been made despite 5 callers.
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn gbr_errors_classify_for_breaker_routing() {
+        use GbrErrorKind::*;
+        assert_eq!(GbrClientError::ServiceUnavailable.kind(), Unavailable);
+        assert_eq!(GbrClientError::RateLimited.kind(), RateLimited);
+        assert_eq!(
+            GbrClientError::UnexpectedStatus { status: 502, body: String::new() }.kind(),
+            ServerError
+        );
+        assert_eq!(
+            GbrClientError::UnexpectedStatus { status: 404, body: String::new() }.kind(),
+            ClientError
+        );
+        // The breaker must count brownouts (503/transport/5xx) but NOT rate-limits or 4xx.
+        assert!(Unavailable.is_breaker_failure());
+        assert!(Transport.is_breaker_failure());
+        assert!(ServerError.is_breaker_failure());
+        assert!(!RateLimited.is_breaker_failure());
+        assert!(!ClientError.is_breaker_failure());
     }
 
     #[tokio::test]
