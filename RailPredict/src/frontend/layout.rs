@@ -7,7 +7,11 @@ use maud::{DOCTYPE, Markup, PreEscaped, html};
 pub enum NavPage {
     Dashboard,
     Departures,
+    // Operators/Stations: reserved for the upcoming league & station pages
+    // (step 0 adds the variants so steps 2/4 only add the nav `link(...)` line).
+    Operators,
     Predictions,
+    Stations,
     Explore,
     DevConsole,
     None,
@@ -41,11 +45,9 @@ pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
                         "RailPredict"
                     }
                     div .nav-links {
-                        (link("/", "Dashboard", NavPage::Dashboard))
-                        (link("/search", "Departures", NavPage::Departures))
+                        (link("/", "Overview", NavPage::Dashboard))
                         (link("/predictions", "Predictions", NavPage::Predictions))
                         (link("/explore", "Explore", NavPage::Explore))
-                        (link("/demo", "Dev Console", NavPage::DevConsole))
                     }
                 }
                 main { (content) }
@@ -89,7 +91,10 @@ mod tests {
     fn active_page_is_marked() {
         let html = base("Test", NavPage::Predictions, maud::html! { p { "x" } }).into_string();
         assert!(html.contains("aria-current=\"page\""), "marks active link: {html}");
-        assert!(html.contains("Dashboard"), "has dashboard link");
+        assert!(html.contains("Overview"), "has Overview nav link");
+        assert!(html.contains("Explore"), "has Explore nav link");
+        assert!(!html.contains("Dev Console"), "Dev Console removed from nav");
+        assert!(!html.contains(">Departures<"), "Departures removed from nav");
         assert!(!html.contains('\u{26A0}'), "emoji replaced with svg");
     }
 }
