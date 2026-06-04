@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.15" -- 04/06/2026**
+**version = "1.12.16" -- 04/06/2026**
 
 ---
+
+## v1.12.16 — 04/06/2026
+
+UI overhaul step 2 (Operators). New `/operators` punctuality league — operators
+ranked by on-time %, brand-coded with on-time bars, avg delay, per-operator
+prediction MAE and service counts — and `/operators/:toc` drill-down (brand hero,
+KPI strip, on-time trend, delay-distribution histogram, best/worst routes). Added
+"Operators" to the top nav, a `mae_mins` to the league query, and lifted the shared
+range helpers into `components`. Pages show branded empty states until the timetable
+ingest populates `services.toc`.
 
 ## v1.12.15 — 04/06/2026
 
