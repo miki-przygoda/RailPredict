@@ -71,14 +71,18 @@ pub async fn daily_series(db: &Db, hours: i32) -> sqlx::Result<Vec<DailyPoint>> 
 }
 
 /// Range-independent data-coverage totals shown in the cockpit footer strip.
+///
+/// `predictions_scored` counts finalised `prediction_outcomes` (predictions that
+/// have a recorded actual delay). Synthetic training rows are deliberately not
+/// surfaced here — they are an internal ML-training artefact, not product data.
 #[derive(Debug, Clone, Default, FromRow)]
 pub struct CoverageCounts {
     pub stations: i64,
     pub real_records: i64,
-    pub synthetic_records: i64,
+    pub predictions_scored: i64,
 }
 
-/// Total station and delay-history row counts (all-time, not windowed).
+/// Station, delay-history, and scored-prediction totals (all-time, not windowed).
 ///
 /// NOTE (perf): `real_records` is an exact `COUNT(*)` over the range-partitioned
 /// `delay_history` (~6.7M rows) and runs on every cockpit load. Kept exact for now
@@ -91,7 +95,8 @@ pub async fn coverage_counts(db: &Db) -> sqlx::Result<CoverageCounts> {
         SELECT
             (SELECT COUNT(*) FROM stations)                  AS stations,
             (SELECT COUNT(*) FROM delay_history)             AS real_records,
-            (SELECT COUNT(*) FROM delay_history_synthetic)   AS synthetic_records
+            (SELECT COUNT(*) FROM prediction_outcomes
+                WHERE finalised_at IS NOT NULL)              AS predictions_scored
         "#,
     )
     .fetch_one(db)

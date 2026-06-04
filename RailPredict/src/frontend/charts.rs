@@ -69,18 +69,105 @@ pub fn sparkline(values: &[f64]) -> Markup {
     }
 }
 
-/// KPI stat card: big mono figure + optional unit, trend (with polarity), and sparkline.
-pub fn kpi_card(label: &str, value: &str, unit: Option<&str>, delta: Option<(f64, Polarity)>, spark: Option<&[f64]>) -> Markup {
+/// Gradient-filled sparkline: the line plus a soft area fill fading to transparent.
+/// Colour comes from `currentColor` (caller sets it via a CSS class), so one helper
+/// serves every tone. `grad_id` must be unique per page — duplicate SVG gradient ids
+/// would all resolve to the first, so callers derive it from the card label.
+pub fn area_spark(values: &[f64], grad_id: &str) -> Markup {
+    const W: f64 = 120.0;
+    const H: f64 = 30.0;
+    const PAD: f64 = 2.0;
+    if values.len() < 2 {
+        return html! { svg .area-spark width=(W) height=(H) viewBox=(format!("0 0 {W} {H}")) role="img" aria-label="no data" {} };
+    }
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let range = if (max - min).abs() < f64::EPSILON { 1.0 } else { max - min };
+    let n = values.len();
+    let dx = (W - 2.0 * PAD) / (n as f64 - 1.0);
+    let pts: Vec<(f64, f64)> = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let x = PAD + dx * i as f64;
+            let y = PAD + (H - 2.0 * PAD) * (1.0 - (v - min) / range);
+            (x, y)
+        })
+        .collect();
+    let line = pts.iter().map(|(x, y)| format!("{x:.1},{y:.1}")).collect::<Vec<_>>().join(" ");
+    let (first_x, _) = pts[0];
+    let (last_x, _) = pts[pts.len() - 1];
+    let mut area = format!("M{:.1},{:.1} ", pts[0].0, pts[0].1);
+    for (x, y) in &pts[1..] {
+        area.push_str(&format!("L{x:.1},{y:.1} "));
+    }
+    area.push_str(&format!("L{last_x:.1},{H:.1} L{first_x:.1},{H:.1} Z"));
     html! {
-        div .kpi-card {
+        svg .area-spark width=(W) height=(H) viewBox=(format!("0 0 {W} {H}")) preserveAspectRatio="none" role="img" aria-label="trend sparkline" {
+            defs {
+                linearGradient id=(grad_id) x1="0" x2="0" y1="0" y2="1" {
+                    stop offset="0" stop-color="currentColor" stop-opacity="0.32" {}
+                    stop offset="1" stop-color="currentColor" stop-opacity="0" {}
+                }
+            }
+            path d=(area) fill=(format!("url(#{grad_id})")) {}
+            polyline points=(line) fill="none" stroke="currentColor" stroke-width="1.6" vector-effect="non-scaling-stroke" {}
+        }
+    }
+}
+
+/// Visual tone for a KPI card — drives the accent edge and sparkline colour.
+/// Tones map to the data semantic scale (`--ok`/`--warn`/`--bad`/`--info`); `Neutral`
+/// uses the muted text colour for figures that don't carry a good/bad judgement.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum KpiTone {
+    Neutral,
+    Ok,
+    Warn,
+    Bad,
+    Info,
+}
+
+impl KpiTone {
+    fn class(self) -> &'static str {
+        match self {
+            KpiTone::Neutral => "kpi-neutral",
+            KpiTone::Ok => "kpi-ok",
+            KpiTone::Warn => "kpi-warn",
+            KpiTone::Bad => "kpi-bad",
+            KpiTone::Info => "kpi-info",
+        }
+    }
+}
+
+/// KPI stat card: big mono figure + optional unit, optional caption, trend (with
+/// polarity), and a tone-coloured area sparkline. `tone` colours the accent edge and
+/// the sparkline; the gradient id is derived from `label` so multiple cards don't clash.
+#[allow(clippy::too_many_arguments)]
+pub fn kpi_card(
+    label: &str,
+    value: &str,
+    unit: Option<&str>,
+    caption: Option<&str>,
+    delta: Option<(f64, Polarity)>,
+    spark: Option<&[f64]>,
+    tone: KpiTone,
+) -> Markup {
+    let grad_id = format!(
+        "spk-{}",
+        label.to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+    );
+    html! {
+        div class=(format!("kpi-card {}", tone.class())) {
             div .kpi-label { (label) }
             div .kpi-value {
                 span .kpi-number { (value) }
                 @if let Some(u) = unit { span .kpi-unit { (u) } }
             }
+            @if let Some(c) = caption { div .kpi-cap { (c) } }
             div .kpi-foot {
                 @if let Some((d, pol)) = delta { (trend_arrow(d, pol)) }
-                @if let Some(s) = spark { span .kpi-spark { (sparkline(s)) } }
+                @if let Some(s) = spark { span .kpi-spark { (area_spark(s, &grad_id)) } }
             }
         }
     }
@@ -143,11 +230,38 @@ mod tests {
 
     #[test]
     fn kpi_card_renders_label_value_unit() {
-        let m = kpi_card("On-time", "92.4", Some("%"), Some((-1.2, Polarity::LowerIsBetter)), Some(&[1.0, 2.0, 3.0])).into_string();
+        let m = kpi_card(
+            "On-time",
+            "92.4",
+            Some("%"),
+            Some("live movement sample"),
+            Some((-1.2, Polarity::LowerIsBetter)),
+            Some(&[1.0, 2.0, 3.0]),
+            KpiTone::Ok,
+        )
+        .into_string();
         assert!(m.contains("On-time"));
         assert!(m.contains("92.4"));
         assert!(m.contains("kpi-unit"));
+        assert!(m.contains("kpi-cap"), "renders the caption");
+        assert!(m.contains("kpi-ok"), "applies the tone class");
         assert!(m.contains("trend-down"));
         assert!(m.contains("<polyline"));
+    }
+
+    #[test]
+    fn area_spark_has_unique_gradient_and_closed_area() {
+        let s = area_spark(&[1.0, 5.0, 2.0, 8.0], "spk-test").into_string();
+        assert!(s.contains("linearGradient id=\"spk-test\""), "unique gradient id: {s}");
+        assert!(s.contains("url(#spk-test)"), "area fills via the gradient: {s}");
+        assert!(s.contains("<polyline"), "line drawn on top: {s}");
+        assert!(s.trim_end().contains("Z\""), "area path closes: {s}");
+    }
+
+    #[test]
+    fn area_spark_empty_is_blank_frame() {
+        let s = area_spark(&[], "spk-x").into_string();
+        assert!(s.contains("<svg"), "still renders a frame: {s}");
+        assert!(!s.contains("<polyline"), "no line for empty data: {s}");
     }
 }
