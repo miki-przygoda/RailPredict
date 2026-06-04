@@ -417,30 +417,6 @@ pub async fn journey_handler(
 pub struct StationResult {
     pub crs: String,
     pub name: String,
-    /// Number of scheduled services at this station today (from timetable_calls).
-    /// Zero when GTFS data has not been ingested yet.
-    #[serde(default)]
-    pub trains_today: i64,
-}
-
-/// `GET /stations/search?q=<term>`
-///
-/// Returns up to 10 stations matching the query via the in-memory prefix index.
-/// Returns an empty array when `q` is shorter than 2 characters.
-pub async fn station_search_handler(
-    Query(params): Query<StationSearchQuery>,
-    State(state): State<AppState>,
-) -> Result<Json<Vec<StationResult>>, ApiError> {
-    let q = params.q.trim().to_string();
-    if q.len() < 2 {
-        return Ok(Json(vec![]));
-    }
-    let hits = state.station_index.search(&q, 10);
-    let results: Vec<StationResult> = hits
-        .into_iter()
-        .map(|h| StationResult { crs: h.crs, name: h.name, trains_today: 0 })
-        .collect();
-    Ok(Json(results))
 }
 
 // ---------------------------------------------------------------------------

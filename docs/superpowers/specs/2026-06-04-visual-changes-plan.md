@@ -64,6 +64,7 @@ Replace the demo console with product surfaces that already have backing data/qu
 - Shared `pence_to_pounds` + `compact_count` now live in `components.rs` (dedup; no render change).
 - `frontend/mod.rs` route doc corrected.
 - `--text-faint` token defined earlier (the undefined-var bug is already fixed; the dup remains, see above).
+- **[DONE — minor visual]** Station autocomplete suggestions no longer render the trains-count line. It was driven by `StationResult.trains_today`, an always-`0` field, so every suggestion showed a misleading "no service" label. The dead field + the orphan JSON `/stations/search` route were removed (tech-debt §B). **Leftover for the reskin:** the now-unused CSS classes `.suggestion-trains` and `.suggestion-no-service` in `static/style.css` can be dropped, and a real per-station service count could be wired into the suggestion if wanted.
 
 ---
 

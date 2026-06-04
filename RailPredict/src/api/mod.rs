@@ -205,7 +205,6 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/ui/journeys", get(search::journeys_fragment))
         // JSON API routes
         .route("/journeys", get(handlers::journey_handler))
-        .route("/stations/search", get(handlers::station_search_handler))
         .route("/stations/:crs/departures", get(handlers::departures_handler))
         .route("/trains/:rid", get(handlers::train_handler))
         .route("/trains/:rid/live", get(sse::live_handler))
