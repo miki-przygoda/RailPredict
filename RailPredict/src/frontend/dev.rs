@@ -65,7 +65,7 @@ pub async fn dev_page() -> Markup {
                         code { "v" (env!("CARGO_PKG_VERSION")) }
                     }
                 }
-                a .demo-back-link href="/" { "← Dashboard" }
+                a .demo-back-link href="/" { "← Overview" }
             }
 
             // ── System Status — full-width above the grid ─────────────────
