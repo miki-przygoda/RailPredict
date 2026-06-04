@@ -112,11 +112,10 @@ async fn query_stations(state: &AppState) -> Vec<StationRow> {
 }
 
 async fn query_hours(state: &AppState) -> Vec<HourRow> {
-    sqlx::query_as::<_, (f64, i64, f64, f64)>(
+    sqlx::query_as::<_, (f64, i64, f64)>(
         "SELECT EXTRACT(HOUR FROM recorded_at AT TIME ZONE 'Europe/London')::float8,
                 COUNT(*),
-                AVG(ABS(predicted_delay_mins - delay_mins))::float8,
-                AVG((predicted_delay_mins - delay_mins)::float8)
+                AVG(ABS(predicted_delay_mins - delay_mins))::float8
          FROM delay_history
          WHERE recorded_at > NOW() - INTERVAL '7 days'
            AND predicted_delay_mins IS NOT NULL
@@ -129,7 +128,7 @@ async fn query_hours(state: &AppState) -> Vec<HourRow> {
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(h, n, mae, _bias)| HourRow { hour: h as i64, n, mae })
+    .map(|(h, n, mae)| HourRow { hour: h as i64, n, mae })
     .collect()
 }
 
@@ -178,7 +177,7 @@ fn render(
                 div .pred-summary-row {
                     div .pred-stat-card {
                         span .pred-stat-label { "Predictions (24 h)" }
-                        span .pred-stat-value { (format_big(s.total)) }
+                        span .pred-stat-value { (compact_count(s.total, 0)) }
                     }
                     div .pred-stat-card {
                         span .pred-stat-label { "Mean abs. error" }
@@ -254,15 +253,15 @@ fn render(
                     div .pred-summary-row {
                         div .pred-stat-card {
                             span .pred-stat-label { "Total rows" }
-                            span .pred-stat-value { (format_big(s.total_rows)) }
+                            span .pred-stat-value { (compact_count(s.total_rows, 0)) }
                         }
                         div .pred-stat-card {
                             span .pred-stat-label { "Good-day rows" }
-                            span .pred-stat-value { (format_big(s.good_rows)) }
+                            span .pred-stat-value { (compact_count(s.good_rows, 0)) }
                         }
                         div .pred-stat-card {
                             span .pred-stat-label { "Average-day rows" }
-                            span .pred-stat-value { (format_big(s.average_rows)) }
+                            span .pred-stat-value { (compact_count(s.average_rows, 0)) }
                         }
                         div .pred-stat-card {
                             span .pred-stat-label { "On-time % (good days)" }
@@ -499,8 +498,4 @@ const SORT_JS: &str = r#"
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn format_big(n: i64) -> String {
-    if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
-    else if n >= 1_000 { format!("{:.0}k", n as f64 / 1_000.0) }
-    else { n.to_string() }
-}
+use super::components::compact_count;

@@ -29,15 +29,11 @@ use crate::{
     types::TrainId,
 };
 
-use super::{components::platform_chip, layout::{base, NavPage}};
+use super::{components::{pence_to_pounds, platform_chip}, layout::{base, NavPage}};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn pence_to_pounds(pence: i32) -> String {
-    format!("£{:.2}", pence as f64 / 100.0)
-}
 
 /// Pseudo-unique reference built from wall-clock nanos — no uuid crate needed.
 fn gen_idempotency_key() -> String {

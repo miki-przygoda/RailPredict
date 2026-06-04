@@ -1,6 +1,23 @@
-//! Reusable maud fragments used across search and detail pages.
+//! Reusable maud fragments and formatting helpers shared across pages.
 
 use maud::{Markup, html};
+
+/// Format pence as a pounds string, e.g. `1299 → "£12.99"`.
+pub fn pence_to_pounds(pence: i32) -> String {
+    format!("£{:.2}", pence as f64 / 100.0)
+}
+
+/// Compact human count: `1_284 → "1.3k"`, `6_700_000 → "6.7M"`.
+/// `k_decimals` controls the thousands precision (millions always use 1 dp).
+pub fn compact_count(n: i64, k_decimals: usize) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.*}k", k_decimals, n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
 
 /// Coloured status badge: green / amber / red driven by delay value.
 pub fn delay_badge(delay_mins: Option<i32>, is_cancelled: bool) -> Markup {

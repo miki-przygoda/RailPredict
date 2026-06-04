@@ -20,12 +20,8 @@ use crate::{
     types::TrainId,
 };
 
-use super::components::{delay_badge, platform_chip, prediction_chip};
+use super::components::{delay_badge, pence_to_pounds, platform_chip, prediction_chip};
 use super::layout::{base, NavPage};
-
-fn pence_to_pounds(pence: i32) -> String {
-    format!("£{:.2}", pence as f64 / 100.0)
-}
 
 /// Bucket a confidence value (0.0–1.0) into a coarse label for UI display.
 fn confidence_label(c: f32) -> &'static str {
