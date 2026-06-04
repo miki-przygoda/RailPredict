@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.14" -- 04/06/2026**
+**version = "1.12.15" -- 04/06/2026**
 
 ---
+
+## v1.12.15 — 04/06/2026
+
+UI overhaul step 1 (Overview cockpit polish). Elevated the `/` cockpit: KPI cards
+gained gradient surfaces, accent edges, captions and area-fill sparklines; added a
+live-status pill and a prediction-accuracy panel (within ±5 min %, scored count, MAE
+trend) replacing the empty operator-league box. Headline metrics already excluded
+synthetic data — the coverage strip now drops the synthetic chip for a real
+"predictions scored" count. New `charts::area_spark` + `KpiTone`; `db` gains an
+`AccuracySummary.within_5_count` and a `CoverageCounts.predictions_scored` figure.
 
 ## v1.12.14 — 04/06/2026
 

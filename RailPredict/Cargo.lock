@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "RailPredict"
-version = "1.12.14"
+version = "1.12.15"
 dependencies = [
  "anyhow",
  "async-stream",
