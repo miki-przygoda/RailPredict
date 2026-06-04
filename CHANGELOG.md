@@ -2,9 +2,24 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.8" -- 04/06/2026**
+**version = "1.12.9" -- 04/06/2026**
 
 ---
+
+## [1.12.9] — 2026-06-04
+### Fixed (production-readiness pass — robustness)
+- **Circuit breaker** now routes on a typed `GbrErrorKind` instead of `msg.contains("503")` — timeouts, transport failures, and GBR 500/502/504 finally trip it (previously only a literal "503" did, so a brownout would hammer upstream indefinitely).
+- **`journey_handler`** no longer leaks raw sqlx error text to clients (logs server-side, returns a generic message).
+- **Request-path DB queries** in `build_departure_board` now `tracing::warn!` on failure instead of silently serving an empty board.
+- **`/report`** (4 heavy aggregations over `delay_history`) moved off the un-rate-limited infra router onto the rate-limited router.
+- **`gbr_client` `run_date`** now rejects a malformed date instead of fabricating "today" (which silently corrupted departure times on the live path).
+### Changed (refactor / cleanup)
+- Reconciled the ONNX feature-count contract to the code (14 day / 22 rt) across the module doc, CLAUDE.md, and `LiveFeatures`; named the inference magic numbers.
+- DB layer: lone `query!` macro → runtime `query_as`; consistent MAE cast and rolling-window bound; `DailyPoint.day`; doc accuracy.
+- Removed dead code: unused `Config` fields (`gbr_api_*`, `darwin_*`), `PredictionEngine::with_store`/`arc_store`, `MockGbrClient::set_error`, `ENDPOINT_DEPARTURES`, stale `#[allow]`s, and the fictional "HFT flat-Vec" registry doc.
+- Deduped frontend formatters into `components.rs`; collapsed `station_congestion`/`operator_cascade` into one helper.
+- Unified the startup auto-ingest progress channel so `/ui/demo/ingest/stream` reflects it.
+- Recorded all deferred refactors (state-machine cut, association fix), remaining dead code, and Tier-C readiness in `docs/tech-debt.md`.
 
 ## [1.12.8] — 2026-06-04
 ### Added
