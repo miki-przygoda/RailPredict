@@ -7,6 +7,5 @@
 pub mod station_index;
 pub mod train_registry;
 
-#[allow(unused_imports)]
 pub use train_registry::TrainRegistry;
 pub use station_index::StationIndex;

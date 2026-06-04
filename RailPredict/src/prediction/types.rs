@@ -41,7 +41,7 @@ pub struct RollingStats {
 }
 
 /// Live Darwin / weather signals available when a train is in Active or Critical state.
-/// Used as the 6 extra features for the real-time ONNX model.
+/// Used as the 8 extra features for the real-time ONNX model.
 #[derive(Debug, Clone, Default)]
 pub struct LiveFeatures {
     /// Latest reported delay from Darwin (0.0 if unknown).

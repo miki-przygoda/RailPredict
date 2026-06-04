@@ -203,7 +203,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 ### ML Pipeline (`scripts/`)
 - `compare_models.py` trains day-ahead and real-time LightGBM models, applies equal-tier sample weighting to correct the severe-delay bias in the Darwin feed, and exports to ONNX
-- Feature count is fixed: 10 for day-ahead, 15 for real-time — changing this requires matching updates to `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`)
+- Feature count is fixed: 14 for day-ahead, 22 for real-time (= day-ahead + 8 live signals) — changing this requires matching updates to `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`)
 - `export_dataset.py` regenerates `dataset/delay_history.parquet` and the HuggingFace README from the live DB; run after each retrain
 
 ---
