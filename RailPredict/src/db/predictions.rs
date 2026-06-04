@@ -209,6 +209,48 @@ pub async fn accuracy_summary(db: &Db, window_hours: i32) -> sqlx::Result<Accura
     .fetch_one(db)
     .await
 }
+/// A recently settled prediction — for the live board's "just settled" zone.
+/// Operator name/brand fall back to NULL until `services.toc` is populated.
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct SettledOutcome {
+    pub rid: String,
+    pub uid: String,
+    pub operator: Option<String>,
+    pub brand_color: Option<String>,
+    pub origin_crs: String,
+    pub destination_crs: Option<String>,
+    pub predicted_delay_mins: i32,
+    pub final_delay_mins: i32,
+}
+
+/// The most-recently finalised predictions, newest first, capped at `limit`.
+pub async fn recent_settled(db: &Db, limit: i64) -> sqlx::Result<Vec<SettledOutcome>> {
+    sqlx::query_as::<_, SettledOutcome>(
+        r#"
+        SELECT
+            o.rid                   AS rid,
+            o.uid                   AS uid,
+            op.name                 AS operator,
+            op.brand_color          AS brand_color,
+            o.origin_crs            AS origin_crs,
+            o.destination_crs       AS destination_crs,
+            o.predicted_delay_mins  AS predicted_delay_mins,
+            o.final_delay_mins      AS final_delay_mins
+        FROM prediction_outcomes o
+        LEFT JOIN services  s  ON s.uid = o.uid
+        LEFT JOIN operators op ON op.toc = s.toc
+        WHERE o.finalised_at IS NOT NULL
+          AND o.final_delay_mins IS NOT NULL
+          AND o.final_delay_mins BETWEEN -120 AND 600
+        ORDER BY o.finalised_at DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // prediction_snapshots read path
 //

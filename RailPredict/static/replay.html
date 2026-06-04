@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RailPredict — Replay</title>
+<style>
+  /* Self-contained: tokens + board styles inlined so this page runs with no server
+     (open over file:// or any static host). Mirrors the board styles in style.css. */
+  :root {
+    --bg:#0a0e12; --surface:#12181f; --surface-2:#1a2129; --surface-3:#20212e;
+    --border:#232c36; --text:#e6edf3; --text-muted:#9aa7b4; --text-dim:#6b7785;
+    --accent:#f5a623; --accent-dim:rgba(245,166,35,.14);
+    --ok:#34d399; --ok-dim:rgba(52,211,153,.14); --warn:#f2c14e; --warn-dim:rgba(242,193,78,.14);
+    --bad:#f04545; --bad-dim:rgba(240,69,69,.14); --info:#4a9eff; --info-dim:rgba(74,158,255,.14);
+    --r-md:9px; --r-pill:999px;
+    --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono","Menlo",monospace;
+    --font-sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:radial-gradient(1100px 480px at 78% -12%, rgba(245,166,35,.07), transparent 60%), var(--bg);
+    color:var(--text); font-family:var(--font-sans); min-height:100vh; }
+  .wrap { max-width:1220px; margin:0 auto; padding:24px 26px 56px; }
+  .rhead { display:flex; align-items:center; gap:14px; padding-bottom:16px; margin-bottom:18px;
+    border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .rtitle { font:600 22px/1 var(--font-mono); letter-spacing:-0.02em; }
+  .rtitle .accent { color:var(--accent); }
+  .rspacer { flex:1; }
+  .rhead input[type=file] { font:500 12px var(--font-mono); color:var(--text-muted); }
+  .rbtn { font:600 12px var(--font-mono); color:#0a0e12; background:var(--accent); border:0;
+    padding:7px 16px; border-radius:var(--r-pill); cursor:pointer; }
+  .rsel { font:500 12px var(--font-mono); color:var(--text-muted); background:var(--surface);
+    border:1px solid var(--border); border-radius:var(--r-pill); padding:6px 10px; }
+  .rstatus { font:500 12px var(--font-mono); color:var(--text-dim); }
+
+  /* ---- board (mirrors style.css .tcard etc.) ---- */
+  .zones { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:900px){ .zones { grid-template-columns:1fr; } }
+  .zone-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:11px; }
+  .zone-head h2 { font:600 13px var(--font-mono); text-transform:uppercase; letter-spacing:.08em; color:var(--text-muted); }
+  .zone-head .ct { font:600 13px var(--font-mono); color:var(--text-dim); }
+  .tgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:560px){ .tgrid { grid-template-columns:1fr; } }
+  .tcard { position:relative; background:linear-gradient(165deg,var(--surface-2),var(--surface)); border:1px solid var(--border);
+    border-radius:var(--r-md); padding:12px 13px; overflow:hidden; }
+  .tcard::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--op,#9aa7b4); }
+  .tcard.fresh { animation:slidein .5s ease; }
+  @keyframes slidein { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+  .tc-top { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; }
+  .tc-hc { font:600 13px var(--font-mono); letter-spacing:.02em; }
+  .tc-op { font:500 10.5px var(--font-mono); color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; }
+  .tc-route { display:flex; align-items:center; gap:3px; font-size:14px; margin-bottom:9px; }
+  .tc-route code { font:600 13.5px var(--font-mono); color:var(--text); }
+  .tc-route .ar { color:var(--text-dim); margin:0 5px; }
+  .tc-bot { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .tc-sched { font:500 11.5px var(--font-mono); color:var(--text-dim); }
+  .pchip { font:600 11.5px var(--font-mono); padding:3px 9px; border-radius:var(--r-pill); }
+  .p-ontime { color:var(--ok); background:var(--ok-dim); }
+  .p-min { color:var(--warn); background:var(--warn-dim); }
+  .p-late { color:var(--bad); background:var(--bad-dim); }
+  .settled-row { display:flex; align-items:center; gap:7px; }
+  .pa { font:600 11.5px var(--font-mono); }
+  .pa.pred { color:var(--text-muted); }
+  .pa.act { color:var(--text); }
+  .settled-row .ar { color:var(--text-dim); }
+  .acc { font:600 10.5px var(--font-mono); padding:2px 7px; border-radius:var(--r-pill); margin-left:auto; }
+  .acc-good { color:var(--ok); background:var(--ok-dim); }
+  .acc-ok { color:var(--info); background:var(--info-dim); }
+  .acc-bad { color:var(--bad); background:var(--bad-dim); }
+  .panel-empty { color:var(--text-dim); font-size:13px; padding:18px 0; text-align:center; }
+  @media (prefers-reduced-motion: reduce){ .tcard.fresh { animation:none; } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="rhead">
+      <span class="rtitle">RailPredict <span class="accent">Replay</span></span>
+      <span class="rspacer"></span>
+      <input type="file" id="file" accept="application/json,.json">
+      <select id="speed" class="rsel" aria-label="Replay speed">
+        <option value="1">1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+        <option value="8">8×</option>
+      </select>
+      <button id="play" class="rbtn" type="button">Play</button>
+      <span id="status" class="rstatus">Load a capture JSON to replay.</span>
+    </div>
+    <div id="board" class="zones">
+      <p class="panel-empty">Load a capture recorded from the live board to replay it here — no server needed.</p>
+    </div>
+  </div>
+  <script src="board.js"></script>
+  <script src="replay.js"></script>
+</body>
+</html>

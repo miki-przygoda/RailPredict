@@ -39,7 +39,25 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
     let (_s, home) = app.get("/").await;
     assert!(home.contains(">Overview<"), "nav has Overview");
     assert!(home.contains(">Operators<"), "nav has Operators");
+    assert!(home.contains(">Live<"), "nav has Live");
     assert!(!home.contains("Dev Console"), "nav no longer shows Dev Console");
+
+    // Live board shell + its JSON snapshot feed.
+    let (s, b) = app.get("/live").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.contains("Live Network"), "live board shell");
+    assert!(b.contains("/static/board.js"), "loads the shared board renderer");
+
+    let (s, j) = app.get_json("/ui/live/snapshot").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(j["tracking"].is_array(), "snapshot has a tracking array");
+    assert!(j["settled"].is_array(), "snapshot has a settled array");
+
+    // Standalone replay page + its scripts are served (board.js shared with /live).
+    let (s, _) = app.get("/static/replay.html").await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = app.get("/static/board.js").await;
+    assert_eq!(s, StatusCode::OK);
 
     // Operators league (empty data in the test DB → branded empty-state, still 200).
     let (s, b) = app.get("/operators").await;

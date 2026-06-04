@@ -35,6 +35,17 @@ pub struct LiveDelay {
     pub delay_mins: i32,
 }
 
+/// An active train carrying a prediction — feeds the live board's "tracking" zone.
+#[derive(Debug, Clone)]
+pub struct TrackingTrain {
+    pub rid: String,
+    pub uid: Option<String>,
+    pub origin_crs: Option<String>,
+    pub destination_crs: Option<String>,
+    pub scheduled_departure: DateTime<Utc>,
+    pub predicted_delay_mins: i32,
+}
+
 /// Live network state derived from the registry snapshot.
 #[derive(Debug, Clone, Default)]
 pub struct NetworkSummary {
@@ -349,6 +360,32 @@ impl TrainRegistry {
         delays.truncate(worst_n);
         s.worst = delays;
         s
+    }
+
+    /// Active, non-cancelled trains that carry a prediction, soonest-departing
+    /// first, capped at `limit`. Feeds the live board's "tracking" zone.
+    pub async fn tracking_board(&self, limit: usize) -> Vec<TrackingTrain> {
+        let mut out: Vec<TrackingTrain> = Vec::new();
+        for arc in self.snapshot_all() {
+            let status = arc.read().await;
+            if status.is_cancelled.value == Some(true) {
+                continue;
+            }
+            let Some(predicted) = status.predicted_delay_mins.value else {
+                continue;
+            };
+            out.push(TrackingTrain {
+                rid: status.id.as_str().to_string(),
+                uid: status.uid.clone(),
+                origin_crs: status.origin_crs.clone(),
+                destination_crs: status.destination_crs.clone(),
+                scheduled_departure: status.scheduled_departure.value,
+                predicted_delay_mins: predicted,
+            });
+        }
+        out.sort_by_key(|t| t.scheduled_departure);
+        out.truncate(limit);
+        out
     }
 }
 

@@ -49,7 +49,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::{StationIndex, TrainRegistry},
     db::Db,
-    frontend::{dashboard, dev, detail, explore, operators, predictions, search},
+    frontend::{dashboard, dev, detail, explore, live, operators, predictions, search},
     ingestion::gtfs::IngestStatus,
     state_machine::StateChangeEvent,
 };
@@ -69,6 +69,8 @@ async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
                 "text/css; charset=utf-8"
             } else if path.ends_with(".js") {
                 "application/javascript"
+            } else if path.ends_with(".html") {
+                "text/html; charset=utf-8"
             } else {
                 "application/octet-stream"
             };
@@ -195,6 +197,8 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/search", get(search::search_page))
         .route("/operators", get(operators::operators_page))
         .route("/operators/:toc", get(operators::operator_page))
+        .route("/live", get(live::live_page))
+        .route("/ui/live/snapshot", get(live::live_snapshot))
         .route("/predictions", get(predictions::predictions_page))
         .route("/explore", get(explore::explore_page))
         .route("/trains/:rid/view", get(detail::detail_page))
