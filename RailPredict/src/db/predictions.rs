@@ -197,7 +197,7 @@ pub async fn accuracy_summary(db: &Db, window_hours: i32) -> sqlx::Result<Accura
             AVG(final_delay_mins::FLOAT8)                                  AS mean_actual_mins
         FROM prediction_outcomes
         WHERE finalised_at IS NOT NULL
-          AND finalised_at >= NOW() - $1::INT * INTERVAL '1 hour'
+          AND finalised_at > NOW() - $1::INT * INTERVAL '1 hour'
         "#,
     )
     .bind(window_hours)

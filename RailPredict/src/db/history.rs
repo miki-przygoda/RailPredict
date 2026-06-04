@@ -8,11 +8,9 @@
 //!
 //! Chunk size is 500 rows per INSERT to stay well under PG's 65535 parameter limit.
 //!
-//! ## Phase 3 (AdvancedAnalytics): departure_hour column
-//! The `ServicePattern` key now includes `departure_hour: u8`, so the window function
-//! partition and the unique conflict index include it. Existing rows in DB will have
-//! `departure_hour = 0` (the DEFAULT from the migration) until replaced by fresh
-//! observations with correct hour values.
+//! The `ServicePattern` key includes `departure_hour`, so the window-function
+//! partition and the unique conflict index are keyed on
+//! `(uid, weekday, origin_crs, departure_hour)`.
 
 use std::sync::Arc;
 

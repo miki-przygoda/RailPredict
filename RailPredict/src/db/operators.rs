@@ -121,8 +121,8 @@ pub async fn operator_detail(
             COALESCE(o.brand_color, '#9aa7b4')                                     AS brand_color,
             (AVG(CASE WHEN d.delay_mins <= 0 THEN 1.0 ELSE 0.0 END) * 100)::float8 AS on_time_pct,
             AVG(d.delay_mins::float8)                                              AS avg_delay_mins,
-            AVG(ABS(d.predicted_delay_mins - d.delay_mins)::float8)
-                FILTER (WHERE d.predicted_delay_mins IS NOT NULL)                  AS mae_mins,
+            (AVG(ABS(d.predicted_delay_mins - d.delay_mins))
+                FILTER (WHERE d.predicted_delay_mins IS NOT NULL))::float8         AS mae_mins,
             COUNT(*)                                                               AS sample_count
         FROM delay_history d
         JOIN services s ON s.uid = d.uid
