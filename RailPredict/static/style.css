@@ -2211,3 +2211,20 @@ details[open].checkout-dev-info summary::before   { content: "▼ "; }
 .cov-chip { display:flex; flex-direction:column; gap:2px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:8px 12px; }
 .cov-value { font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:16px; font-weight:600; }
 .cov-label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; }
+
+/* --- Query Explorer (functional baseline; full reskin pending — see visual-changes-plan) --- */
+.explore { max-width:1100px; }
+.explore h1 { margin-bottom:4px; }
+.explore-sub { color:var(--text-muted); margin-bottom:20px; max-width:72ch; }
+.explore-form { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:16px;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); margin-bottom:24px; }
+.explore-word { color:var(--text-muted); font-size:13px; }
+.explore-form select, .explore-form input { background:var(--surface-2); color:var(--text);
+  border:1px solid var(--border); border-radius:var(--r-sm); padding:5px 8px; font:inherit; }
+.explore-num { width:80px; }
+.explore-crs { width:72px; text-transform:uppercase; }
+.explore-note { color:var(--text-muted); font-size:13px; margin-bottom:8px; }
+.explore-empty { color:var(--text-muted); padding:32px; text-align:center; }
+.explore-table { width:100%; border-collapse:collapse; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+.explore-table th, .explore-table td { text-align:left; padding:6px 12px; border-bottom:1px solid var(--border); }
+.explore-table th { color:var(--text-muted); font-weight:600; }
