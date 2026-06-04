@@ -505,7 +505,7 @@ pub async fn run_ingest_from_file(db: &Db, path: &std::path::Path) -> anyhow::Re
 }
 
 /// Download `url`, stream progress into `tx`, then run the full ingest pipeline.
-/// Called by the HTTP ingest UI handler (POST /ui/demo/ingest/start).
+/// Called by the HTTP ingest UI handler (POST /ui/dev/ingest/start).
 pub async fn run_ingest_with_watch(
     db: &Db,
     url: &str,

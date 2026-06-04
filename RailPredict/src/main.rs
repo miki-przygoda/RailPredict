@@ -259,7 +259,7 @@ async fn main() -> anyhow::Result<()> {
     // Watch channel for GTFS ingest progress — updated by the ingest UI task.
     // Created here (before the startup auto-ingest below) so the same channel that
     // feeds `AppState.ingest_status` also carries startup-ingest progress, which the
-    // /ui/demo/ingest/stream SSE handler subscribes to.
+    // /ui/dev/ingest/stream SSE handler subscribes to.
     let (ingest_tx, _ingest_rx) = watch::channel(IngestStatus::default());
     let ingest_tx = Arc::new(ingest_tx);
 
@@ -277,7 +277,7 @@ async fn main() -> anyhow::Result<()> {
             if !gtfs_url.trim().is_empty() {
                 tracing::info!("Stations table empty — auto-ingesting from GTFS_URL on startup");
                 let auto_db = db_pool.clone();
-                // Use the SHARED ingest channel so demo SSE subscribers see startup progress.
+                // Use the SHARED ingest channel so dev SSE subscribers see startup progress.
                 let auto_tx = Arc::clone(&ingest_tx);
                 tokio::spawn(async move {
                     auto_tx.send_modify(|s| {
@@ -293,7 +293,7 @@ async fn main() -> anyhow::Result<()> {
             }
         } else {
             tracing::warn!(
-                "Stations table is empty — set GTFS_URL or use /demo to ingest timetable data"
+                "Stations table is empty — set GTFS_URL or use /dev to ingest timetable data"
             );
         }
     }
