@@ -2,9 +2,14 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.12" -- 04/06/2026**
+**version = "1.12.13" -- 04/06/2026**
 
 ---
+
+## [1.12.13] — 2026-06-04
+### Added
+- **Cancellations persistence:** new `cancellations` table + `db::cancellations`. Ingestion records one row per cancelled service when it deactivates (off the hot path, de-duped), so "% cancelled" can be real historically rather than estimated from live state. Forward-only, best-effort.
+- **Query Explorer v2:** three subjects — `observations` (delay_history), `predictions` (finalised prediction_outcomes → MAE / avg-confidence), `cancellations` (counts) — sharing one filter/group machinery; new metrics (p50/p90 via `percentile_cont`, MAE, avg confidence) with per-subject validation; a date-range filter alongside the window presets; and **CSV export** (`?format=csv`). Engine + HTTP tests across all subjects.
 
 ## [1.12.12] — 2026-06-04
 ### Added
