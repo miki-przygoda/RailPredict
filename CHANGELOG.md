@@ -2,9 +2,18 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.10" -- 04/06/2026**
+**version = "1.12.11" -- 04/06/2026**
 
 ---
+
+## [1.12.11] — 2026-06-04
+### Changed (tech-debt §B dead-code / no-value sweep)
+- Removed `trains_at_tiploc` (+ `TIPLOC_WINDOW_MINS` + its no-op test), dropped the stale `#[allow(dead_code)]` on `is_empty` (kept — satisfies clippy `len_without_is_empty`), and removed `TrainStatus.cancellation_reason` (always-None dead data on the hot-path struct + SSE payloads).
+- Removed never-constructed `ParseError::Empty`, parsed-and-discarded `GtfsTrip.trip_headsign`, the single-use `extract_stops_txt` wrapper, and the stale `#[allow(unused_imports)]` on `types/mod.rs`.
+- Removed the orphan JSON `/stations/search` route + handler and the always-zero `StationResult.trains_today` field (the autocomplete no longer shows a misleading "no service"; logged in the visual-changes-plan).
+- Moved the duplicated `timetable_calls` self-join out of `frontend/` into `db::static_data::direct_journeys(from, to, date, limit)` (called from both search + demo), with a new sqlx::test.
+- Deduped the two startup paths via `build_station_index` + `assemble_app_state` so the normal and ingestion-disabled (`wait_for_shutdown`) paths share one `AppState` definition.
+- Kept (intentional): `db::operators::list_operators` (Phase 3 `/operators` UI), `TrainId::headcode` (public API), `Stamped::is_stale`, and the Tier-C-staged `check_tiploc_cascade`.
 
 ## [1.12.10] — 2026-06-04
 ### Changed (two approved surgeries from docs/tech-debt.md §A)
