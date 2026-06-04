@@ -2,9 +2,18 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.7" -- 03/06/2026**
+**version = "1.12.8" -- 04/06/2026**
 
 ---
+
+## [1.12.8] — 2026-06-04
+### Added
+- Dashboard overhaul **Phase 3–5 data layer** (backend-only, fully `sqlx::test`-covered, no UI yet): the read/query foundations the operator, prediction-explorer, and station-explorer pages will render on top of. Built so they could be implemented and verified entirely without a browser.
+  - `db/predictions.rs`: `prediction_snapshots` read path — `snapshots_for_rid`, `convergence_for_rid` (per-train predicted-vs-actual convergence trail), and `leadtime_accuracy` (mean absolute error bucketed by minutes-before-departure).
+  - `db/operators.rs`: per-operator drill-down — `operator_detail`, `operator_daily_series` (punctuality trend), `operator_delay_distribution`, `operator_routes` (O–D pairs ranked by avg delay). All via the query-time `delay_history ⋈ services` JOIN on `uid` — no writes to the large tables.
+  - `db/analytics.rs` (new): prediction-accuracy analytics — `calibration_curve`, `confidence_error`, `error_distribution` (signed-error bias histogram), `accuracy_over_time`. No day-ahead/real-time split (the outcomes ledger has no model discriminator).
+  - `db/stations.rs` (new): per-station explorer — `station_summary`, `station_heatmap` (delay by weekday×hour), `station_busiest_services`.
+  - 23 new `sqlx::test` DB tests. Clippy cleaned tree-wide (dead import, collapsible-if let-chains, complex-type alias).
 
 ## [1.12.7] — 2026-06-03
 ### Changed
