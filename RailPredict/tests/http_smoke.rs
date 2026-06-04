@@ -24,6 +24,21 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
     assert_eq!(s, StatusCode::OK);
     assert!(b.contains("ML Predictions"));
 
+    // Diagnostics console moved to /dev; the old /demo route is gone.
+    let (s, b) = app.get("/dev").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.contains("Diagnostics"), "dev console markup unexpected");
+    assert!(!b.contains("Tier C"), "tier framing removed");
+    assert!(!b.contains("Confirm & Pay"), "simulated purchase removed");
+
+    let (s, _) = app.get("/demo").await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "/demo retired");
+
+    // Top nav no longer advertises the dev console.
+    let (_s, home) = app.get("/").await;
+    assert!(home.contains(">Overview<"), "nav has Overview");
+    assert!(!home.contains("Dev Console"), "nav no longer shows Dev Console");
+
     // Health JSON (DB reachable via the test pool → "ok")
     let (s, j) = app.get_json("/health").await;
     assert_eq!(s, StatusCode::OK);

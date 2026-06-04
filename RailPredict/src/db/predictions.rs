@@ -9,7 +9,7 @@
 //!     reported delay into `final_delay_mins` / `finalised_at`.
 //!
 //! Two read entry points:
-//!   - `recent_predictions` — feeds the `/demo/predictions` developer panel.
+//!   - `recent_predictions` — feeds the `/dev/predictions` developer panel.
 //!   - `prediction_for_rid` — surfaces the persisted snapshot on the train detail page.
 
 use chrono::{DateTime, Utc};
@@ -142,7 +142,7 @@ pub async fn finalise_outcome(
 }
 
 /// Most recent predictions (finalised or not), ordered newest first.
-/// Feeds the `/demo/predictions` developer panel.
+/// Feeds the `/dev/predictions` developer panel.
 pub async fn recent_predictions(db: &Db, limit: i64) -> sqlx::Result<Vec<PredictionOutcome>> {
     sqlx::query_as::<_, PredictionOutcome>(
         r#"

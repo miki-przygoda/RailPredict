@@ -9,6 +9,7 @@
 //! | GET    | /trains/{rid}                      | B    | `TrainSummary`              | Registry; 404 if unknown          |
 //! | GET    | /trains/{rid}/live                 | C    | SSE `LiveUpdateEvent` JSON  | Heartbeat 15s; closes on Terminal |
 //! | GET    | /                                  | —    | HTML dashboard              | system status + navigation; no rate limit |
+//! | GET    | /dev                               | —    | HTML diagnostics console    | off-nav; internal use             |
 //! | GET    | /search                            | —    | HTML search page            | maud server-rendered              |
 //! | GET    | /trains/{rid}/view                 | B/C  | HTML detail page            | maud + htmx SSE                   |
 //! | GET    | /ui/stations/departures?crs=XXX    | A    | HTML fragment               | htmx swap target                  |
