@@ -258,6 +258,13 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::warn!(error = %e, "Registry warm-up from timetable skipped"),
     }
 
+    // Watch channel for GTFS ingest progress — updated by the ingest UI task.
+    // Created here (before the startup auto-ingest below) so the same channel that
+    // feeds `AppState.ingest_status` also carries startup-ingest progress, which the
+    // /ui/demo/ingest/stream SSE handler subscribes to.
+    let (ingest_tx, _ingest_rx) = watch::channel(IngestStatus::default());
+    let ingest_tx = Arc::new(ingest_tx);
+
     // --- Auto-ingest: seed stations on first run if GTFS_URL is configured ---
     // If the stations table is empty AND GTFS_URL is set, kick off a background
     // ingest so the departure board and autocomplete work immediately without
@@ -272,7 +279,8 @@ async fn main() -> anyhow::Result<()> {
             if !gtfs_url.trim().is_empty() {
                 tracing::info!("Stations table empty — auto-ingesting from GTFS_URL on startup");
                 let auto_db = db_pool.clone();
-                let auto_tx = Arc::new(watch::Sender::new(IngestStatus::default()));
+                // Use the SHARED ingest channel so demo SSE subscribers see startup progress.
+                let auto_tx = Arc::clone(&ingest_tx);
                 tokio::spawn(async move {
                     auto_tx.send_modify(|s| {
                         s.phase = IngestPhase::Downloading;
@@ -295,10 +303,6 @@ async fn main() -> anyhow::Result<()> {
     // Single broadcast channel shared by PollManager, IngestionPipeline, and SSE handlers.
     let (sc_tx, _initial_rx) = broadcast::channel(1024);
     drop(_initial_rx);
-
-    // Watch channel for GTFS ingest progress — updated by the ingest UI task.
-    let (ingest_tx, _ingest_rx) = watch::channel(IngestStatus::default());
-    let ingest_tx = Arc::new(ingest_tx);
 
     let token = CancellationToken::new();
 
