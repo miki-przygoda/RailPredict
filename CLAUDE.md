@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.9" -- 04/06/2026**
+**version = "1.12.10" -- 04/06/2026**
 
 ---
 
@@ -152,7 +152,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 ### State Machine
 
-> **Current status (deferred):** This transition table and the `PollManager` describe the *intended* design. In production the rule engine (`from_departure`/`emergency_promote`) and the `PollManager` registration channel are **bypassed** — ingestion sets `TrainState` inline (`ingestion/mod.rs`) and the spawned `PollManager` loops on an empty heap. Slated for a cut; see `docs/tech-debt.md` §A1.
+> **Current status:** the rule engine (`from_departure`/`emergency_promote`) and `PollManager` were **removed** (commit `be012f7`). Ingestion sets `TrainState` inline per the thresholds above — this table is the conceptual model, not a live code path. `StateChangeEvent` (now in `train_state.rs`) still drives the live ingestion→SSE notifications. A real poll scheduler will be (re)built with Tier C. See `docs/tech-debt.md` §A1.
 
 | State       | Trigger Condition                          | Polling Behaviour               |
 |:------------|:-------------------------------------------|:--------------------------------|
@@ -175,10 +175,10 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - Use `chrono` for all timestamps; always distinguish `scheduled_departure`, `public_departure`, `actual_estimated_departure`
 
 ### State Machine (`src/state_machine/`)
-> **Current status (deferred):** the rule engine + `PollManager` registration are production-dead (ingestion sets states inline); slated for a cut — see `docs/tech-debt.md` §A1.
-- `enum TrainState { Dormant, Monitored, Active, Critical, Terminal }`
-- Single global `PollManager` with a `BinaryHeap` ordered by next-poll time — never one `tokio::spawn` per train
-- State changes broadcast via bounded `mpsc` (`STATE_CHANGE_BUFFER=256`); the API/UI layer subscribes — never locks the registry to check for changes
+> **Current status:** the rule engine + `PollManager` were removed (commit `be012f7`); ingestion sets states inline. See `docs/tech-debt.md` §A1.
+- `enum TrainState { Dormant, Monitored, Active, Critical, Terminal }` — the urgency vocabulary, set inline by the ingestion pipeline
+- `StateChangeEvent`s are broadcast on a `tokio::broadcast` channel (capacity 1024) emitted from ingestion; the API/SSE layer subscribes — never locks the registry to check for changes
+- A single-`BinaryHeap` global poll scheduler (one task, never `tokio::spawn` per train) is the pattern to use when Tier C live polling is (re)built
 
 ### Networking (`src/networking/`)
 - Request coalescing (`coalescer.rs`): if a request for a `TrainId` is already in-flight, register a `oneshot` sender and wait; first responder fans the result to all waiters
@@ -190,7 +190,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - `SequenceGuard` in `filter.rs` prevents stale overwrites and handles STOMP reconnect replays; never overwrite a newer update with a late-arriving older one
 - `PipelineContext` holds `Arc`-backed shared state (registry, broadcast tx, prediction engine, filter) so shared state survives STOMP reconnects; only the STOMP client is replaced
 - `check_tiploc_cascade` in `filter.rs` detects knock-on delays via the TIPLOC index in `train_registry.rs` — wire into `ingestion/mod.rs` when Tier C is active. **Current status:** staged/inert (no production caller); see `docs/tech-debt.md` §C2.
-- **NP-association path is currently inert:** the filter taxonomy needle is lowercase `b"association"` but real Darwin frames are `<Association>`, so association frames are dropped before the parser and the predecessor-delay signal never runs. Pending a case-fix + wire — see `docs/tech-debt.md` §A2.
+- **NP-association path:** fixed & wired (commit `caab859`) — the filter now routes capital `<Association>` frames (`Conditional`) to the parser, so the turnround predecessor-delay signal flows end-to-end (covered by an integration test). See `docs/tech-debt.md` §A2.
 
 ### Prediction Engine (`src/prediction/`)
 - `ServicePattern` is keyed on `(uid, weekday, origin_crs, departure_hour)` — stable recurring-service identity, not the daily-changing RID
@@ -215,7 +215,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 These are the key patterns worth preserving as the codebase grows:
 
-**Single global scheduler, not per-train tasks.** `PollManager` uses a `BinaryHeap<(Instant, TrainId)>` so the number of tokio tasks stays O(1) regardless of how many trains are tracked. Never spawn a dedicated `tokio::spawn` per train for polling.
+**Single global scheduler, not per-train tasks (design principle).** The removed `PollManager` used one `BinaryHeap<(Instant, TrainId)>` so tokio task count stayed O(1) regardless of train count. When Tier C live polling is (re)built, keep that pattern — never spawn a dedicated `tokio::spawn` per train for polling.
 
 **Fan-out via oneshot channels.** The coalescer in `networking/coalescer.rs` deduplicates concurrent in-flight requests: the first caller drives the HTTP request, late arrivals attach a `oneshot::Receiver`. This prevents N identical outbound calls when N users load the same train page simultaneously.
 

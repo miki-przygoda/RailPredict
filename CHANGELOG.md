@@ -2,9 +2,15 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.9" -- 04/06/2026**
+**version = "1.12.10" -- 04/06/2026**
 
 ---
+
+## [1.12.10] — 2026-06-04
+### Changed (two approved surgeries from docs/tech-debt.md §A)
+- **State-machine cut** (`be012f7`): removed the production-dead rule engine (`from_departure`, `emergency_promote`, `poll_interval`, `PromotionReason`) and deleted `poll_manager.rs` entirely (the inert `PollManager` + registration plumbing + its `main.rs` spawn and `pm_task` shutdown threading). Kept the live inline transition logic; `StateChangeEvent` (minus the write-only `reason`) moved to `train_state.rs` and still drives the ingestion→broadcast→SSE notifications. Net −525/+42.
+### Fixed
+- **NP association turnround wired up** (`caab859`): the ingestion filter taxonomy used a lowercase `b"association"` needle that never matched the real capital `<Association>` frames, so they were dropped before the parser — leaving the predecessor-delay / turnround predictive signal unreachable. Taxonomy now routes capital `Association` (`Conditional`) to the parser; a new end-to-end integration test drives a real `<Association category="NP">` frame through the pipeline and asserts `registry.predecessor_rid()` is populated.
 
 ## [1.12.9] — 2026-06-04
 ### Fixed (production-readiness pass — robustness)

@@ -10,9 +10,9 @@ Severity/category tags (`[HIGH] DEAD`, `[MED] RISK`, …) match the audit's own 
 
 ---
 
-## A. Decided refactors — approved, not yet done
+## A. Decided refactors — completed
 
-These two were reviewed and a direction was chosen. They are pending implementation.
+Both were reviewed, a direction chosen, and **implemented**. Retained here for provenance.
 
 ### A1. State-machine cut (rule engine + registration are production-dead)
 
@@ -23,7 +23,7 @@ These two were reviewed and a direction was chosen. They are pending implementat
   - `main.rs:306` — `let (poll_manager, _pm_handles) = PollManager::new(...)`: the handles are bound to `_pm_handles` and never sent a single registration.
   - `ingestion/mod.rs:381-382,440-441` — ingestion hardcodes `TrainState::Active` / `Critical` / `Terminal` inline, bypassing the rule set.
 - **Current state:** The authoritative transition rule set (`from_departure`/`emergency_promote`) and the whole `PollManager` registration channel are dead in production. No train is ever registered, so the spawned `PollManager::run()` loop sits forever on an empty heap and the global scheduler does nothing live. Real state transitions are emitted inline from the ingestion pipeline.
-- **Decision / status:** **Cut** the dead rule engine + registration plumbing (`from_departure`, `emergency_promote`, `PollManagerHandles`/`RegistrationMsg`/`push_registration`, and `StateChangeEvent.reason`); keep the live inline logic in `ingestion/mod.rs` that actually drives transitions. **Status: pending.**
+- **Decision / status:** **DONE — commit `be012f7`.** Cut `from_departure`, `emergency_promote`, `poll_interval`, and `PromotionReason`; deleted `poll_manager.rs` entirely (PollManager + registration + the `main.rs` spawn and `pm_task` threading through both shutdown paths) and removed `StateChangeEvent.reason`. `StateChangeEvent` moved to `train_state.rs`; the live ingestion→broadcast→SSE path is intact (verified by the Critical/Terminal integration tests). Net −525/+42.
 - **Audit:** `data/refactor-audit/core-types-statemachine.md` §2 (HIGH/MED rows) + §3 first bullet.
 
 ### A2. Association feature fix & wire (NP predecessor-delay signal is unreachable)
@@ -35,7 +35,7 @@ These two were reviewed and a direction was chosen. They are pending implementat
   - `ingestion/mod.rs:275` — reads `predecessor_delay` from the registry into the volatility context.
   - `types/volatility.rs:61` (`predecessor_train_delay_mins`), `prediction/types.rs:64` (`predecessor_train_delay`), `prediction/engine.rs:203`, `prediction/onnx_engine.rs:62,161` — the downstream ML feature.
 - **Current state:** Real Darwin frames are `<Association>` (capital A), but the filter-first taxonomy drops them on a lowercase needle before the parser that handles them ever runs. The entire predecessor-delay / turnround predictive signal — parser arm → `record_association` → volatility `predecessor_train_delay` → ONNX real-time feature — is therefore unreachable in the live pipeline. Only the synthetic lowercase test frame exercises the DROP branch.
-- **Decision / status:** **Fix** the case-match (taxonomy → `Keep`/`Conditional` for capital `b"Association"` with route filtering), wire the path end-to-end, and add a capital-`A` Darwin frame fixture so a regression would actually be caught. **Status: pending.**
+- **Decision / status:** **DONE — commit `caab859`.** Taxonomy is now `(b"Association", MessageDecision::Conditional)`; `contains_element` simplified (the redundant second clause removed). A new end-to-end integration test (`np_association_frame_records_turnround_link`) drives a real `<Association category="NP">` frame through the full pipeline and asserts `registry.predecessor_rid()` is populated; the filter unit test now asserts Conditional, not Drop.
 - **Audit:** `data/refactor-audit/networking-ingestion.md` §2 (first HIGH row) + §3 second bullet.
 
 ---
@@ -50,7 +50,7 @@ Each is marked **remove** or **keep** (intentional / Tier-C-staged).
 | `trains_at_tiploc` | `cache/train_registry.rs:290` | Test-only; only `cascade_trains_for_tiploc` is wired (into the currently-dead `check_tiploc_cascade`). ~22 lines of hot-path code, never invoked live. | **remove** (unless Tier-C cascade wiring is imminent). |
 | `is_empty` | `cache/train_registry.rs:186` | Carries `#[allow(dead_code)]`; used only by tests (`:536`, `:542`). | **remove** or convert `#[allow(dead_code)]` → `#[cfg(test)]`. |
 | `check_tiploc_cascade` + `cascade_trains_for_tiploc` | `ingestion/filter.rs:210`, `cache/train_registry.rs:323` | Tier-C-staged; no production caller. CLAUDE.md says wired "when Tier C is active". | **keep (Tier-C-staged)** — see §C2; gate behind a tracking issue rather than a free-floating TODO. |
-| `StateChangeEvent.reason` | `state_machine/poll_manager.rs:67` | Write-only; no consumer reads it. | **remove** (part of A1). |
+| `StateChangeEvent.reason` | (was `state_machine/poll_manager.rs:67`) | Write-only; no consumer read it. | ✓ **removed** (A1, `be012f7`). |
 | `TrainStatus.cancellation_reason` | `types/train_status.rs:115,171` | Initialised `Stamped::new(None)`; never written from any source nor read. Dead data on the hot-path struct (and SSE payloads). | **remove** until a Darwin cancellation-reason source populates it. |
 | `TrainId::headcode` constructor | `types/train_id.rs:60` | Constructor + its `InvalidHeadcodeLength/Format` errors have no production caller (only tests); `rid`/`uid` are used. Re-exported via `lib.rs`. | **keep (intentional API)** — Headcode variant is plausibly deliberate public surface; drop only if Darwin headcode ingestion is ruled out. |
 | `Stamped::is_stale` | `types/train_status.rs:47` | Carries `#[allow(dead_code)]`; only tests call it. Per-field staleness was the stated reason `Stamped` exists, yet nothing in production checks it. | **keep (honest allow / unfinished feature)** — or wire into a consumer (e.g. `api/types.rs` "seconds since updated" computes age manually). |
