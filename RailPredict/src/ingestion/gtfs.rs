@@ -82,8 +82,6 @@ struct GtfsTrip {
     route_id: String,
     trip_id: String,
     service_id: String,
-    #[allow(dead_code)]
-    trip_headsign: Option<String>,
 }
 
 /// A single row from GTFS `agency.txt`.
@@ -335,11 +333,6 @@ fn extract_file(zip_bytes: &[u8], filename: &str) -> anyhow::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Thin wrapper around `extract_file` for the mandatory `stops.txt`.
-fn extract_stops_txt(zip_bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
-    extract_file(zip_bytes, "stops.txt")
-}
-
 // ---------------------------------------------------------------------------
 // DB upsert functions
 // ---------------------------------------------------------------------------
@@ -530,7 +523,7 @@ pub async fn run_ingest_with_watch(
 async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watch::Sender<IngestStatus>>) -> anyhow::Result<usize> {
     // --- Phase 1: Stations ---
     emit(progress, |s| { s.phase = IngestPhase::Parsing; s.push_log("Extracting stations"); });
-    let stops_bytes = extract_stops_txt(zip_bytes)?;
+    let stops_bytes = extract_file(zip_bytes, "stops.txt")?;
     let stations = parse_stops(&stops_bytes)?;
     let station_count = stations.len();
     tracing::info!(stations = station_count, "Parsed GTFS stops");
@@ -949,9 +942,9 @@ abc,lowercase should be skipped,,
     #[test]
     fn derive_uid_toc_resolves_via_route_first_seen_wins() {
         let trips = vec![
-            GtfsTrip { route_id: "R1".into(), trip_id: "C12345_20240417".into(), service_id: "WD".into(), trip_headsign: None },
-            GtfsTrip { route_id: "R2".into(), trip_id: "C12345_20240418".into(), service_id: "WD".into(), trip_headsign: None },
-            GtfsTrip { route_id: "RX".into(), trip_id: "D99999_20240417".into(), service_id: "WD".into(), trip_headsign: None },
+            GtfsTrip { route_id: "R1".into(), trip_id: "C12345_20240417".into(), service_id: "WD".into() },
+            GtfsTrip { route_id: "R2".into(), trip_id: "C12345_20240418".into(), service_id: "WD".into() },
+            GtfsTrip { route_id: "RX".into(), trip_id: "D99999_20240417".into(), service_id: "WD".into() },
         ];
         let mut routes = HashMap::new();
         routes.insert("R1".to_string(), "GW".to_string());

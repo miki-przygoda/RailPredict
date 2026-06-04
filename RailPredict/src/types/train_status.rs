@@ -112,7 +112,6 @@ pub struct TrainStatus {
     // --- Cancellation ---
 
     pub is_cancelled: Stamped<Option<bool>>,
-    pub cancellation_reason: Stamped<Option<String>>,
 
     // --- Origin station ---
 
@@ -168,7 +167,6 @@ impl TrainStatus {
             actual_platform: Stamped::new(None),
             working_departure: None,
             is_cancelled: Stamped::new(None),
-            cancellation_reason: Stamped::new(None),
             origin_crs: None,
             destination_crs: None,
             uid: None,
