@@ -98,12 +98,7 @@ fn fmt_opt(v: Option<f64>, prec: usize) -> String {
     }
 }
 
-/// Compact human count: 1_284 → "1.3k", 6_700_000 → "6.7M".
-fn fmt_big(n: i64) -> String {
-    if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
-    else if n >= 1_000 { format!("{:.1}k", n as f64 / 1_000.0) }
-    else { n.to_string() }
-}
+use super::components::compact_count;
 
 #[allow(clippy::too_many_arguments)]
 fn render_cockpit(
@@ -210,9 +205,9 @@ fn render_cockpit(
             }
 
             div .coverage-strip {
-                (coverage_chip("Stations", fmt_big(coverage.stations)))
-                (coverage_chip("Real delay records", fmt_big(coverage.real_records)))
-                (coverage_chip("Synthetic records", fmt_big(coverage.synthetic_records)))
+                (coverage_chip("Stations", compact_count(coverage.stations, 1)))
+                (coverage_chip("Real delay records", compact_count(coverage.real_records, 1)))
+                (coverage_chip("Synthetic records", compact_count(coverage.synthetic_records, 1)))
             }
         }
     }

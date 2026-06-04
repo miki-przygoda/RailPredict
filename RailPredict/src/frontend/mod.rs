@@ -4,11 +4,13 @@
 //! `htmx` (loaded from CDN) drives partial swaps and SSE subscriptions; no JS is
 //! hand-written except ~30 lines for the stale-banner SSE error handler in `layout.rs`.
 //!
-//! ## Route responsibilities
-//! - `search`  — `GET /`                      → full search page
-//! - `search`  — `GET /ui/stations/departures?crs=XXX` → departure board fragment (htmx swap)
-//! - `detail`  — `GET /trains/:rid/view`       → full detail page
-//! - `detail`  — `GET /ui/trains/:rid/live`    → SSE stream of HTML OOB swap fragments
+//! ## Pages (routes are wired in `api/mod.rs` — the source of truth)
+//! - `dashboard`   — `/`                 overview cockpit
+//! - `search`      — `/search`           departure board + journey search (+ `/ui/stations/*`, `/ui/journeys`)
+//! - `predictions` — `/predictions`      prediction-accuracy analytics
+//! - `detail`      — `/trains/:rid/view` train detail (+ `/ui/trains/:rid/live` SSE)
+//! - `demo`        — `/demo`             developer console (+ `/ui/demo/*`)
+//! - `charts` / `components` / `layout`  shared SVG, fragment, and chrome helpers
 
 pub mod charts;
 pub mod components;
