@@ -10,6 +10,7 @@ pub enum NavPage {
     // Operators/Stations: reserved for the upcoming league & station pages
     // (step 0 adds the variants so steps 2/4 only add the nav `link(...)` line).
     Operators,
+    Live,
     Predictions,
     Stations,
     Explore,
@@ -47,6 +48,7 @@ pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
                     div .nav-links {
                         (link("/", "Overview", NavPage::Dashboard))
                         (link("/operators", "Operators", NavPage::Operators))
+                        (link("/live", "Live", NavPage::Live))
                         (link("/predictions", "Predictions", NavPage::Predictions))
                         (link("/explore", "Explore", NavPage::Explore))
                     }
