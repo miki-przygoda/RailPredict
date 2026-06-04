@@ -402,13 +402,24 @@ impl IngestionPipeline {
                     let rid = deact.rid.clone();
                     tracing::info!(rid = %rid, "Train deactivated — removing from registry");
 
-                    // Capture the final delay before removing the entry — needed to
-                    // close out the prediction_outcomes row for this RID.
-                    let final_delay = if let Some(arc) = self.ctx.registry.get(&rid) {
+                    // Capture the final delay (to close out the prediction_outcomes row)
+                    // and, if the service was cancelled, the cancellation pattern — both
+                    // before removing the entry.
+                    let (final_delay, cancellation) = if let Some(arc) = self.ctx.registry.get(&rid) {
                         let s = arc.read().await;
-                        s.reported_delay_mins.value
+                        let cancellation = if s.is_cancelled.value == Some(true) {
+                            match (s.uid.clone(), s.origin_crs.clone()) {
+                                (Some(uid), Some(origin)) => {
+                                    Some((uid, origin, s.scheduled_departure.value))
+                                }
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        (s.reported_delay_mins.value, cancellation)
                     } else {
-                        None
+                        (None, None)
                     };
 
                     // Remove from registry and forget sequence state.
@@ -429,6 +440,23 @@ impl IngestionPipeline {
                                     rid = %rid_str,
                                     "Failed to finalise prediction outcome"
                                 );
+                            }
+                        });
+                    }
+
+                    // Persist the cancellation (best-effort) if this service was cancelled.
+                    if let (Some((uid, origin, sched)), Some(db)) =
+                        (cancellation, self.ctx.db.as_ref())
+                    {
+                        let db_clone = db.clone();
+                        let rid_str = rid.as_str().to_string();
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::db::cancellations::record_cancellation(
+                                &db_clone, &uid, &origin, sched,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, rid = %rid_str, "Failed to record cancellation");
                             }
                         });
                     }
