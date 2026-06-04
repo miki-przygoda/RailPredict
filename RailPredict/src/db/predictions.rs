@@ -204,3 +204,122 @@ pub async fn accuracy_summary(db: &Db, window_hours: i32) -> sqlx::Result<Accura
     .fetch_one(db)
     .await
 }
+// ---------------------------------------------------------------------------
+// prediction_snapshots read path
+//
+// `prediction_snapshots` accumulates MANY rows per RID — one per prediction
+// event as the train progresses through its journey. Joining it against the
+// finalised `prediction_outcomes` row lets us reconstruct how each prediction
+// converged toward the eventual actual delay as departure approached.
+// ---------------------------------------------------------------------------
+
+/// One prediction event for a single train instance (RID).
+///
+/// Many of these accumulate per RID across the journey; ordered playback gives
+/// the convergence trail.
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct PredictionSnapshot {
+    pub rid: String,
+    pub uid: String,
+    pub predicted_delay_mins: i32,
+    pub snapshotted_at: DateTime<Utc>,
+}
+
+/// Every snapshot recorded for one RID, oldest first.
+pub async fn snapshots_for_rid(db: &Db, rid: &str) -> sqlx::Result<Vec<PredictionSnapshot>> {
+    sqlx::query_as::<_, PredictionSnapshot>(
+        r#"
+        SELECT rid, uid, predicted_delay_mins, snapshotted_at
+        FROM prediction_snapshots
+        WHERE rid = $1
+        ORDER BY snapshotted_at ASC
+        "#,
+    )
+    .bind(rid)
+    .fetch_all(db)
+    .await
+}
+
+/// A single point on a train's prediction-convergence curve: how far before
+/// departure the prediction was made versus how wrong it turned out to be.
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct ConvergencePoint {
+    /// Minutes before scheduled departure that this snapshot was taken.
+    /// Positive and shrinking toward 0 as the train approaches departure.
+    pub lead_time_mins: f64,
+    pub predicted_delay_mins: i32,
+    pub final_delay_mins: i32,
+    pub abs_error_mins: i32,
+}
+
+/// Convergence trail for one RID: each snapshot joined against the finalised
+/// outcome, ordered far-from-departure first (largest lead time → 0).
+///
+/// Only returns points once the RID's outcome has been finalised.
+pub async fn convergence_for_rid(db: &Db, rid: &str) -> sqlx::Result<Vec<ConvergencePoint>> {
+    sqlx::query_as::<_, ConvergencePoint>(
+        r#"
+        SELECT
+            (EXTRACT(EPOCH FROM (o.scheduled_departure - s.snapshotted_at)) / 60.0)::float8
+                                                              AS lead_time_mins,
+            s.predicted_delay_mins                            AS predicted_delay_mins,
+            o.final_delay_mins                                AS final_delay_mins,
+            ABS(o.final_delay_mins - s.predicted_delay_mins)  AS abs_error_mins
+        FROM prediction_snapshots s
+        JOIN prediction_outcomes  o ON o.rid = s.rid
+        WHERE s.rid = $1
+          AND o.finalised_at IS NOT NULL
+        ORDER BY lead_time_mins DESC
+        "#,
+    )
+    .bind(rid)
+    .fetch_all(db)
+    .await
+}
+
+/// Mean absolute error grouped by how far before departure the prediction was
+/// made. Lower `lower_bound_mins` band edges are 0/15/30/60/120.
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct LeadTimeBucket {
+    pub lower_bound_mins: i32,
+    pub sample_count: i64,
+    pub mae_mins: Option<f64>,
+}
+
+/// Lead-time accuracy across ALL finalised trains whose snapshots fall within
+/// the last `hours` hours. Buckets each snapshot by minutes-before-departure and
+/// reports mean abs error per band, ordered by ascending band edge.
+///
+/// A sanity filter drops outcomes outside `[-120, 600]` minutes.
+pub async fn leadtime_accuracy(db: &Db, hours: i32) -> sqlx::Result<Vec<LeadTimeBucket>> {
+    sqlx::query_as::<_, LeadTimeBucket>(
+        r#"
+        WITH points AS (
+            SELECT
+                CASE
+                    WHEN EXTRACT(EPOCH FROM (o.scheduled_departure - s.snapshotted_at)) / 60.0 <  15  THEN 0
+                    WHEN EXTRACT(EPOCH FROM (o.scheduled_departure - s.snapshotted_at)) / 60.0 <  30  THEN 15
+                    WHEN EXTRACT(EPOCH FROM (o.scheduled_departure - s.snapshotted_at)) / 60.0 <  60  THEN 30
+                    WHEN EXTRACT(EPOCH FROM (o.scheduled_departure - s.snapshotted_at)) / 60.0 < 120  THEN 60
+                    ELSE 120
+                END                                                       AS lower_bound_mins,
+                ABS(o.final_delay_mins - s.predicted_delay_mins)::float8  AS abs_error_mins
+            FROM prediction_snapshots s
+            JOIN prediction_outcomes  o ON o.rid = s.rid
+            WHERE o.finalised_at IS NOT NULL
+              AND o.final_delay_mins BETWEEN -120 AND 600
+              AND s.snapshotted_at > NOW() - $1::INT * INTERVAL '1 hour'
+        )
+        SELECT
+            lower_bound_mins              AS lower_bound_mins,
+            COUNT(*)                      AS sample_count,
+            AVG(abs_error_mins)::float8   AS mae_mins
+        FROM points
+        GROUP BY lower_bound_mins
+        ORDER BY lower_bound_mins ASC
+        "#,
+    )
+    .bind(hours)
+    .fetch_all(db)
+    .await
+}
