@@ -20,7 +20,8 @@
 //! ## Middleware
 //! - `CorsLayer`: permissive in debug mode; restricted to `CORS_ALLOWED_ORIGINS` in production.
 //! - `TraceLayer`: logs method, path, status, latency for every request.
-//! - `GovernorLayer`: per-IP rate limiting (default 60 req/s); excludes /, /health, /metrics.
+//! - `GovernorLayer`: per-IP rate limiting (default 60 req/s). Excludes only the
+//!   infra sub-router (no-limit set): /, /demo, /health, /metrics, and the /ui/demo/* routes.
 //!
 //! ## Error shape
 //! All JSON 4xx/5xx responses use `{ "error": "...", "code": "..." }` — see `types::ApiError`.
@@ -163,7 +164,6 @@ pub fn router(state: AppState) -> Router {
     // be throttled, and the dashboard is a lightweight status page that should always load.
     let infra_router = Router::new()
         .route("/", get(dashboard::dashboard_page))
-        .route("/report", get(handlers::report_handler))
         .route("/demo", get(demo::demo_page))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(handlers::health_handler))
@@ -191,6 +191,9 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         // Embedded static assets (CSS baked in at compile time)
         .route("/static/:path", get(static_handler))
         // Page routes — full server-rendered HTML pages
+        // /report runs four heavy GROUP BY aggregations over delay_history,
+        // so it must stay behind the rate limiter (not on infra_router).
+        .route("/report", get(handlers::report_handler))
         .route("/search", get(search::search_page))
         .route("/predictions", get(predictions::predictions_page))
         .route("/trains/:rid/view", get(detail::detail_page))
