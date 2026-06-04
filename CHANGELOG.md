@@ -2,9 +2,17 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.13" -- 04/06/2026**
+**version = "1.12.14" -- 04/06/2026**
 
 ---
+
+## v1.12.14 — 04/06/2026
+
+UI overhaul step 0 (foundation). Reshaped the top nav to the Option-A product IA
+(Overview · Predictions · Explore; Departures and the dev console off-nav).
+Retired the `/demo` "Developer Console" to an off-nav `/dev` diagnostics page,
+dropped the simulated ticket purchase for a "coming soon" ticketing stub, and
+removed Tier badges / Feature Lab framing. No design-system changes.
 
 ## [1.12.13] — 2026-06-04
 ### Added
