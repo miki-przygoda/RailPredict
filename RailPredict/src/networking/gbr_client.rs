@@ -18,6 +18,15 @@
 //!
 //! Response shapes are defined as `serde` structs below. If GBR changes its schema,
 //! update here; nothing else in the codebase should parse raw GBR JSON.
+//!
+//! ## NOTE — Tier C contract must be reconciled before enabling
+//! The endpoint/auth/key shape described above (`x-apikey` header, RID-keyed
+//! `/v1/train/{rid}/status`) does NOT match the real Realtime Trains API, which
+//! uses HTTP Basic auth and a UID-keyed `/json/service/{uid}/{date}` path. Tier C
+//! is deferred to production handoff. Before Tier C is enabled, this client's
+//! endpoint constants, auth header, and the RID-vs-UID lookup contract MUST be
+//! reconciled against the real upstream — do not wire this into a live poll path
+//! until that reconciliation is done.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -244,9 +253,17 @@ impl GbrClient for LiveGbrClient {
                     .await
                     .map_err(GbrClientError::Http)?;
 
+                // A malformed run_date must NOT silently fall back to today: that
+                // would anchor every parsed departure to the wrong date and fabricate
+                // plausible-but-wrong times on the live poll path. Fail instead so the
+                // caller skips the update rather than trusting a bad date.
                 let run_date =
-                    chrono::NaiveDate::parse_from_str(&body.run_date, "%Y-%m-%d")
-                        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+                    chrono::NaiveDate::parse_from_str(&body.run_date, "%Y-%m-%d").map_err(
+                        |e| GbrClientError::UnexpectedStatus {
+                            status: status_code,
+                            body: format!("invalid run_date {:?}: {}", body.run_date, e),
+                        },
+                    )?;
 
                 // Use the first location as the origin for departure-time purposes.
                 let origin = body
@@ -306,33 +323,27 @@ impl GbrClient for LiveGbrClient {
 pub mod mock {
     use super::*;
     use chrono::Utc;
-    use std::sync::{Arc, Mutex};
 
     /// Configurable mock: returns a preset response or error for each call.
     pub struct MockGbrClient {
         /// If `Some`, returns this error on every call. If `None`, returns a stub status.
-        pub force_error: Arc<Mutex<Option<GbrClientError>>>,
+        pub force_error: Option<GbrClientError>,
     }
 
     impl MockGbrClient {
         pub fn ok() -> Self {
-            Self { force_error: Arc::new(Mutex::new(None)) }
+            Self { force_error: None }
         }
 
         pub fn failing(err: GbrClientError) -> Self {
-            Self { force_error: Arc::new(Mutex::new(Some(err))) }
-        }
-
-        /// Replace the preset error (allows tests to change behaviour mid-run).
-        pub fn set_error(&self, err: Option<GbrClientError>) {
-            *self.force_error.lock().unwrap() = err;
+            Self { force_error: Some(err) }
         }
     }
 
     #[async_trait]
     impl GbrClient for MockGbrClient {
         async fn get_train_status(&self, rid: &TrainId) -> Result<TrainStatus, GbrClientError> {
-            if let Some(ref e) = *self.force_error.lock().unwrap() {
+            if let Some(ref e) = self.force_error {
                 return Err(match e {
                     GbrClientError::ServiceUnavailable => GbrClientError::ServiceUnavailable,
                     GbrClientError::RateLimited => GbrClientError::RateLimited,
