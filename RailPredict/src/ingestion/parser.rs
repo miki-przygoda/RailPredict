@@ -104,10 +104,6 @@ pub enum ParseError {
 
     #[error("Invalid timestamp '{0}'")]
     InvalidTimestamp(String),
-
-    #[allow(dead_code)]
-    #[error("Message contains no recognised updates")]
-    Empty,
 }
 
 // ---------------------------------------------------------------------------

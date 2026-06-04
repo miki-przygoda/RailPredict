@@ -48,10 +48,6 @@ pub struct NetworkSummary {
 /// How long after estimated departure a train remains in the registry.
 const EVICTION_BUFFER_SECS: i64 = 300; // 5 minutes post-departure
 
-/// Time window (minutes) used by `trains_at_tiploc` to filter calling points.
-/// Only trains scheduled to call at the TIPLOC within the next 60 minutes are returned.
-const TIPLOC_WINDOW_MINS: i64 = 60;
-
 pub struct TrainRegistry {
     trains: DashMap<TrainId, Arc<RwLock<TrainStatus>>>,
     /// Secondary reverse index: TIPLOC → list of TrainIds calling there.
@@ -182,7 +178,6 @@ impl TrainRegistry {
         self.trains.len()
     }
 
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.trains.is_empty()
     }
@@ -276,38 +271,6 @@ impl TrainRegistry {
                 .or_default()
                 .push(train_id.clone());
         }
-    }
-
-    /// Return all `TrainId`s that call at `tiploc` with a scheduled time within the
-    /// next `TIPLOC_WINDOW_MINS` (60) minutes.
-    ///
-    /// This requires reading each candidate's `calling_points` from the main registry,
-    /// so it acquires read locks. Returns an empty vec if no matching trains are found.
-    ///
-    /// NOTE: This method is synchronous over the `DashMap` lookup but async for the
-    /// inner `RwLock` reads. For ergonomics it collects eagerly — the expected result
-    /// set is small (< 5 trains per TIPLOC in a 60-minute window).
-    pub async fn trains_at_tiploc(&self, tiploc: &str, now: DateTime<Utc>) -> Vec<TrainId> {
-        let window_end = now + chrono::Duration::minutes(TIPLOC_WINDOW_MINS);
-        let candidates = match self.tiploc_index.get(tiploc) {
-            Some(ids) => ids.clone(),
-            None => return Vec::new(),
-        };
-
-        let mut result = Vec::new();
-        for train_id in candidates {
-            if let Some(arc) = self.trains.get(&train_id) {
-                let status = arc.read().await;
-                // Check if any calling point for this TIPLOC is within the window.
-                let in_window = status.calling_points.iter().any(|(tp, scheduled_time)| {
-                    tp == tiploc && *scheduled_time >= now && *scheduled_time <= window_end
-                });
-                if in_window {
-                    result.push(train_id);
-                }
-            }
-        }
-        result
     }
 
     /// Return all `TrainId`s that should be cascade-promoted due to a delay at `tiploc`.
@@ -549,27 +512,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // Phase 2: TIPLOC reverse index tests
     // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn update_tiploc_index_registers_calling_points() {
-        let reg = TrainRegistry::new();
-        let (id, status) = make_status("202404170000001");
-        reg.upsert(id.clone(), status);
-
-        let now = Utc::now();
-        let calling_points = vec![
-            ("LEEDS".to_string(), now + chrono::Duration::minutes(10)),
-            ("YORKAT".to_string(), now + chrono::Duration::minutes(30)),
-        ];
-        reg.update_tiploc_index(&id, &calling_points);
-
-        // Trains at LEEDS within 60 minutes should include our train.
-        let at_leeds = reg.trains_at_tiploc("LEEDS", now).await;
-        // But the status.calling_points is empty (not yet set via update),
-        // so trains_at_tiploc won't find it there — this tests the index registration.
-        // We verify the index itself via cascade_trains_for_tiploc instead.
-        drop(at_leeds); // just ensuring it doesn't panic
-    }
 
     #[tokio::test]
     async fn cascade_trains_excludes_source_train() {
