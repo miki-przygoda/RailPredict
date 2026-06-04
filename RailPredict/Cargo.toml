@@ -1,6 +1,6 @@
 [package]
 name = "RailPredict"
-version = "1.12.8"
+version = "1.12.9"
 edition = "2024"
 license = "Apache-2.0"
 
