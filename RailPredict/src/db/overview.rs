@@ -20,6 +20,9 @@ pub struct HeadlineMetrics {
 /// One day's aggregates, for sparklines.
 #[derive(Debug, Clone, FromRow)]
 pub struct DailyPoint {
+    /// Calendar day (Europe/London) this point aggregates — carried explicitly so
+    /// callers label points by date rather than inferring from list position.
+    pub day: chrono::NaiveDate,
     pub on_time_pct: Option<f64>,
     pub avg_delay_mins: Option<f64>,
     pub mae_mins: Option<f64>,
@@ -50,6 +53,7 @@ pub async fn daily_series(db: &Db, hours: i32) -> sqlx::Result<Vec<DailyPoint>> 
     sqlx::query_as::<_, DailyPoint>(
         r#"
         SELECT
+            date_trunc('day', recorded_at AT TIME ZONE 'Europe/London')::date     AS day,
             (AVG(CASE WHEN delay_mins <= 0 THEN 1.0 ELSE 0.0 END) * 100)::float8  AS on_time_pct,
             AVG(delay_mins::float8)                                              AS avg_delay_mins,
             (AVG(ABS(predicted_delay_mins - delay_mins))
@@ -75,6 +79,12 @@ pub struct CoverageCounts {
 }
 
 /// Total station and delay-history row counts (all-time, not windowed).
+///
+/// NOTE (perf): `real_records` is an exact `COUNT(*)` over the range-partitioned
+/// `delay_history` (~6.7M rows) and runs on every cockpit load. Kept exact for now
+/// because the footer asserts a precise figure and `pg_class.reltuples` is
+/// unreliable on a partitioned parent. If the landing page gets hot, move this to a
+/// periodically-refreshed cached counter rather than an estimate.
 pub async fn coverage_counts(db: &Db) -> sqlx::Result<CoverageCounts> {
     sqlx::query_as::<_, CoverageCounts>(
         r#"

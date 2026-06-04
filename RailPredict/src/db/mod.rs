@@ -4,8 +4,15 @@
 //! that creates the pool and runs pending migrations on startup.
 //!
 //! Sub-modules:
-//!   - `static_data`: queries for Tier A read-only tables (stations, timetable_calls, fares)
-//!   - `history`:     load/flush for the Tier B delay_history table
+//!   - `static_data`:  Tier A read path (stations, timetable_calls, fares); hot path `departures_from`
+//!   - `history`:      load/flush for the Tier B delay_history table
+//!   - `predictions`:  per-RID prediction_outcomes ledger + prediction_snapshots convergence reads
+//!   - `overview`:     cockpit (`/`) headline KPIs over delay_history
+//!   - `operators`:    per-operator (TOC) league + drill-down (delay_history ⋈ services)
+//!   - `analytics`:    prediction-accuracy explorer over prediction_outcomes
+//!   - `stations`:     per-station explorer (delay_history filtered by origin_crs)
+//!   - `maintenance`:  retention pruning + registry pre-warm
+//!   - `synthetic`:    synthetic-generation stats card
 
 pub mod analytics;
 pub mod history;
