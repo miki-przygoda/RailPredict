@@ -219,10 +219,16 @@ fn load_session(models_dir: &Path, filename: &str) -> Result<Option<Mutex<Sessio
     Ok(Some(Mutex::new(session)))
 }
 
-fn load_meta(
-    path: &Path,
-) -> Result<(HashMap<String, i32>, HashMap<String, i32>, HashMap<String, i32>, HashMap<String, f32>)>
-{
+/// Parsed `feature_meta.json` maps: three `String → i32` categorical encoders
+/// plus the `String → f32` feature-scaling map.
+type FeatureMeta = (
+    HashMap<String, i32>,
+    HashMap<String, i32>,
+    HashMap<String, i32>,
+    HashMap<String, f32>,
+);
+
+fn load_meta(path: &Path) -> Result<FeatureMeta> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let v: serde_json::Value = serde_json::from_str(&content)
