@@ -2,9 +2,18 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.17" -- 04/06/2026**
+**version = "1.13.0" -- 04/06/2026**
 
 ---
+
+## v1.13.0 — 04/06/2026
+
+Live Board + Replay. New `/live` ambient board: each train enters "Tracking" with its
+prediction and slides into "Just settled" with predicted vs actual + a Δ accuracy chip,
+polling `/ui/live/snapshot` every 3s. A shared vanilla-JS renderer (`board.js`) drives
+both `/live` and a standalone, server-free `replay.html`: Record buffers the live event
+stream, Download emits a capture JSON, and `replay.html` replays it with no Darwin,
+model, or DB. Adds registry `tracking_board`, db `recent_settled`, and a "Live" nav item.
 
 ## v1.12.17 — 04/06/2026
 
