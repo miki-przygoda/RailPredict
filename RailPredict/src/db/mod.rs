@@ -15,6 +15,7 @@
 //!   - `synthetic`:    synthetic-generation stats card
 
 pub mod analytics;
+pub mod cancellations;
 pub mod explore;
 pub mod history;
 pub mod maintenance;

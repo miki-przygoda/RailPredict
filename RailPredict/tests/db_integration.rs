@@ -624,3 +624,25 @@ async fn direct_journeys_finds_through_service(pool: sqlx::PgPool) -> sqlx::Resu
     assert!(limited.is_empty(), "LIMIT 0 should return nothing");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// cancellations: write + derived pattern fields + recent count.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn cancellations_record_and_count(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    use chrono::{TimeZone, Utc};
+    // 2024-04-17 is a Wednesday → weekday 2 (0=Mon); 08:30 → hour 8.
+    let sched = Utc.with_ymd_and_hms(2024, 4, 17, 8, 30, 0).unwrap();
+    db::cancellations::record_cancellation(&pool, "C12345", "LDS", sched).await?;
+    db::cancellations::record_cancellation(&pool, "C99999", "MAN", sched).await?;
+
+    assert_eq!(db::cancellations::count_recent(&pool, 24).await?, 2);
+
+    let (wd, hr): (i16, i16) =
+        sqlx::query_as("SELECT weekday, departure_hour FROM cancellations WHERE uid = 'C12345'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(wd, 2, "Wednesday");
+    assert_eq!(hr, 8);
+    Ok(())
+}
