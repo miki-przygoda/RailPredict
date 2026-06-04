@@ -2228,3 +2228,7 @@ details[open].checkout-dev-info summary::before   { content: "▼ "; }
 .explore-table { width:100%; border-collapse:collapse; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
 .explore-table th, .explore-table td { text-align:left; padding:6px 12px; border-bottom:1px solid var(--border); }
 .explore-table th { color:var(--text-muted); font-weight:600; }
+.explore-toolbar { margin:0 0 12px; }
+.explore-csv { display:inline-block; color:var(--accent); font-size:13px; text-decoration:none;
+  border:1px solid var(--border); border-radius:var(--r-sm); padding:5px 10px; }
+.explore-csv:hover { background:var(--surface-2); }

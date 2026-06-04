@@ -57,3 +57,27 @@ async fn explore_page_renders_and_runs_composed_query(pool: sqlx::PgPool) {
     assert!(body.contains("07:00"), "hour 07:00 row missing");
     assert!(body.contains("08:00"), "hour 08:00 row missing");
 }
+
+#[sqlx::test(migrations = "../migrations")]
+async fn explore_csv_export(pool: sqlx::PgPool) {
+    seed(&pool).await;
+    let app = spawn_app_empty(pool).await;
+
+    let resp = app
+        .client
+        .get(format!(
+            "{}/explore?metric=avg_delay&group=hour&operator=HX&from_hour=6&to_hour=10&format=csv",
+            app.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(ct.contains("text/csv"), "content-type: {ct}");
+    let cd = resp.headers().get("content-disposition").and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(cd.contains("attachment"), "should be a download");
+    let body = resp.text().await.unwrap();
+    assert!(body.starts_with("Hour,"), "csv header: {:?}", body.lines().next());
+    assert!(body.contains("07:00"), "csv data: {body}");
+}
