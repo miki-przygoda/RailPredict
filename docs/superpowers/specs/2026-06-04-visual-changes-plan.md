@@ -52,6 +52,7 @@ The constrained "fill-in-the-gaps" data explorer is **built and live** (`fronten
 - **[PROPOSED]** Style the builder as proper **chips/segmented controls** reading like a sentence (currently a plain flex row of native selects/inputs). Consider an "active filters" summary line.
 - **[PROPOSED]** Replace `origin`/`destination` CRS text inputs with the **station autocomplete** (`/ui/stations/search`) used on `/search`, so admins pick from the list rather than typing CRS.
 - **[PROPOSED]** **Chart views** for grouped results (bar for hour/operator, heatmap for weekday×hour, trend for day) using `charts.rs` SVG helpers — currently every result renders as a table.
+- **[PROPOSED]** The explorer now has 3 **subjects** (observations / predictions / cancellations) and per-subject metrics, but the metric `<select>` lists *all* metrics regardless of subject (the server defaults invalid ones). Filter the metric options by the chosen subject (small JS or an htmx swap of the metric control). Also style the new date-range inputs and the "Download CSV" toolbar link.
 - **[PROPOSED]** A "save view" / shareable-URL affordance (the URL is already bookmarkable via `hx-push-url`) and quick-preset chips (e.g. "morning peak", "worst routes").
 - The fixed Tier-A catalogue pages (`/operators/:toc`, `/stations/:crs`) can be built as **curated explorer presets** rather than bespoke pages.
 

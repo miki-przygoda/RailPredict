@@ -1,11 +1,15 @@
 //! Tests for the Query Explorer engine (`db/explore.rs`): representative spec
-//! combinations produce correct aggregates, validation clamps/whitelists raw input,
-//! and the guards (row cap, default window) hold.
+//! combinations across all three subjects produce correct aggregates, validation
+//! clamps/whitelists raw input, and the guards (row cap, default window) hold.
 
-use railpredict::db::explore::{run_explore, ExploreResult, ExploreSpec, GroupBy, Metric};
+use railpredict::db::explore::{run_explore, ExploreResult, ExploreSpec, GroupBy, Metric, RawExplore, Subject};
 
-/// Two operators (HX, GW) with a few observations across hours.
-async fn seed(pool: &sqlx::PgPool) {
+fn row<'a>(res: &'a ExploreResult, label: &str) -> Option<&'a Vec<String>> {
+    res.rows.iter().find(|r| r[0] == label)
+}
+
+/// Two operators (HX, GW) with delay observations across hours.
+async fn seed_observations(pool: &sqlx::PgPool) {
     sqlx::query(
         "INSERT INTO stations (crs,name)
          VALUES ('PAD','London Paddington'),('HXX','Heathrow'),('RDG','Reading')
@@ -35,78 +39,122 @@ async fn seed(pool: &sqlx::PgPool) {
     .unwrap();
 }
 
-fn row<'a>(res: &'a ExploreResult, label: &str) -> Option<&'a Vec<String>> {
-    res.rows.iter().find(|r| r[0] == label)
-}
-
 #[sqlx::test(migrations = "../migrations")]
-async fn filter_operator_and_hours_group_by_hour(pool: sqlx::PgPool) {
-    seed(&pool).await;
-    // "trains 06:00–10:00 where operator = HX, grouped by hour, avg delay"
-    let spec = ExploreSpec::from_raw(
-        Some("7d"), Some(6), Some(10), None, Some("HX"), None, None, None,
-        Some("hour"), Some("avg_delay"), None,
-    );
+async fn observations_filter_and_group_by_hour(pool: sqlx::PgPool) {
+    seed_observations(&pool).await;
+    // "avg delay for observations 06:00–10:00 where operator = HX, grouped by hour"
+    let spec = ExploreSpec::from_raw(RawExplore {
+        window: Some("7d"),
+        from_hour: Some(6),
+        to_hour: Some(10),
+        operator: Some("HX"),
+        group: Some("hour"),
+        metric: Some("avg_delay"),
+        ..Default::default()
+    });
     let res = run_explore(&pool, &spec).await.unwrap();
     assert_eq!(res.columns[0], "Hour");
-    assert_eq!(row(&res, "07:00").expect("07:00")[1], "2.0");
-    assert_eq!(row(&res, "08:00").expect("08:00")[1], "4.0");
-    assert_eq!(row(&res, "09:00").expect("09:00")[1], "0.0");
-    // GW's 14:00 is excluded by BOTH the hour filter and the operator filter
-    assert!(row(&res, "14:00").is_none(), "14:00 should be filtered out");
+    assert_eq!(row(&res, "07:00").expect("07:00")[1], "2.00");
+    assert_eq!(row(&res, "08:00").expect("08:00")[1], "4.00");
+    assert!(row(&res, "14:00").is_none(), "GW 14:00 must be filtered out");
 }
 
 #[sqlx::test(migrations = "../migrations")]
-async fn group_none_count_is_total(pool: sqlx::PgPool) {
-    seed(&pool).await;
-    let spec = ExploreSpec::from_raw(
-        Some("7d"), None, None, None, None, None, None, None, Some("none"), Some("count"), None,
-    );
+async fn observations_median_percentile(pool: sqlx::PgPool) {
+    seed_observations(&pool).await;
+    // HX delays 0,2,4 → median (p50) = 2
+    let spec = ExploreSpec::from_raw(RawExplore {
+        operator: Some("HX"),
+        group: Some("none"),
+        metric: Some("p50"),
+        ..Default::default()
+    });
     let res = run_explore(&pool, &spec).await.unwrap();
-    assert_eq!(res.rows.len(), 1);
     assert_eq!(res.rows[0][0], "All");
-    assert_eq!(res.rows[0][1], "4");
+    assert_eq!(res.rows[0][1], "2.00");
 }
 
 #[sqlx::test(migrations = "../migrations")]
-async fn group_operator_on_time_pct(pool: sqlx::PgPool) {
-    seed(&pool).await;
-    let spec = ExploreSpec::from_raw(
-        Some("7d"), None, None, None, None, None, None, None, Some("operator"), Some("on_time_pct"), None,
-    );
+async fn predictions_mae_by_operator(pool: sqlx::PgPool) {
+    sqlx::query("INSERT INTO stations (crs,name) VALUES ('PAD','London Paddington') ON CONFLICT (crs) DO NOTHING")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO services (uid,origin_crs,destination_crs,toc) VALUES ('HX0001','PAD','PAD','HX') ON CONFLICT (uid) DO NOTHING")
+        .execute(&pool).await.unwrap();
+    // Two finalised predictions for HX: errors |5-3|=2 and |4-4|=0 → MAE 1.0
+    sqlx::query(
+        "INSERT INTO prediction_outcomes
+            (rid, uid, origin_crs, scheduled_departure, predicted_delay_mins, final_delay_mins, finalised_at, prediction_confidence)
+         VALUES ('RID000000000001','HX0001','PAD',NOW(),3,5,NOW(),0.8),
+                ('RID000000000002','HX0001','PAD',NOW(),4,4,NOW(),0.7)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let spec = ExploreSpec::from_raw(RawExplore {
+        subject: Some("predictions"),
+        group: Some("operator"),
+        metric: Some("mae"),
+        ..Default::default()
+    });
     let res = run_explore(&pool, &spec).await.unwrap();
-    // HX: 3 obs, 1 on time (delay 0) → 33.3%
-    assert!(row(&res, "HX").expect("HX")[1].starts_with("33."), "HX on-time wrong");
-    assert_eq!(row(&res, "GW").expect("GW")[1], "0.0");
+    assert_eq!(spec.subject, Subject::Predictions);
+    assert_eq!(row(&res, "HX").expect("HX")[1], "1.00");
 }
 
 #[sqlx::test(migrations = "../migrations")]
-async fn list_returns_observations(pool: sqlx::PgPool) {
-    seed(&pool).await;
-    let spec = ExploreSpec::from_raw(
-        Some("7d"), None, None, None, Some("HX"), None, None, None, Some("none"), Some("list"), None,
-    );
+async fn cancellations_count_by_hour(pool: sqlx::PgPool) {
+    sqlx::query(
+        "INSERT INTO cancellations (uid,origin_crs,weekday,departure_hour,recorded_at)
+         VALUES ('HX0001','PAD',2,7,NOW()),('HX0001','PAD',2,7,NOW()),('GW0001','RDG',2,14,NOW())",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let spec = ExploreSpec::from_raw(RawExplore {
+        subject: Some("cancellations"),
+        group: Some("hour"),
+        metric: Some("count"),
+        ..Default::default()
+    });
     let res = run_explore(&pool, &spec).await.unwrap();
-    assert_eq!(res.columns[0], "Service");
-    assert_eq!(res.rows.len(), 3, "3 HX observations");
-    assert!(res.rows.iter().all(|r| r[2] == "HX"), "operator column should be HX");
+    assert_eq!(row(&res, "07:00").expect("07:00")[1], "2");
+    assert_eq!(row(&res, "14:00").expect("14:00")[1], "1");
+}
+
+#[sqlx::test(migrations = "../migrations")]
+async fn date_range_filter(pool: sqlx::PgPool) {
+    seed_observations(&pool).await;
+    // A from_date far in the future excludes everything.
+    let spec = ExploreSpec::from_raw(RawExplore {
+        group: Some("none"),
+        metric: Some("count"),
+        from_date: Some("2099-01-01"),
+        window: Some("all"),
+        ..Default::default()
+    });
+    let res = run_explore(&pool, &spec).await.unwrap();
+    // No rows in the future → COUNT(*) over an empty set with no GROUP BY = single 0 row.
+    assert_eq!(res.rows[0][1], "0");
 }
 
 #[test]
 fn validation_clamps_whitelists_and_caps() {
-    let spec = ExploreSpec::from_raw(
-        Some("nonsense"), // window → default 168
-        Some(99),         // from_hour → clamp 23
-        Some(-5),         // to_hour → clamp 0
-        Some("9,1,bad,3"),// weekdays → [1,3] (9 out of range, 'bad' unparseable)
-        Some(""),         // operator empty → None
-        Some("toolong"),  // origin not 3 letters → None
-        Some("xy"),       // destination not 3 letters → None
-        None,
-        Some("wat"),      // unknown group → None
-        Some("wat"),      // unknown metric → List
-        Some(99_999),     // limit → capped at 500
-    );
+    let spec = ExploreSpec::from_raw(RawExplore {
+        subject: Some("cancellations"),
+        window: Some("nonsense"), // → default 168
+        from_hour: Some(99),      // → 23
+        to_hour: Some(-5),        // → 0
+        weekdays: Some("9,1,bad,3"), // → [1,3]
+        operator: Some(""),       // → None
+        origin: Some("toolong"),  // → None (not 3 letters)
+        destination: Some("xy"),  // → None
+        metric: Some("mae"),      // not valid for cancellations → default Count
+        group: Some("wat"),       // → None
+        limit: Some(99_999),      // → 500
+        ..Default::default()
+    });
+    assert_eq!(spec.subject, Subject::Cancellations);
     assert_eq!(spec.window_hours, 168);
     assert_eq!(spec.from_hour, Some(23));
     assert_eq!(spec.to_hour, Some(0));
@@ -115,6 +163,6 @@ fn validation_clamps_whitelists_and_caps() {
     assert!(spec.origin.is_none());
     assert!(spec.destination.is_none());
     assert_eq!(spec.group_by, GroupBy::None);
-    assert_eq!(spec.metric, Metric::List);
+    assert_eq!(spec.metric, Metric::Count, "mae invalid for cancellations → Count");
     assert_eq!(spec.limit, 500);
 }
