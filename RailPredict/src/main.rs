@@ -669,24 +669,23 @@ async fn main() -> anyhow::Result<()> {
                                 }
                                 Err(e) => {
                                     use railpredict::networking::coalescer::CoalescerError;
+                                    use railpredict::networking::gbr_client::GbrErrorKind;
                                     match &e {
-                                        CoalescerError::GbrError(msg) if msg.contains("503") => {
-                                            cb_clone.record_failure().await;
-                                            tracing::warn!(
-                                                "GBR returned 503 — circuit breaker incremented"
-                                            );
-                                        }
-                                        CoalescerError::GbrError(msg) if msg.contains("429") => {
-                                            tracing::warn!("GBR rate limited — backing off");
+                                        CoalescerError::Gbr { kind, detail } => {
+                                            if kind.is_breaker_failure() {
+                                                cb_clone.record_failure().await;
+                                                tracing::warn!(?kind, %detail, "GBR poll failure — circuit breaker incremented");
+                                            } else if *kind == GbrErrorKind::RateLimited {
+                                                tracing::warn!("GBR rate limited — backing off");
+                                            } else {
+                                                tracing::warn!(?kind, %detail, "GBR poll error");
+                                            }
                                         }
                                         CoalescerError::InFlightDropped => {
                                             tracing::debug!(
                                                 train_id = %train_id,
                                                 "In-flight GBR request dropped"
                                             );
-                                        }
-                                        _ => {
-                                            tracing::warn!(error = %e, "GBR poll error");
                                         }
                                     }
                                 }
