@@ -202,6 +202,7 @@ pub async fn accuracy_summary(db: &Db, window_hours: i32) -> sqlx::Result<Accura
         FROM prediction_outcomes
         WHERE finalised_at IS NOT NULL
           AND finalised_at > NOW() - $1::INT * INTERVAL '1 hour'
+          AND final_delay_mins BETWEEN -120 AND 600
         "#,
     )
     .bind(window_hours)

@@ -19,10 +19,11 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
     assert_eq!(s, StatusCode::OK);
     assert!(b.contains("Where are you going?"));
 
-    // Predictions analytics page
+    // Predictions explorer (predicted-vs-actual analytics)
     let (s, b) = app.get("/predictions").await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.contains("ML Predictions"));
+    assert!(b.contains("Predicted vs actual"), "predictions explorer markup");
+    assert!(b.contains("Calibration"), "calibration panel present");
 
     // Diagnostics console moved to /dev; the old /demo route is gone.
     let (s, b) = app.get("/dev").await;
