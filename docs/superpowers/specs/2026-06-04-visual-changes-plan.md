@@ -21,14 +21,14 @@ Legend: **[PROPOSED]** not yet built · **[DONE]** already shipped on this branc
 - **Tier badges** (`.badge-tier-a`, the inline-hacked "Tier B", references to "Tier C purchase flow") scattered through demo/detail.
 - **Wording**: "Feature Lab", "Purchase Demo", "what the real API call would contain", "backlog item 2.8".
 
-### Proposed production IA **[DECIDE]**
+### Proposed production IA **[DONE]**
 Replace the demo console with product surfaces that already have backing data/queries:
 
 | Today | Proposed production surface | Backing (already built) |
 |---|---|---|
 | `/` overview cockpit | **keep** — it's already production-shaped | `db/overview.rs`, `operator_league` |
-| `/demo` Developer Console | **retire / fold.** Split its genuinely-useful bits: live event monitor → a small "Live network" widget on `/` or a `/live` page; health/registry probes → a minimal `/status` (ops, not marketing). Drop "Feature Lab" framing entirely. | registry `network_summary` |
-| `/demo` Purchase Demo | **move behind a "Coming soon: ticketing" stub** or remove until Tier C is real. Don't present a simulated purchase as a product feature. | (Tier C stubbed) |
+| `/demo` Developer Console | **[DONE] retired / folded** to off-nav `/dev` diagnostics page. "Feature Lab" framing dropped entirely. | registry `network_summary` |
+| `/demo` Purchase Demo | **[DONE] moved behind a "Coming soon: ticketing" stub.** Simulated purchase flow removed. | (Tier C stubbed) |
 | `/predictions` | **keep & rebuild** as the predicted-vs-actual explorer (Phase 4) | `db/analytics.rs` |
 | (new) `/operators`, `/operators/:toc` | **build** (Phase 3) | `db/operators.rs` |
 | (new) `/stations/:crs` | **build** (Phase 5) | `db/stations.rs` |
@@ -57,9 +57,9 @@ The constrained "fill-in-the-gaps" data explorer is **built and live** (`fronten
 - The fixed Tier-A catalogue pages (`/operators/:toc`, `/stations/:crs`) can be built as **curated explorer presets** rather than bespoke pages.
 
 ### `/demo` — retire/fold (see §1)
-- **[PROPOSED]** 🔒 **colour emoji** in the "Confirm & Pay" button (`demo.rs:910`) violates the no-emoji/inline-SVG rule → inline lock SVG (or removed with the purchase flow).
+- **[DONE]** 🔒 **colour emoji** in the "Confirm & Pay" button — removed with the purchase flow (ticketing now a "coming soon" stub).
 - **[PROPOSED]** Dingbat status glyphs `✓ ✗ ⚠ ▶` used as icons across demo fragments → shared inline-SVG status-icon helper (reuse the dashboard `ICON_*` `PreEscaped` pattern).
-- **[PROPOSED]** `.badge-tier-a` labelled "Tier B" with an inline `rgba()` override (`demo.rs:137`) → add a real `.badge-tier-b` token class (or remove with the tier framing).
+- **[DONE]** `.badge-tier-a` labelled "Tier B" with an inline `rgba()` override — removed with the Tier badge / Feature Lab framing in step 0.
 - **[PROPOSED]** Inline `style="color:var(--red|--green)"` for ingest status (`demo.rs:1124-1125`) → use the existing `.status-ok`/`.status-error` classes.
 
 ### Cross-page consistency
