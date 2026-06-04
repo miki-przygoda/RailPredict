@@ -42,3 +42,6 @@ docs/railpredict-site-integration.md
 /scripts/__pycache__
 /.agents
 skills-lock.json
+
+# Visual brainstorming companion (superpowers)
+.superpowers/
