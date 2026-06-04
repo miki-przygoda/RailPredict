@@ -16,7 +16,7 @@ use crate::{
         AppState,
     },
     db::predictions::{prediction_for_rid, PredictionOutcome},
-    state_machine::{poll_manager::StateChangeEvent, TrainState},
+    state_machine::{StateChangeEvent, TrainState},
     types::TrainId,
 };
 

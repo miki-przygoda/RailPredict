@@ -15,7 +15,7 @@ use chrono::Utc;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
-    state_machine::{poll_manager::StateChangeEvent, TrainState},
+    state_machine::{StateChangeEvent, TrainState},
     types::TrainId,
 };
 

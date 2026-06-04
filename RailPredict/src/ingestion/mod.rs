@@ -49,8 +49,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::cache::TrainRegistry;
 use crate::db::Db;
 use crate::prediction::PredictionEngine;
-use crate::state_machine::poll_manager::StateChangeEvent;
-use crate::state_machine::train_state::{PromotionReason, TrainState};
+use crate::state_machine::{StateChangeEvent, TrainState};
 use crate::types::train_status::{Stamped, UpdateSource};
 
 use filter::Filter;
@@ -380,7 +379,6 @@ impl IngestionPipeline {
                             train_id: rid,
                             old_state: TrainState::Active,
                             new_state: TrainState::Critical,
-                            reason: PromotionReason::IncidentDetected,
                         };
                         let _ = self.ctx.state_change_tx.send(event);
                     }
@@ -439,7 +437,6 @@ impl IngestionPipeline {
                         train_id: rid,
                         old_state: TrainState::Active,
                         new_state: TrainState::Terminal,
-                        reason: PromotionReason::TimeBased,
                     };
                     let _ = self.ctx.state_change_tx.send(event);
                 }
@@ -455,7 +452,7 @@ impl IngestionPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::poll_manager::StateChangeEvent;
+    use crate::state_machine::StateChangeEvent;
     use crate::types::TrainId;
     use stomp_client::MockStompClient;
 

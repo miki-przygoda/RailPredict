@@ -6,7 +6,6 @@
 //! main
 //!  ├── db::connect + load_history
 //!  ├── registry warm-up        — pre-register today's timetable (Tier A)
-//!  ├── PollManager::run        — global BinaryHeap poll scheduler
 //!  ├── IngestionPipeline::run  — Darwin STOMP firehose → registry writes
 //!  ├── eviction_task           — 60s tick; calls registry.evict_departed()
 //!  ├── db_flush_task           — 60s tick; flushes delay history to DB
@@ -41,7 +40,6 @@ use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
 use railpredict::networking::{CircuitBreaker, Coalescer, LiveGbrClient, RateLimiter};
 use railpredict::prediction::{OnnxEngine, PredictionEngine};
-use railpredict::state_machine::PollManager;
 use railpredict::types::{TrainId, TrainStatus};
 
 /// Prints a startup diagnostics table to stderr before the structured logger initialises,
@@ -300,21 +298,12 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Single broadcast channel shared by PollManager, IngestionPipeline, and SSE handlers.
+    // Single broadcast channel shared by the IngestionPipeline and SSE handlers
+    // (state-change events drive the live UI; emitted from the ingestion pipeline).
     let (sc_tx, _initial_rx) = broadcast::channel(1024);
     drop(_initial_rx);
 
     let token = CancellationToken::new();
-
-    // --- Poll manager ---
-    let (poll_manager, _pm_handles) = PollManager::new(sc_tx.clone());
-    let pm_token = token.clone();
-    let pm_task = tokio::spawn(async move {
-        tokio::select! {
-            _ = pm_token.cancelled() => tracing::info!("PollManager shutting down"),
-            _ = poll_manager.run() => tracing::warn!("PollManager exited early"),
-        }
-    });
 
     // --- Ingestion pipeline ---
     // Build the initial STOMP client to verify credentials are present before spawning.
@@ -326,7 +315,7 @@ async fn main() -> anyhow::Result<()> {
                 "Darwin credentials not configured — ingestion disabled."
             );
             wait_for_shutdown(
-                token, pm_task, registry, sc_tx, &config,
+                token, registry, sc_tx, &config,
                 Arc::clone(&history_store), db_pool, Arc::clone(&prometheus_handle),
                 Arc::clone(&ingest_tx),
             )
@@ -787,7 +776,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Shutdown signal received — initiating graceful shutdown");
     token.cancel();
 
-    let _ = tokio::join!(pm_task, pipeline_task, eviction_task, flush_task, prune_task, api_task);
+    let _ = tokio::join!(pipeline_task, eviction_task, flush_task, prune_task, api_task);
     if let Some(pt) = poll_task {
         let _ = pt.await;
     }
@@ -820,9 +809,8 @@ async fn shutdown_signal() {
 #[allow(clippy::too_many_arguments)]
 async fn wait_for_shutdown(
     token: CancellationToken,
-    pm_task: tokio::task::JoinHandle<()>,
     registry: Arc<TrainRegistry>,
-    sc_tx: broadcast::Sender<railpredict::state_machine::poll_manager::StateChangeEvent>,
+    sc_tx: broadcast::Sender<railpredict::state_machine::StateChangeEvent>,
     config: &Config,
     history_store: Arc<railpredict::prediction::types::HistoricalStore>,
     db_pool: db::Db,
@@ -867,7 +855,6 @@ async fn wait_for_shutdown(
     shutdown_signal().await;
     tracing::info!("Shutdown signal received — initiating graceful shutdown");
     token.cancel();
-    let _ = pm_task.await;
 
     if let Err(e) = db::history::flush_history(&db_pool, &history_store).await {
         tracing::error!(error = %e, "Final DB flush failed");
