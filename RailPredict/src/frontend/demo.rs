@@ -712,25 +712,9 @@ pub async fn demo_journeys_fragment(
         .and_then(|s| s.parse::<chrono::NaiveDate>().ok())
         .unwrap_or_else(|| Utc::now().date_naive());
 
-    let rows = sqlx::query_as::<_, (String, chrono::NaiveTime, Option<String>)>(
-        "SELECT tc_from.uid, tc_from.scheduled_departure, tc_from.platform \
-         FROM timetable_calls tc_from \
-         JOIN timetable_calls tc_to \
-             ON tc_to.uid            = tc_from.uid \
-            AND tc_to.operating_date = tc_from.operating_date \
-            AND tc_to.location_crs   = $2 \
-            AND tc_to.call_order     > tc_from.call_order \
-         WHERE tc_from.location_crs  = $1 \
-           AND tc_from.operating_date = $3 \
-         ORDER BY tc_from.scheduled_departure \
-         LIMIT 8",
-    )
-    .bind(&from)
-    .bind(&to)
-    .bind(date)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let rows = crate::db::static_data::direct_journeys(&state.db, &from, &to, date, Some(8))
+        .await
+        .unwrap_or_default();
 
     if rows.is_empty() {
         return html! {

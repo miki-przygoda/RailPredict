@@ -585,3 +585,42 @@ async fn operator_league_ranks_by_on_time(pool: sqlx::PgPool) -> sqlx::Result<()
     assert!(rows[1].on_time_pct.unwrap() < 1.0);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// direct_journeys: the timetable self-join relocated out of frontend/ into db/.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn direct_journeys_finds_through_service(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO stations (crs, name) VALUES ($1,$2),($3,$4) ON CONFLICT (crs) DO NOTHING")
+        .bind("LDS").bind("Leeds").bind("MAN").bind("Manchester Piccadilly")
+        .execute(&pool).await?;
+    sqlx::query("INSERT INTO services (uid, origin_crs, destination_crs) VALUES ($1,$2,$3) ON CONFLICT (uid) DO NOTHING")
+        .bind("C12345").bind("LDS").bind("MAN")
+        .execute(&pool).await?;
+
+    let date = NaiveDate::from_ymd_opt(2024, 4, 17).unwrap();
+    let dep = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+    let arr = NaiveTime::from_hms_opt(10, 0, 0).unwrap();
+    // LDS at call_order 0 precedes MAN at call_order 1 for the same service.
+    sqlx::query(
+        "INSERT INTO timetable_calls (uid, operating_date, location_crs, call_order, scheduled_departure, public_departure, platform)
+         VALUES ($1,$2,'LDS',0,$3,$3,'1'), ($1,$2,'MAN',1,$4,$4,'2')",
+    )
+    .bind("C12345").bind(date).bind(dep).bind(arr)
+    .execute(&pool).await?;
+
+    // Forward direction finds the through service.
+    let rows = db::static_data::direct_journeys(&pool, "LDS", "MAN", date, None).await?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0.trim(), "C12345");
+    assert_eq!(rows[0].1, dep);
+
+    // Reverse direction has no qualifying journey (no MAN call before an LDS call).
+    let none = db::static_data::direct_journeys(&pool, "MAN", "LDS", date, None).await?;
+    assert!(none.is_empty());
+
+    // The limit param caps the result set.
+    let limited = db::static_data::direct_journeys(&pool, "LDS", "MAN", date, Some(0)).await?;
+    assert!(limited.is_empty(), "LIMIT 0 should return nothing");
+    Ok(())
+}
