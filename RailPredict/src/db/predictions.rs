@@ -182,6 +182,8 @@ pub async fn prediction_for_rid(db: &Db, rid: &str) -> sqlx::Result<Option<Predi
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct AccuracySummary {
     pub finalised_count: i64,
+    /// Finalised predictions whose absolute error was within ±5 minutes.
+    pub within_5_count: i64,
     pub mean_abs_error_mins: Option<f64>,
     pub mean_predicted_mins: Option<f64>,
     pub mean_actual_mins: Option<f64>,
@@ -192,6 +194,8 @@ pub async fn accuracy_summary(db: &Db, window_hours: i32) -> sqlx::Result<Accura
         r#"
         SELECT
             COUNT(*)                                                       AS finalised_count,
+            COUNT(*) FILTER (
+                WHERE ABS(final_delay_mins - predicted_delay_mins) <= 5)   AS within_5_count,
             AVG(ABS(final_delay_mins - predicted_delay_mins)::FLOAT8)      AS mean_abs_error_mins,
             AVG(predicted_delay_mins::FLOAT8)                              AS mean_predicted_mins,
             AVG(final_delay_mins::FLOAT8)                                  AS mean_actual_mins

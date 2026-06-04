@@ -549,7 +549,7 @@ async fn overview_headline_metrics_basic(pool: sqlx::PgPool) -> sqlx::Result<()>
 
     let cov = railpredict::db::overview::coverage_counts(&pool).await?;
     assert_eq!(cov.real_records, 3);
-    assert_eq!(cov.synthetic_records, 0);
+    assert_eq!(cov.predictions_scored, 0, "no finalised predictions seeded in this test");
     Ok(())
 }
 

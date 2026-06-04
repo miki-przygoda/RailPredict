@@ -1,9 +1,9 @@
 //! Overview cockpit — served at `/`, outside rate limiting.
 //!
 //! A live Signal-Terminal metrics cockpit: KPI strip (on-time %, avg delay,
-//! prediction MAE, trains tracked) with sparklines, a live network-state panel,
-//! a mini operator league, and a data-coverage footer. Re-scopable by the global
-//! time-range picker; htmx range swaps return just the cockpit fragment.
+//! prediction MAE, trains tracked) with area sparklines, a live network-state
+//! panel, a prediction-accuracy panel, and a data-coverage footer. Re-scopable by
+//! the global time-range picker; htmx range swaps return just the cockpit fragment.
 
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
@@ -11,8 +11,8 @@ use maud::{Markup, PreEscaped, html};
 use serde::Deserialize;
 
 use crate::api::AppState;
-use crate::db::{operators, overview};
-use crate::frontend::charts::{self, Polarity};
+use crate::db::{analytics, overview, predictions};
+use crate::frontend::charts::{self, KpiTone, Polarity};
 use crate::frontend::components;
 
 use super::layout::{base, NavPage};
@@ -42,6 +42,16 @@ fn range_to_hours(range: &str) -> i32 {
     }
 }
 
+/// Human label for the active range, used in panel captions.
+fn range_label(range: &str) -> &'static str {
+    match range {
+        "24h" => "last 24 h",
+        "30d" => "last 30 days",
+        "all" => "all time",
+        _ => "last 7 days",
+    }
+}
+
 pub async fn dashboard_page(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -52,10 +62,11 @@ pub async fn dashboard_page(
 
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
 
-    let (headline, series, league, coverage) = tokio::join!(
+    let (headline, series, accuracy, acc_series, coverage) = tokio::join!(
         overview::headline_metrics(&state.db, hours),
         overview::daily_series(&state.db, hours),
-        operators::operator_league(&state.db, hours, 20, 8),
+        predictions::accuracy_summary(&state.db, hours),
+        analytics::accuracy_over_time(&state.db, hours),
         overview::coverage_counts(&state.db),
     );
     let net = state.registry.network_summary(6).await;
@@ -65,7 +76,8 @@ pub async fn dashboard_page(
         db_ok,
         headline.unwrap_or_default(),
         series.unwrap_or_default(),
-        league.unwrap_or_default(),
+        accuracy.ok(),
+        acc_series.unwrap_or_default(),
         coverage.unwrap_or_default(),
         net,
     );
@@ -106,7 +118,8 @@ fn render_cockpit(
     db_ok: bool,
     headline: overview::HeadlineMetrics,
     series: Vec<overview::DailyPoint>,
-    league: Vec<operators::OperatorLeagueRow>,
+    accuracy: Option<predictions::AccuracySummary>,
+    acc_series: Vec<analytics::AccuracyPoint>,
     coverage: overview::CoverageCounts,
     net: crate::cache::train_registry::NetworkSummary,
 ) -> Markup {
@@ -121,45 +134,59 @@ fn render_cockpit(
                     h1 .dash-title { "Network Overview" }
                     p .dash-sub { "Live UK rail punctuality & prediction accuracy" }
                 }
-                (components::time_range_picker("/", range))
+                div .dash-header-right {
+                    @if net.tracked > 0 {
+                        span .live-pill { span .live-dot {} "Live · " (net.tracked) " trains" }
+                    } @else {
+                        span .live-pill.idle { span .live-dot {} "Awaiting feed" }
+                    }
+                    (components::time_range_picker("/", range))
+                }
             }
 
             div .kpi-strip {
                 (charts::kpi_card("On-time", &fmt_opt(headline.on_time_pct, 1), Some("%"),
-                    delta(&ontime_spark).map(|d| (d, Polarity::HigherIsBetter)), Some(&ontime_spark)))
+                    Some("live movement sample"),
+                    delta(&ontime_spark).map(|d| (d, Polarity::HigherIsBetter)), Some(&ontime_spark), KpiTone::Ok))
                 (charts::kpi_card("Avg delay", &fmt_opt(headline.avg_delay_mins, 1), Some("min"),
-                    delta(&delay_spark).map(|d| (d, Polarity::LowerIsBetter)), Some(&delay_spark)))
+                    Some("across sampled movements"),
+                    delta(&delay_spark).map(|d| (d, Polarity::LowerIsBetter)), Some(&delay_spark), KpiTone::Warn))
                 (charts::kpi_card("Prediction MAE", &fmt_opt(headline.mae_mins, 2), Some("min"),
-                    delta(&mae_spark).map(|d| (d, Polarity::LowerIsBetter)), Some(&mae_spark)))
-                (charts::kpi_card("Trains tracked", &net.tracked.to_string(), None, None, None))
+                    Some("predicted vs actual error"),
+                    delta(&mae_spark).map(|d| (d, Polarity::LowerIsBetter)), Some(&mae_spark), KpiTone::Info))
+                (charts::kpi_card("Trains tracked", &net.tracked.to_string(), None,
+                    Some("on the Darwin feed"),
+                    None, None, KpiTone::Neutral))
             }
 
             div .cockpit-grid {
                 section .panel {
                     div .panel-head {
                         h2 { "Live network" }
-                        span .panel-meta { @if db_ok { "Darwin feed" } @else { "DB offline" } }
+                        span .panel-meta { @if db_ok { "● Darwin feed" } @else { "DB offline" } }
                     }
-                    div .net-counts {
-                        (net_stat("Tracked", net.tracked, "net-neutral"))
-                        (net_stat("On time", net.on_time, "net-ok"))
-                        (net_stat("Delayed", net.delayed, "net-warn"))
-                        (net_stat("Cancelled", net.cancelled, "net-bad"))
-                    }
-                    @if net.worst.is_empty() {
-                        p .panel-empty { "No delayed trains right now." }
-                    } @else {
-                        table .mini-table {
-                            thead { tr { th { "Service" } th .num { "Delay" } } }
-                            tbody {
+                    div .panel-body {
+                        div .net-counts {
+                            (net_stat("Tracked", net.tracked, "net-neutral"))
+                            (net_stat("On time", net.on_time, "net-ok"))
+                            (net_stat("Delayed", net.delayed, "net-warn"))
+                            (net_stat("Cancelled", net.cancelled, "net-bad"))
+                        }
+                        @if net.worst.is_empty() {
+                            p .panel-empty { "No delayed trains right now." }
+                        } @else {
+                            @let max_delay = net.worst.iter().map(|w| w.delay_mins).max().unwrap_or(1).max(1);
+                            ul .worst-list {
                                 @for w in &net.worst {
-                                    tr {
-                                        td {
+                                    @let pct = (w.delay_mins as f64 / max_delay as f64 * 100.0).round() as i64;
+                                    li .worst-row {
+                                        span .worst-route {
                                             code { (w.origin_crs.as_deref().unwrap_or("???")) }
                                             span .arrow { "→" }
                                             code { (w.destination_crs.as_deref().unwrap_or("???")) }
                                         }
-                                        td .num { span .delay-bad { "+" (w.delay_mins) "m" } }
+                                        span .worst-bar { span .worst-fill style=(format!("width:{pct}%")) {} }
+                                        span .worst-delay { "+" (w.delay_mins) "m" }
                                     }
                                 }
                             }
@@ -169,25 +196,33 @@ fn render_cockpit(
 
                 section .panel {
                     div .panel-head {
-                        h2 { "Operator league" }
-                        a .panel-link href="/operators" { "All operators →" }
+                        h2 { "Prediction accuracy" }
+                        a .panel-link href="/predictions" { "Full analytics →" }
                     }
-                    @if league.is_empty() {
-                        p .panel-empty { "No operator data yet. Run the GTFS ingest to populate operators." }
-                    } @else {
-                        table .mini-table .league-table {
-                            thead { tr { th { "Operator" } th .num { "On-time" } th .num { "Avg" } } }
-                            tbody {
-                                @for row in &league {
-                                    tr {
-                                        td {
-                                            span .op-chip style=(format!("background:{}", row.brand_color)) {}
-                                            (row.name)
+                    div .panel-body {
+                        @match accuracy.filter(|a| a.finalised_count > 0) {
+                            Some(acc) => {
+                                @let within5 = acc.within_5_count as f64 / acc.finalised_count as f64 * 100.0;
+                                @let mae_series: Vec<f64> = acc_series.iter().filter_map(|p| p.mae_mins).collect();
+                                div .acc-top {
+                                    div .acc-headline {
+                                        span .acc-big { (within5.round() as i64) span .acc-pct { "%" } }
+                                        span .acc-cap { "within ±5 min" }
+                                    }
+                                    div .acc-detail {
+                                        p .acc-sub {
+                                            (compact_count(acc.finalised_count, 0)) " scored · MAE "
+                                            (fmt_opt(acc.mean_abs_error_mins, 1)) " min"
                                         }
-                                        td .num { (fmt_opt(row.on_time_pct, 0)) "%" }
-                                        td .num { (fmt_opt(row.avg_delay_mins, 1)) }
+                                        @if mae_series.len() >= 2 {
+                                            div .acc-chart { (charts::area_spark(&mae_series, "acc-trend")) }
+                                            span .acc-cap { "MAE trend · " (range_label(range)) }
+                                        }
                                     }
                                 }
+                            }
+                            None => {
+                                p .panel-empty { "No scored predictions in this window yet." }
                             }
                         }
                     }
@@ -206,8 +241,8 @@ fn render_cockpit(
 
             div .coverage-strip {
                 (coverage_chip("Stations", compact_count(coverage.stations, 1)))
-                (coverage_chip("Real delay records", compact_count(coverage.real_records, 1)))
-                (coverage_chip("Synthetic records", compact_count(coverage.synthetic_records, 1)))
+                (coverage_chip("Delay records", compact_count(coverage.real_records, 1)))
+                (coverage_chip("Predictions scored", compact_count(coverage.predictions_scored, 1)))
             }
         }
     }
