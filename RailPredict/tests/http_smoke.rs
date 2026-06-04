@@ -34,10 +34,24 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
     let (s, _) = app.get("/demo").await;
     assert_eq!(s, StatusCode::NOT_FOUND, "/demo retired");
 
-    // Top nav no longer advertises the dev console.
+    // Top nav no longer advertises the dev console; Operators is now linked.
     let (_s, home) = app.get("/").await;
     assert!(home.contains(">Overview<"), "nav has Overview");
+    assert!(home.contains(">Operators<"), "nav has Operators");
     assert!(!home.contains("Dev Console"), "nav no longer shows Dev Console");
+
+    // Operators league (empty data in the test DB → branded empty-state, still 200).
+    let (s, b) = app.get("/operators").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.contains("Punctuality league"), "operators league markup");
+
+    // Operator drill-down: a well-formed TOC renders (empty-state with no data).
+    let (s, _) = app.get("/operators/VT").await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Malformed TOC path → 404.
+    let (s, _) = app.get("/operators/toolong").await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "invalid TOC rejected");
 
     // Health JSON (DB reachable via the test pool → "ok")
     let (s, j) = app.get_json("/health").await;

@@ -49,7 +49,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::{StationIndex, TrainRegistry},
     db::Db,
-    frontend::{dashboard, dev, detail, explore, predictions, search},
+    frontend::{dashboard, dev, detail, explore, operators, predictions, search},
     ingestion::gtfs::IngestStatus,
     state_machine::StateChangeEvent,
 };
@@ -193,6 +193,8 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         // so it must stay behind the rate limiter (not on infra_router).
         .route("/report", get(handlers::report_handler))
         .route("/search", get(search::search_page))
+        .route("/operators", get(operators::operators_page))
+        .route("/operators/:toc", get(operators::operator_page))
         .route("/predictions", get(predictions::predictions_page))
         .route("/explore", get(explore::explore_page))
         .route("/trains/:rid/view", get(detail::detail_page))

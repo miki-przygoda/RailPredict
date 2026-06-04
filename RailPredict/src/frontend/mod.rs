@@ -6,6 +6,7 @@
 //!
 //! ## Pages (routes are wired in `api/mod.rs` — the source of truth)
 //! - `dashboard`   — `/`                 overview cockpit
+//! - `operators`   — `/operators`        operator league + `/operators/:toc` drill-down
 //! - `search`      — `/search`           departure board + journey search (+ `/ui/stations/*`, `/ui/journeys`)
 //! - `predictions` — `/predictions`      prediction-accuracy analytics
 //! - `detail`      — `/trains/:rid/view` train detail (+ `/ui/trains/:rid/live` SSE)
@@ -19,5 +20,6 @@ pub mod dev;
 pub mod detail;
 pub mod explore;
 pub mod layout;
+pub mod operators;
 pub mod predictions;
 pub mod search;
