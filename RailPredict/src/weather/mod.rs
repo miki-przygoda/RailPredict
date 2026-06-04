@@ -79,8 +79,6 @@ pub async fn run_weather_task(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn parse_weather_anchors_valid() {
         let raw = "LDS:53.796:-1.548,MAN:53.488:-2.242";

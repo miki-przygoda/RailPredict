@@ -199,10 +199,10 @@ fn load_benchmarks() -> Option<ModelBenchmarks> {
         Path::new("../models/benchmarks.json").to_path_buf(),
     ];
     for path in &candidates {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(b) = serde_json::from_str::<ModelBenchmarks>(&text) {
-                return Some(b);
-            }
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(b) = serde_json::from_str::<ModelBenchmarks>(&text)
+        {
+            return Some(b);
         }
     }
     None

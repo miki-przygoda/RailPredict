@@ -228,13 +228,13 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                     }
                     b"Association" => {
                         // Emit only if this was an NP association and both RIDs were captured.
-                        if current_assoc_category.as_deref() == Some("NP") {
-                            if let (Some(prev_rid), Some(next_rid)) = (
+                        if current_assoc_category.as_deref() == Some("NP")
+                            && let (Some(prev_rid), Some(next_rid)) = (
                                 current_assoc_main_rid.take(),
                                 current_assoc_next_rid.take(),
-                            ) {
-                                updates.push(ParsedUpdate::Association { prev_rid, next_rid });
-                            }
+                            )
+                        {
+                            updates.push(ParsedUpdate::Association { prev_rid, next_rid });
                         }
                         current_assoc_category = None;
                         current_assoc_main_rid = None;
