@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.9" -- 04/06/2026**
+**version = "1.12.10" -- 04/06/2026**
 
 ---
 
@@ -68,10 +68,10 @@ See `TODOs/Improvements.md` (sections 8.3, 6.4, 5.6, 2.8) for full detail on eac
 
 Full ledger: **`docs/tech-debt.md`** (indexed against the read-only audit in `data/refactor-audit/`).
 
-**A. Approved refactors, pending implementation:**
+**A. Approved refactors — ✓ completed (v1.12.10):**
 
-- **State-machine cut** — `from_departure`/`emergency_promote` + the `PollManager` registration plumbing (`PollManagerHandles`/`RegistrationMsg`) + `StateChangeEvent.reason` are production-dead; ingestion sets `TrainState` inline and the spawned `PollManager` loops on an empty heap. Decision: cut the dead rule engine + registration, keep the live inline logic.
-- **Association fix & wire** — the filter taxonomy needle is lowercase `b"association"` but real Darwin frames are `<Association>`, so every NP-association frame is dropped before the parser. The whole predecessor-delay / turnround signal is unreachable. Decision: fix the case-match, wire end-to-end, add a capital-`A` fixture.
+- ✓ **State-machine cut** (`be012f7`) — removed `from_departure`/`emergency_promote`/`poll_interval`/`PromotionReason` and deleted `poll_manager.rs` (PollManager + registration + `main.rs` spawn). Kept the live inline logic; `StateChangeEvent` moved to `train_state.rs` and still drives ingestion→SSE. Net −525/+42.
+- ✓ **Association fix & wire** (`caab859`) — filter taxonomy now routes capital `<Association>` (`Conditional`) to the parser; NP turnround predecessor-delay flows end-to-end, covered by a new integration test.
 
 **B. Verified dead code / no-value items** (marked remove vs keep in the ledger): `trains_at_tiploc`, `is_empty`, `check_tiploc_cascade`/`cascade_trains_for_tiploc` (Tier-C-staged), `StateChangeEvent.reason`, `TrainStatus.cancellation_reason`, `TrainId::headcode` (keep — intentional API), `Stamped::is_stale`, JSON `/stations/search` + `StationResult.trains_today`, the journey self-join SQL in `frontend/` (move to `db/static_data.rs`), `wait_for_shutdown` startup-tail duplication, plus a masked-dead `#[allow]` sweep.
 

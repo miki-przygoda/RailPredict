@@ -1,6 +1,6 @@
 # RailPredict
 
-**v1.12.9 — June 2026**
+**v1.12.10 — June 2026**
 
 A UK rail data engine written in Rust. RailPredict subscribes directly to the **Darwin Push Port** — National Rail's STOMP-based firehose of every train movement in the country — and uses that stream to build an intelligent buffer between users and the Great British Railways API. The vast majority of queries are answered from local state, in-memory cache, and statistical prediction; the only call that ever hits GBR directly is the one that genuinely requires it: final ticket purchase.
 
