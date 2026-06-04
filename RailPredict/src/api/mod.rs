@@ -50,7 +50,7 @@ use crate::{
     db::Db,
     frontend::{dashboard, demo, detail, predictions, search},
     ingestion::gtfs::IngestStatus,
-    state_machine::poll_manager::StateChangeEvent,
+    state_machine::StateChangeEvent,
 };
 
 // ---------------------------------------------------------------------------

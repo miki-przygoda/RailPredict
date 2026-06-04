@@ -11,7 +11,7 @@ use std::sync::Arc;
 use railpredict::cache::TrainRegistry;
 use railpredict::ingestion::stomp_client::MockStompClient;
 use railpredict::ingestion::IngestionPipeline;
-use railpredict::state_machine::poll_manager::StateChangeEvent;
+use railpredict::state_machine::StateChangeEvent;
 use railpredict::state_machine::TrainState;
 use railpredict::types::TrainId;
 use tokio::sync::broadcast;

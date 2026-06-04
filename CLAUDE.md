@@ -91,8 +91,7 @@ RailPredict/                        ← repo root
         │   └── volatility.rs       ← VolatilityContext; CorrelationSignal for Tier B
         ├── state_machine/
         │   ├── mod.rs
-        │   ├── train_state.rs      ← TrainState enum + transition logic + emergency_promote
-        │   └── poll_manager.rs     ← BinaryHeap-based global poll loop; mpsc STATE_CHANGE_BUFFER=256
+        │   └── train_state.rs      ← TrainState urgency vocabulary + StateChangeEvent; states set inline by ingestion
         ├── networking/
         │   ├── mod.rs
         │   ├── gbr_client.rs       ← reqwest GBR REST wrapper; gbr_api_latency_ms histogram
