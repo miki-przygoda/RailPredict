@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # Run on pushes to the default branch (incl. PR merges) and on every pull request,
+  # but NOT on every push to feature branches.
   push:
+    branches: [main]
   pull_request:
 
 jobs:
