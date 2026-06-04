@@ -153,6 +153,8 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 ### State Machine
 
+> **Current status (deferred):** This transition table and the `PollManager` describe the *intended* design. In production the rule engine (`from_departure`/`emergency_promote`) and the `PollManager` registration channel are **bypassed** — ingestion sets `TrainState` inline (`ingestion/mod.rs`) and the spawned `PollManager` loops on an empty heap. Slated for a cut; see `docs/tech-debt.md` §A1.
+
 | State       | Trigger Condition                          | Polling Behaviour               |
 |:------------|:-------------------------------------------|:--------------------------------|
 | `Dormant`   | Departure > 2 hours away                   | No live calls. Tier A only.     |
@@ -174,6 +176,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - Use `chrono` for all timestamps; always distinguish `scheduled_departure`, `public_departure`, `actual_estimated_departure`
 
 ### State Machine (`src/state_machine/`)
+> **Current status (deferred):** the rule engine + `PollManager` registration are production-dead (ingestion sets states inline); slated for a cut — see `docs/tech-debt.md` §A1.
 - `enum TrainState { Dormant, Monitored, Active, Critical, Terminal }`
 - Single global `PollManager` with a `BinaryHeap` ordered by next-poll time — never one `tokio::spawn` per train
 - State changes broadcast via bounded `mpsc` (`STATE_CHANGE_BUFFER=256`); the API/UI layer subscribes — never locks the registry to check for changes
@@ -187,7 +190,8 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - Apply region/route filter as **step one** in the pipeline — drop irrelevant messages before any parsing
 - `SequenceGuard` in `filter.rs` prevents stale overwrites and handles STOMP reconnect replays; never overwrite a newer update with a late-arriving older one
 - `PipelineContext` holds `Arc`-backed shared state (registry, broadcast tx, prediction engine, filter) so shared state survives STOMP reconnects; only the STOMP client is replaced
-- `check_tiploc_cascade` in `filter.rs` detects knock-on delays via the TIPLOC index in `train_registry.rs` — wire into `ingestion/mod.rs` when Tier C is active
+- `check_tiploc_cascade` in `filter.rs` detects knock-on delays via the TIPLOC index in `train_registry.rs` — wire into `ingestion/mod.rs` when Tier C is active. **Current status:** staged/inert (no production caller); see `docs/tech-debt.md` §C2.
+- **NP-association path is currently inert:** the filter taxonomy needle is lowercase `b"association"` but real Darwin frames are `<Association>`, so association frames are dropped before the parser and the predecessor-delay signal never runs. Pending a case-fix + wire — see `docs/tech-debt.md` §A2.
 
 ### Prediction Engine (`src/prediction/`)
 - `ServicePattern` is keyed on `(uid, weekday, origin_crs, departure_hour)` — stable recurring-service identity, not the daily-changing RID
