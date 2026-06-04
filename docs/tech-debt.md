@@ -40,33 +40,32 @@ Both were reviewed, a direction chosen, and **implemented**. Retained here for p
 
 ---
 
-## B. Remaining dead code / no-value items
+## B. Dead code / no-value items — cleared
 
-Verified by the audit (zero production callers, crate-wide grep) and not yet removed.
-Each is marked **remove** or **keep** (intentional / Tier-C-staged).
+Verified by the audit (zero production callers, crate-wide grep). **The `remove`/`move`/`dedup`
+items were all done in the §B sweep this session (v1.12.11);** the remaining `keep` items
+are intentional public API or Tier-C-staged.
 
 | Item | Refs | State | Disposition |
 |------|------|-------|-------------|
-| `trains_at_tiploc` | `cache/train_registry.rs:290` | Test-only; only `cascade_trains_for_tiploc` is wired (into the currently-dead `check_tiploc_cascade`). ~22 lines of hot-path code, never invoked live. | **remove** (unless Tier-C cascade wiring is imminent). |
-| `is_empty` | `cache/train_registry.rs:186` | Carries `#[allow(dead_code)]`; used only by tests (`:536`, `:542`). | **remove** or convert `#[allow(dead_code)]` → `#[cfg(test)]`. |
+| `trains_at_tiploc` | `cache/train_registry.rs:290` | Test-only; only `cascade_trains_for_tiploc` is wired (into the currently-dead `check_tiploc_cascade`). | ✓ **removed** (`ac25d5c`) — incl. `TIPLOC_WINDOW_MINS` + its no-op test. |
+| `is_empty` | `cache/train_registry.rs:186` | Carried `#[allow(dead_code)]`; used only by tests. | ✓ **stale `#[allow]` dropped** (`ac25d5c`); method kept (satisfies clippy `len_without_is_empty`). |
 | `check_tiploc_cascade` + `cascade_trains_for_tiploc` | `ingestion/filter.rs:210`, `cache/train_registry.rs:323` | Tier-C-staged; no production caller. CLAUDE.md says wired "when Tier C is active". | **keep (Tier-C-staged)** — see §C2; gate behind a tracking issue rather than a free-floating TODO. |
 | `StateChangeEvent.reason` | (was `state_machine/poll_manager.rs:67`) | Write-only; no consumer read it. | ✓ **removed** (A1, `be012f7`). |
-| `TrainStatus.cancellation_reason` | `types/train_status.rs:115,171` | Initialised `Stamped::new(None)`; never written from any source nor read. Dead data on the hot-path struct (and SSE payloads). | **remove** until a Darwin cancellation-reason source populates it. |
+| `TrainStatus.cancellation_reason` | `types/train_status.rs:115,171` | Initialised `Stamped::new(None)`; never written nor read. Dead data on the hot-path struct (and SSE payloads). | ✓ **removed** (`ac25d5c`). |
 | `TrainId::headcode` constructor | `types/train_id.rs:60` | Constructor + its `InvalidHeadcodeLength/Format` errors have no production caller (only tests); `rid`/`uid` are used. Re-exported via `lib.rs`. | **keep (intentional API)** — Headcode variant is plausibly deliberate public surface; drop only if Darwin headcode ingestion is ruled out. |
 | `Stamped::is_stale` | `types/train_status.rs:47` | Carries `#[allow(dead_code)]`; only tests call it. Per-field staleness was the stated reason `Stamped` exists, yet nothing in production checks it. | **keep (honest allow / unfinished feature)** — or wire into a consumer (e.g. `api/types.rs` "seconds since updated" computes age manually). |
-| JSON `/stations/search` route + `StationResult.trains_today` | `api/mod.rs:205`, `api/handlers.rs:415`, `:408,:426` | The JSON route has no template consumer (only the htmx `/ui/stations/search` fragment is referenced); it duplicates the fragment's index-query + mapping. `trains_today` is hardcoded `0` at every site and the maud `@if result.trains_today > 0` branch is unreachable. | **remove** the JSON route + handler + dead field (or document as public API and dedup the shared `index.search → StationResult` mapping). |
-| Journey self-join SQL living in `frontend/` | `frontend/search.rs:487`, `frontend/demo.rs:717` | The `timetable_calls` self-join "direct journey" query is duplicated across two render modules (search LIMIT-less, demo LIMIT 8). Raw SQL belongs in `db/` per the directory map, not frontend handlers. | **move** to a `db/static_data.rs` function (e.g. `direct_journeys(from, to, date, limit)`) and call from both. |
-| `wait_for_shutdown` startup-tail duplication | `main.rs:817` | Near-complete copy of the normal startup tail (rebuilds `StationIndex`, assembles a second `AppState`, re-runs serve/shutdown) behind a 9-arg `#[allow(clippy::too_many_arguments)]`. Easy for the two `AppState` assemblies to drift. | **remove dup** — extract `assemble_app_state(...)` + `serve_api(app_state, listener, token)` shared by both paths. |
+| JSON `/stations/search` route + `StationResult.trains_today` | `api/mod.rs`, `api/handlers.rs`, `frontend/search.rs` | The JSON route had no template consumer (only the htmx `/ui/stations/search` fragment); `trains_today` was hardcoded `0` (the `@if > 0` branch unreachable, so suggestions always showed a misleading "no service"). | ✓ **removed** JSON route + handler + `trains_today` (`20b4f0f`); `StationResult`/`StationSearchQuery` kept (shared with the htmx fragment). Minor visual change logged in the visual-changes-plan. |
+| Journey self-join SQL living in `frontend/` | `frontend/search.rs`, `frontend/demo.rs` | The `timetable_calls` self-join direct-journey query was duplicated across two render modules (search unbounded, demo LIMIT 8). Raw SQL belongs in `db/`. | ✓ **moved** to `db::static_data::direct_journeys(from, to, date, limit)` (`c906110`), called from both, with a new sqlx::test. |
+| `wait_for_shutdown` startup-tail duplication | `main.rs` | Near-clone of the normal startup tail (rebuilt `StationIndex`, assembled a second `AppState`). Easy for the two `AppState` assemblies to drift. | ✓ **deduped** (`503ae9b`) — extracted `build_station_index` + `assemble_app_state`; the divergent serve/shutdown control flow left as-is. |
 
-Additional low-risk masked-dead items the audit flags (collapsible into the same sweep,
-detail in the audit files): `ParseError::Empty` (`parser.rs:108`, `#[allow(dead_code)]`,
-never constructed), `GtfsTrip::trip_headsign` (`gtfs.rs:85`, parsed-and-discarded),
-`MockGbrClient::set_error` (`gbr_client.rs:285`, unused test helper), `ENDPOINT_DEPARTURES`
-(`gbr_client.rs:37`, no call site), the `extract_stops_txt` single-use wrapper
-(`gtfs.rs:339`), `PredictionEngine::with_store` / `arc_store` (`engine.rs:130,141`, zero
-callers), `db::operators::list_operators` (`operators.rs:14`, test-only, not on the
-awaiting-UI list), and the stale noise `#[allow(unused_imports)]` on now-used re-exports
-(`types/mod.rs:14`, `state_machine/mod.rs:10,12`, `cache/mod.rs:10`). All **remove**.
+Additional masked-dead items — **all cleared** across this session's commits:
+`ParseError::Empty`, `GtfsTrip::trip_headsign`, the `extract_stops_txt` wrapper, and the
+stale `#[allow(unused_imports)]` on `types/mod.rs` (`ac25d5c`); `PredictionEngine::with_store`/`arc_store`
+and the `cache/mod.rs` allow (`263486a`); `MockGbrClient::set_error` (`14d145d`);
+`ENDPOINT_DEPARTURES` (`1809421`); the `state_machine/mod.rs` allows (`be012f7`).
+**Kept:** `db::operators::list_operators` — retained for the upcoming Phase 3 `/operators` UI
+(operator index/filter), not removed.
 
 > Note: the audit's `[HIGH] RISK` on circuit-breaker error routing
 > (`main.rs` string-matching `msg.contains("503")`) is **already fixed** — see commit
