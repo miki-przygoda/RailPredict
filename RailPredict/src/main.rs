@@ -728,28 +728,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // --- Station autocomplete index (in-memory, loaded once) ---
-    let station_index = {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
-            .fetch_all(&db_pool)
-            .await
-            .unwrap_or_default();
-        let count = rows.len();
-        let idx = StationIndex::build(rows);
-        tracing::info!(stations = count, "Station autocomplete index built");
-        Arc::new(idx)
-    };
+    let station_index = build_station_index(&db_pool).await;
 
     // --- axum HTTP server ---
-    let app_state = AppState {
-        registry: Arc::clone(&registry),
-        state_change_tx: sc_tx,
-        db: db_pool.clone(),
-        prometheus: Arc::clone(&prometheus_handle),
-        cors_allowed_origins: config.cors_allowed_origins.clone(),
-        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
-        ingest_status: Arc::clone(&ingest_tx),
-        station_index: Arc::clone(&station_index),
-    };
+    let app_state = assemble_app_state(
+        Arc::clone(&registry),
+        sc_tx,
+        db_pool.clone(),
+        Arc::clone(&prometheus_handle),
+        &config,
+        Arc::clone(&ingest_tx),
+        Arc::clone(&station_index),
+    );
     let app = router(app_state);
     let bind_addr: std::net::SocketAddr = config
         .api_bind_addr
@@ -806,6 +796,42 @@ async fn shutdown_signal() {
     ctrl_c.await;
 }
 
+/// Build the in-memory station autocomplete index from the DB (once, at startup).
+async fn build_station_index(db: &db::Db) -> Arc<StationIndex> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+    let count = rows.len();
+    let idx = StationIndex::build(rows);
+    tracing::info!(stations = count, "Station autocomplete index built");
+    Arc::new(idx)
+}
+
+/// Assemble the shared `AppState` from its parts. One definition so the normal and
+/// ingestion-disabled (`wait_for_shutdown`) startup paths cannot drift.
+#[allow(clippy::too_many_arguments)]
+fn assemble_app_state(
+    registry: Arc<TrainRegistry>,
+    state_change_tx: broadcast::Sender<railpredict::state_machine::StateChangeEvent>,
+    db: db::Db,
+    prometheus: Arc<metrics_exporter_prometheus::PrometheusHandle>,
+    config: &Config,
+    ingest_status: Arc<watch::Sender<IngestStatus>>,
+    station_index: Arc<StationIndex>,
+) -> AppState {
+    AppState {
+        registry,
+        state_change_tx,
+        db,
+        prometheus,
+        cors_allowed_origins: config.cors_allowed_origins.clone(),
+        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
+        ingest_status,
+        station_index,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn wait_for_shutdown(
     token: CancellationToken,
@@ -817,23 +843,16 @@ async fn wait_for_shutdown(
     prometheus_handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
     ingest_tx: Arc<watch::Sender<IngestStatus>>,
 ) {
-    let station_index = {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
-            .fetch_all(&db_pool)
-            .await
-            .unwrap_or_default();
-        Arc::new(StationIndex::build(rows))
-    };
-    let app_state = AppState {
+    let station_index = build_station_index(&db_pool).await;
+    let app_state = assemble_app_state(
         registry,
-        state_change_tx: sc_tx,
-        db: db_pool.clone(),
-        prometheus: prometheus_handle,
-        cors_allowed_origins: config.cors_allowed_origins.clone(),
-        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
-        ingest_status: ingest_tx,
+        sc_tx,
+        db_pool.clone(),
+        prometheus_handle,
+        config,
+        ingest_tx,
         station_index,
-    };
+    );
     let app = router(app_state);
 
     if let Ok(addr) = config.api_bind_addr.parse::<std::net::SocketAddr>()
