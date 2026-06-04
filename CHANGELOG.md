@@ -2,9 +2,15 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.11" -- 04/06/2026**
+**version = "1.12.12" -- 04/06/2026**
 
 ---
+
+## [1.12.12] — 2026-06-04
+### Added
+- **Query Explorer** (`/explore`, nav-linked): a guided "fill-in-the-gaps" data explorer. The admin composes a query from whitelisted controls (time-of-day, operator, origin/destination, group-by, metric) and the server runs a **safe parameterized** query (`db/explore.rs` — every SQL fragment chosen by a `match` on an enum, every value `push_bind`, always a `LIMIT` + sanity filter + bounded window). v1 subject is observations (`delay_history ⋈ services`). htmx live-update with bookmarkable URLs (`hx-select` + `hx-push-url`). Functional baseline styling — reskin tracked in the visual-changes-plan.
+### Tests
+- First **HTTP-level e2e suite** (zero new deps): a shared harness spins the real axum app up on an ephemeral port and drives it with `reqwest`. Covers the **station connection/journey finder** end-to-end (the previously-unverifiable flow), page smoke tests, the `build_departure_board` DB×registry merge, and the Query Explorer. 14 new tests (8 HTTP + 6 explorer).
 
 ## [1.12.11] — 2026-06-04
 ### Changed (tech-debt §B dead-code / no-value sweep)
