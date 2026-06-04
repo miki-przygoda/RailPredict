@@ -21,7 +21,7 @@
 //! - `CorsLayer`: permissive in debug mode; restricted to `CORS_ALLOWED_ORIGINS` in production.
 //! - `TraceLayer`: logs method, path, status, latency for every request.
 //! - `GovernorLayer`: per-IP rate limiting (default 60 req/s). Excludes only the
-//!   infra sub-router (no-limit set): /, /demo, /health, /metrics, and the /ui/demo/* routes.
+//!   infra sub-router (no-limit set): /, /dev, /health, /metrics, and the /ui/dev/* routes.
 //!
 //! ## Error shape
 //! All JSON 4xx/5xx responses use `{ "error": "...", "code": "..." }` — see `types::ApiError`.
@@ -48,7 +48,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::{StationIndex, TrainRegistry},
     db::Db,
-    frontend::{dashboard, demo, detail, explore, predictions, search},
+    frontend::{dashboard, dev, detail, explore, predictions, search},
     ingestion::gtfs::IngestStatus,
     state_machine::StateChangeEvent,
 };
@@ -164,20 +164,17 @@ pub fn router(state: AppState) -> Router {
     // be throttled, and the dashboard is a lightweight status page that should always load.
     let infra_router = Router::new()
         .route("/", get(dashboard::dashboard_page))
-        .route("/demo", get(demo::demo_page))
+        .route("/dev", get(dev::dev_page))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(handlers::health_handler))
-        // Demo fragment routes — no rate limit (dev/admin tools)
-        .route("/ui/demo/status",      get(demo::demo_status_fragment))
-        .route("/ui/demo/predictions", get(demo::demo_predictions_fragment))
-        .route("/ui/demo/registry",    get(demo::demo_registry_fragment))
-        .route("/ui/demo/journeys", get(demo::demo_journeys_fragment))
-        .route("/ui/demo/checkout", get(demo::demo_checkout_fragment))
-        .route("/ui/demo/purchase", post(demo::demo_purchase_fragment))
-        .route("/ui/demo/events",          get(demo::demo_events_sse))
-        .route("/ui/demo/ingest/freshness", get(demo::demo_ingest_freshness))
-        .route("/ui/demo/ingest/start",    post(demo::demo_ingest_start))
-        .route("/ui/demo/ingest/stream",   get(demo::demo_ingest_stream))
+        // Dev fragment routes — no rate limit (internal diagnostics tools)
+        .route("/ui/dev/status",      get(dev::dev_status_fragment))
+        .route("/ui/dev/predictions", get(dev::dev_predictions_fragment))
+        .route("/ui/dev/registry",    get(dev::dev_registry_fragment))
+        .route("/ui/dev/events",          get(dev::dev_events_sse))
+        .route("/ui/dev/ingest/freshness", get(dev::dev_ingest_freshness))
+        .route("/ui/dev/ingest/start",    post(dev::dev_ingest_start))
+        .route("/ui/dev/ingest/stream",   get(dev::dev_ingest_stream))
         .with_state(state.clone());
 
     // Public API sub-router — rate-limited.

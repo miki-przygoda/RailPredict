@@ -1,12 +1,11 @@
-//! Developer Console — `/demo`
+//! Diagnostics console — `/dev`
 //!
 //! Two-panel layout:
-//! - Left: Feature Lab — interactive tests for every major capability (health,
+//! - Left: internal diagnostics — interactive tests for every major capability (health,
 //!   autocomplete, departure board, registry probe, live event monitor).
-//! - Right: Ticket Purchase Demo — a full end-to-end booking UI that shows
-//!   what the Tier C purchase flow (backlog item 2.8) will look and feel like
-//!   once the GBR Purchase API is wired. The "Confirm Purchase" step is
-//!   simulated: it shows exactly what the real API call would contain.
+//! - Right: Ticketing stub — live purchase is not wired in this build; the circuit-breaker,
+//!   idempotency layer, and purchase ledger exist but the GBR Retail write endpoint is
+//!   pending commercial access.
 //!
 //! All routes here live in the infra router (no rate limiting).
 
@@ -29,26 +28,7 @@ use crate::{
     types::TrainId,
 };
 
-use super::{components::{pence_to_pounds, platform_chip}, layout::{base, NavPage}};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Pseudo-unique reference built from wall-clock nanos — no uuid crate needed.
-fn gen_idempotency_key() -> String {
-    let secs = Utc::now().timestamp();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    format!("{secs:x}-{nanos:08x}")
-}
-
-fn gen_booking_ref() -> String {
-    let micros = Utc::now().timestamp_micros();
-    format!("RP{:06X}", (micros.unsigned_abs() % 0x00FF_FFFF) as u32)
-}
+use super::layout::{base, NavPage};
 
 // ---------------------------------------------------------------------------
 // Query / form structs
@@ -57,32 +37,6 @@ fn gen_booking_ref() -> String {
 #[derive(Deserialize)]
 pub struct RidQuery {
     pub rid: String,
-}
-
-#[derive(Deserialize)]
-pub struct DemoJourneyQuery {
-    pub from: String,
-    pub to: String,
-    pub date: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct CheckoutQuery {
-    pub uid: String,
-    pub from: String,
-    pub to: String,
-    pub dep: String, // "HH:MM"
-}
-
-#[derive(Deserialize)]
-pub struct PurchaseForm {
-    pub uid: String,
-    pub from_crs: String,
-    pub to_crs: String,
-    pub dep_time: String,
-    pub passengers: u8,
-    pub idempotency_key: String,
-    pub fare_pence: i32,
 }
 
 #[derive(Deserialize)]
@@ -95,19 +49,19 @@ pub struct IngestStartForm {
 }
 
 // ---------------------------------------------------------------------------
-// Main page — GET /demo
+// Main page — GET /dev
 // ---------------------------------------------------------------------------
 
-pub async fn demo_page() -> Markup {
-    base("Developer Console", NavPage::DevConsole, html! {
+pub async fn dev_page() -> Markup {
+    base("Diagnostics", NavPage::DevConsole, html! {
         div .demo-console {
 
             // ── Page header ──────────────────────────────────────────────
             div .demo-header {
                 div {
-                    h1 { "Developer Console" }
+                    h1 { "Diagnostics" }
                     p .demo-subtitle {
-                        "Feature Lab  ·  Purchase Demo  ·  "
+                        "Internal diagnostics  ·  "
                         code { "v" (env!("CARGO_PKG_VERSION")) }
                     }
                 }
@@ -118,7 +72,7 @@ pub async fn demo_page() -> Markup {
             div .demo-status-section {
                 div .demo-section-title { "System Status" }
                 div
-                    hx-get="/ui/demo/status"
+                    hx-get="/ui/dev/status"
                     hx-trigger="load, every 5s"
                     hx-swap="innerHTML"
                 {
@@ -130,7 +84,6 @@ pub async fn demo_page() -> Markup {
             div .demo-status-section {
                 div .demo-section-title {
                     "Predicted vs Actual"
-                    span .demo-badge .badge-tier-a style="background:rgba(120,140,200,0.15);color:#a4b8e8;" { "Tier B" }
                 }
                 p .demo-hint {
                     "Per-train predictions captured at first sighting, and the actual "
@@ -138,7 +91,7 @@ pub async fn demo_page() -> Markup {
                     "accuracy summary plus the 30 most recent entries."
                 }
                 div
-                    hx-get="/ui/demo/predictions"
+                    hx-get="/ui/dev/predictions"
                     hx-trigger="load, every 10s"
                     hx-swap="innerHTML"
                 {
@@ -149,7 +102,7 @@ pub async fn demo_page() -> Markup {
             div .demo-grid {
 
                 // ══════════════════════════════════════════════════════════
-                // LEFT PANEL — Feature Lab
+                // LEFT PANEL — diagnostics
                 // ══════════════════════════════════════════════════════════
                 div .demo-col {
 
@@ -226,7 +179,7 @@ document.addEventListener('htmx:afterSettle', function() {
                             " entry."
                         }
                         form
-                            hx-get="/ui/demo/registry"
+                            hx-get="/ui/dev/registry"
                             hx-target="#demo-reg-result"
                             hx-trigger="submit"
                             hx-swap="innerHTML"
@@ -253,13 +206,13 @@ document.addEventListener('htmx:afterSettle', function() {
                         }
                         div #demo-event-feed .demo-event-feed {
                             p .demo-loading id="event-feed-placeholder" {
-                                "Connecting to /ui/demo/events…"
+                                "Connecting to /ui/dev/events…"
                             }
                         }
                         script { (PreEscaped(r#"
 (function() {
     var feed  = document.getElementById('demo-event-feed');
-    var es    = new EventSource('/ui/demo/events');
+    var es    = new EventSource('/ui/dev/events');
     var MAX_ROWS = 30;
     es.addEventListener('state-change', function(e) {
         var ph = document.getElementById('event-feed-placeholder');
@@ -283,21 +236,20 @@ document.addEventListener('htmx:afterSettle', function() {
                     div .demo-section {
                         div .demo-section-title {
                             "Data Ingest"
-                            span .demo-badge .badge-tier-a { "Tier A" }
                         }
                         p .demo-hint {
                             "Seed the database with stations, services, and timetable data. "
                             "Leave URL blank to use the " code { "GTFS_URL" } " env var."
                         }
                         div
-                            hx-get="/ui/demo/ingest/freshness"
+                            hx-get="/ui/dev/ingest/freshness"
                             hx-trigger="load"
                             hx-swap="outerHTML"
                         {
                             p .demo-loading { "Checking data…" }
                         }
                         form
-                            hx-post="/ui/demo/ingest/start"
+                            hx-post="/ui/dev/ingest/start"
                             hx-target="#ingest-feedback"
                             hx-swap="innerHTML"
                             .demo-inline-form
@@ -316,7 +268,7 @@ document.addEventListener('htmx:afterSettle', function() {
                         }
                         script { (PreEscaped(r#"
 (function() {
-    var es = new EventSource('/ui/demo/ingest/stream');
+    var es = new EventSource('/ui/dev/ingest/stream');
     es.addEventListener('ingest-update', function(e) {
         var panel = document.getElementById('ingest-progress');
         if (panel) panel.innerHTML = e.data;
@@ -328,88 +280,18 @@ document.addEventListener('htmx:afterSettle', function() {
 
                 } // end left col
 
-                // ══════════════════════════════════════════════════════════
-                // RIGHT PANEL — Ticket Purchase Demo
-                // ══════════════════════════════════════════════════════════
+                // ── RIGHT PANEL — Ticketing (stub) ────────────────────────
                 div .demo-col {
-                    div .demo-section .purchase-panel {
-
-                        div .demo-section-title {
-                            "Ticket Purchase"
-                            span .demo-badge .badge-tier-c { "Tier C Demo" }
-                        }
+                    div .demo-section {
+                        div .demo-section-title { "Ticketing" }
                         p .demo-hint {
-                            "Simulates the end-to-end booking flow. "
-                            "Step 3 shows the exact API call that item 2.8 would make."
+                            "Live ticket purchase is not wired in this build. "
+                            "The circuit-breaker, idempotency layer, and purchase ledger "
+                            "exist; the GBR Retail write endpoint is pending commercial access."
                         }
-
-                        // Step 1: Find journey ─────────────────────────────
-                        div .purchase-step-header {
-                            span .purchase-step-num { "1" }
-                            " Find your journey"
-                        }
-                        form
-                            hx-get="/ui/demo/journeys"
-                            hx-target="#purchase-journey-results"
-                            hx-trigger="submit"
-                            hx-swap="innerHTML"
-                            .purchase-search-form
-                        {
-                            div .purchase-from-to {
-                                div .search-input-group {
-                                    input
-                                        type="text"
-                                        name="from-q"
-                                        id="purch-from-q"
-                                        placeholder="From"
-                                        autocomplete="off"
-                                        hx-get="/ui/stations/search"
-                                        hx-trigger="input changed delay:300ms"
-                                        hx-target="#purch-from-sugg"
-                                        hx-vals="js:{q: document.getElementById('purch-from-q').value,\
-                                                     crs_input_id: 'purch-from-crs',\
-                                                     q_input_id: 'purch-from-q'}";
-                                    input type="hidden" name="from" id="purch-from-crs" value="";
-                                    div #purch-from-sugg {}
-                                }
-                                span .purchase-arrow { "→" }
-                                div .search-input-group {
-                                    input
-                                        type="text"
-                                        name="to-q"
-                                        id="purch-to-q"
-                                        placeholder="To"
-                                        autocomplete="off"
-                                        hx-get="/ui/stations/search"
-                                        hx-trigger="input changed delay:300ms"
-                                        hx-target="#purch-to-sugg"
-                                        hx-vals="js:{q: document.getElementById('purch-to-q').value,\
-                                                     crs_input_id: 'purch-to-crs',\
-                                                     q_input_id: 'purch-to-q'}";
-                                    input type="hidden" name="to" id="purch-to-crs" value="";
-                                    div #purch-to-sugg {}
-                                }
-                            }
-                            div .purchase-date-row {
-                                input
-                                    type="date"
-                                    name="date"
-                                    .purchase-date-input;
-                                button type="submit" .purchase-search-btn { "Search trains" }
-                            }
-                        }
-
-                        // Step 2: Results ─────────────────────────────────
-                        div #purchase-journey-results {}
-
-                        // Step 3: Checkout (loaded by "Book" button on a result card) ──
-                        div #purchase-checkout {}
-
-                        // Step 4: Outcome (loaded by "Confirm & Pay") ──────
-                        div #purchase-outcome {}
-
-                    } // end purchase-panel
-                } // end right col
+                        p .demo-hint { "Status: " strong { "coming soon" } "." }
+                    }
+                }
 
             } // end demo-grid
         } // end demo-console
@@ -417,10 +299,10 @@ document.addEventListener('htmx:afterSettle', function() {
 }
 
 // ---------------------------------------------------------------------------
-// System Status fragment — GET /ui/demo/status  (polls every 5 s)
+// System Status fragment — GET /ui/dev/status  (polls every 5 s)
 // ---------------------------------------------------------------------------
 
-pub async fn demo_status_fragment(State(state): State<AppState>) -> Markup {
+pub async fn dev_status_fragment(State(state): State<AppState>) -> Markup {
     let train_count = state.registry.len();
 
     let (db_ok, station_count, timetable_count, history_count) = {
@@ -488,14 +370,14 @@ pub async fn demo_status_fragment(State(state): State<AppState>) -> Markup {
 }
 
 // ---------------------------------------------------------------------------
-// Predictions panel fragment — GET /ui/demo/predictions
+// Predictions panel fragment — GET /ui/dev/predictions
 //
 // Rolling accuracy + a live table of recent predicted-vs-actual outcomes.
 // Reads from the prediction_outcomes ledger; no registry access here so the
 // data survives train deactivations and process restarts.
 // ---------------------------------------------------------------------------
 
-pub async fn demo_predictions_fragment(State(state): State<AppState>) -> Markup {
+pub async fn dev_predictions_fragment(State(state): State<AppState>) -> Markup {
     let recent = crate::db::predictions::recent_predictions(&state.db, 30)
         .await
         .unwrap_or_default();
@@ -613,10 +495,10 @@ fn prediction_row(o: &crate::db::predictions::PredictionOutcome) -> Markup {
 }
 
 // ---------------------------------------------------------------------------
-// Registry probe fragment — GET /ui/demo/registry?rid=XXX
+// Registry probe fragment — GET /ui/dev/registry?rid=XXX
 // ---------------------------------------------------------------------------
 
-pub async fn demo_registry_fragment(
+pub async fn dev_registry_fragment(
     Query(q): Query<RidQuery>,
     State(state): State<AppState>,
 ) -> Markup {
@@ -688,364 +570,6 @@ pub async fn demo_registry_fragment(
                     }
                 }
             }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Journey search with "Book" buttons — GET /ui/demo/journeys
-// Used only by the purchase panel (separate from /ui/journeys).
-// ---------------------------------------------------------------------------
-
-pub async fn demo_journeys_fragment(
-    Query(q): Query<DemoJourneyQuery>,
-    State(state): State<AppState>,
-) -> Markup {
-    let from = q.from.trim().to_uppercase();
-    let to   = q.to.trim().to_uppercase();
-
-    if from == to || from.len() != 3 || to.len() != 3 {
-        return html! { p .demo-error { "Enter valid 3-letter CRS codes for both stations." } };
-    }
-
-    let date = q.date.as_deref()
-        .and_then(|s| s.parse::<chrono::NaiveDate>().ok())
-        .unwrap_or_else(|| Utc::now().date_naive());
-
-    let rows = crate::db::static_data::direct_journeys(&state.db, &from, &to, date, Some(8))
-        .await
-        .unwrap_or_default();
-
-    if rows.is_empty() {
-        return html! {
-            p .demo-error {
-                "No direct services found from " (from) " to " (to)
-                " on " (date.format("%d %b").to_string()) "."
-            }
-        };
-    }
-
-    html! {
-        div .purchase-step-header .purchase-step-spaced {
-            span .purchase-step-num { "2" }
-            " Select a service"
-        }
-        div .purchase-results {
-            @for (uid, dep_time, platform) in &rows {
-                @let dep_str = dep_time.format("%H:%M").to_string();
-                div .purchase-result-card {
-                    div .purchase-result-left {
-                        span .purchase-result-time { (dep_str) }
-                        span .purchase-result-route { (from.clone()) " → " (to.clone()) }
-                        (platform_chip(platform.as_deref(), true))
-                    }
-                    button
-                        type="button"
-                        .purchase-book-btn
-                        hx-get="/ui/demo/checkout"
-                        hx-target="#purchase-checkout"
-                        hx-swap="innerHTML"
-                        hx-vals={
-                            "{\"uid\":\"" (uid) "\",\"from\":\"" (from) "\",\"to\":\"" (to) "\",\"dep\":\"" (dep_str) "\"}"
-                        }
-                    { "Book →" }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Checkout section — GET /ui/demo/checkout?uid=&from=&to=&dep=
-// ---------------------------------------------------------------------------
-
-pub async fn demo_checkout_fragment(
-    Query(q): Query<CheckoutQuery>,
-    State(state): State<AppState>,
-) -> Markup {
-    let uid  = q.uid.trim().to_string();
-    let from = q.from.trim().to_uppercase();
-    let to   = q.to.trim().to_uppercase();
-    let dep  = q.dep.clone();
-
-    let today = Utc::now().date_naive();
-
-    // Resolve station names for display.
-    let from_name: Option<String> = sqlx::query_scalar("SELECT name FROM stations WHERE crs = $1")
-        .bind(&from)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    let to_name: Option<String> = sqlx::query_scalar("SELECT name FROM stations WHERE crs = $1")
-        .bind(&to)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    let fare: Option<crate::db::static_data::Fare> =
-        crate::db::static_data::cheapest_fare(&state.db, &from, &to, today)
-            .await
-            .ok()
-            .flatten();
-
-    let fare_pence = fare.as_ref().map(|f| f.price_pence).unwrap_or(0);
-    let idempotency_key = gen_idempotency_key();
-
-    let from_display = from_name.as_deref().unwrap_or(&from);
-    let to_display   = to_name.as_deref().unwrap_or(&to);
-
-    html! {
-        div .purchase-step-header .purchase-step-spaced-lg {
-            span .purchase-step-num { "3" }
-            " Review & pay"
-        }
-        div .purchase-checkout-card {
-
-            // Service summary row
-            div .checkout-service-row {
-                div .checkout-station {
-                    span .checkout-station-name { (from_display) }
-                    span .checkout-station-crs  { (from.clone()) }
-                }
-                div .checkout-time-col {
-                    span .checkout-dep-time { (dep) }
-                    span .checkout-train-id { code { (uid.get(..8).unwrap_or(&uid)) "…" } }
-                }
-                div .checkout-station {
-                    span .checkout-station-name { (to_display) }
-                    span .checkout-station-crs  { (to.clone()) }
-                }
-            }
-
-            // Fare section
-            div .checkout-fare-section {
-                @if fare_pence > 0 {
-                    div .checkout-fare-row {
-                        span { "1 × Adult Standard" }
-                        span .checkout-fare-amount { (pence_to_pounds(fare_pence)) }
-                    }
-                    div .checkout-fare-row .checkout-fare-total {
-                        span { "Total" }
-                        span .checkout-fare-total-amount { (pence_to_pounds(fare_pence)) }
-                    }
-                } @else {
-                    p .demo-hint { "Fare data not available for this route (run GTFS ingest first)." }
-                }
-            }
-
-            // Passenger details (mock form — no real validation needed for demo)
-            div .checkout-passenger-section {
-                p .checkout-section-label { "Passenger details" }
-                div .checkout-name-grid {
-                    input type="text" placeholder="First name" .checkout-field;
-                    input type="text" placeholder="Last name"  .checkout-field;
-                }
-                input type="email" placeholder="Email address" .checkout-field .checkout-field-full;
-            }
-
-            // Developer info bar (always visible on demo page)
-            details .checkout-dev-info {
-                summary { "Developer info" }
-                div .checkout-dev-body {
-                    div .dev-info-row {
-                        span .dev-info-label { "Endpoint" }
-                        code { "POST /journeys/" (uid) "/purchase" }
-                    }
-                    div .dev-info-row {
-                        span .dev-info-label { "Idempotency key" }
-                        code .dev-key { (idempotency_key) }
-                    }
-                    div .dev-info-row {
-                        span .dev-info-label { "Circuit breaker" }
-                        code { "PurchaseCircuitBreaker (threshold=1, cool_down=60s)" }
-                    }
-                    div .dev-info-row {
-                        span .dev-info-label { "Backlog item" }
-                        code { "Improvements.md §2.8" }
-                    }
-                    p .dev-info-note {
-                        "The purchase API is not yet implemented. "
-                        "Clicking below simulates the success path so you can see the full UI flow."
-                    }
-                }
-            }
-
-            // Submit (POST to /ui/demo/purchase)
-            form
-                hx-post="/ui/demo/purchase"
-                hx-target="#purchase-outcome"
-                hx-swap="innerHTML"
-                hx-on--before-request="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Processing…'"
-            {
-                input type="hidden" name="uid"              value=(uid);
-                input type="hidden" name="from_crs"        value=(from);
-                input type="hidden" name="to_crs"          value=(to);
-                input type="hidden" name="dep_time"        value=(dep);
-                input type="hidden" name="passengers"      value="1";
-                input type="hidden" name="idempotency_key" value=(idempotency_key);
-                input type="hidden" name="fare_pence"      value=(fare_pence);
-
-                button type="submit" .purchase-confirm-btn {
-                    "🔒  Confirm & Pay " (pence_to_pounds(fare_pence))
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Purchase outcome — POST /ui/demo/purchase
-// ---------------------------------------------------------------------------
-
-pub async fn demo_purchase_fragment(
-    State(state): State<AppState>,
-    Form(form): Form<PurchaseForm>,
-) -> Markup {
-    let booking_ref = gen_booking_ref();
-    let confirmed_at = Utc::now().format("%H:%M:%S UTC, %d %b %Y").to_string();
-    let total = pence_to_pounds(form.fare_pence * form.passengers as i32);
-
-    let from_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM stations WHERE crs = $1")
-            .bind(&form.from_crs)
-            .fetch_optional(&state.db)
-            .await
-            .unwrap_or(None);
-
-    let to_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM stations WHERE crs = $1")
-            .bind(&form.to_crs)
-            .fetch_optional(&state.db)
-            .await
-            .unwrap_or(None);
-
-    let from_display = from_name.as_deref().unwrap_or(&form.from_crs);
-    let to_display   = to_name.as_deref().unwrap_or(&form.to_crs);
-
-    // What the real request body would look like.
-    let mock_request_json = format!(
-        r#"{{
-  "journey_uid":        "{uid}",
-  "origin_crs":         "{from}",
-  "destination_crs":    "{to}",
-  "departure_time":     "{dep}",
-  "passenger_count":    {passengers},
-  "fare_id":            "ANYTIME_SINGLE_{from}_{to}",
-  "idempotency_key":    "{key}"
-}}"#,
-        uid        = form.uid,
-        from       = form.from_crs,
-        to         = form.to_crs,
-        dep        = form.dep_time,
-        passengers = form.passengers,
-        key        = form.idempotency_key,
-    );
-
-    // What the real response body would look like.
-    let mock_response_json = format!(
-        r#"{{
-  "booking_ref":        "{ref}",
-  "journey_uid":        "{uid}",
-  "status":             "confirmed",
-  "total_price_pence":  {pence},
-  "confirmed_at":       "{at}"
-}}"#,
-        ref   = booking_ref,
-        uid   = form.uid,
-        pence = form.fare_pence * form.passengers as i32,
-        at    = Utc::now().to_rfc3339(),
-    );
-
-    html! {
-        div .purchase-step-header .purchase-step-spaced-lg {
-            span .purchase-step-num .step-done { "✓" }
-            " Booking confirmed (simulated)"
-        }
-        div .purchase-outcome-card {
-
-            // Confirmation banner
-            div .purchase-confirmed-banner {
-                div .purchase-confirmed-icon { "✓" }
-                div {
-                    p .purchase-confirmed-ref { "Booking ref: " strong { (booking_ref) } }
-                    p .purchase-confirmed-detail {
-                        (from_display) " → " (to_display)
-                        " · " (form.dep_time)
-                        " · " (form.passengers) " passenger"
-                        @if form.passengers > 1 { "s" }
-                    }
-                    p .purchase-confirmed-total { "Total paid: " strong { (total) } }
-                    p .purchase-confirmed-time { "Confirmed at " (confirmed_at) }
-                }
-            }
-
-            // Simulated e-ticket strip
-            div .ticket-strip {
-                div .ticket-left {
-                    span .ticket-from { (form.from_crs.clone()) }
-                    span .ticket-arrow { "→" }
-                    span .ticket-to   { (form.to_crs.clone()) }
-                }
-                div .ticket-right {
-                    span .ticket-dep  { (form.dep_time.clone()) }
-                    span .ticket-class { "Standard" }
-                }
-                div .ticket-barcode {
-                    // Fake barcode — visual only
-                    @for i in 0..22 {
-                        @let w = if i % 3 == 0 { "3px" } else if i % 5 == 0 { "2px" } else { "1px" };
-                        span .barcode-bar style={"width:" (w)} {}
-                    }
-                }
-            }
-
-            // Developer detail
-            details .checkout-dev-info open {
-                summary { "Developer info — what item 2.8 would execute" }
-                div .checkout-dev-body {
-                    p .dev-info-note {
-                        strong { "This was a simulated purchase." }
-                        " The purchase API (Improvements.md §2.8) is not yet implemented. "
-                        "Below is the exact HTTP call that would be made once it is."
-                    }
-                    div .dev-info-row {
-                        span .dev-info-label { "Endpoint" }
-                        code { "POST /journeys/" (form.uid) "/purchase" }
-                    }
-                    div .dev-info-row {
-                        span .dev-info-label { "Idempotency key" }
-                        code .dev-key { (form.idempotency_key) }
-                    }
-                    div .dev-info-row {
-                        span .dev-info-label { "Circuit breaker" }
-                        code { "PurchaseCircuitBreaker · threshold=1 · cool_down=60s" }
-                    }
-                    p .dev-info-label .dev-info-code-header { "Request body (JSON):" }
-                    pre .dev-code { (mock_request_json) }
-                    p .dev-info-label .dev-info-code-header { "Response body (201 Created):" }
-                    pre .dev-code { (mock_response_json) }
-                    p .dev-info-note .dev-info-note-spaced {
-                        "In production this call goes through "
-                        code { "LiveGbrClient::purchase()" }
-                        " → "
-                        code { "PurchaseCircuitBreaker" }
-                        " → GBR Retail API v1 "
-                        code { "/bookings" }
-                        ". The idempotency key is persisted to "
-                        code { "purchase_attempts" }
-                        " before the HTTP call leaves the server."
-                    }
-                }
-            }
-
-            button
-                type="button"
-                .purchase-reset-btn
-                onclick="document.getElementById('purchase-checkout').innerHTML=''; \
-                         document.getElementById('purchase-outcome').innerHTML=''; \
-                         document.getElementById('purchase-journey-results').innerHTML='';"
-            { "← Search again" }
         }
     }
 }
@@ -1150,11 +674,11 @@ fn render_ingest_progress(s: &IngestStatus) -> Markup {
 }
 
 // ---------------------------------------------------------------------------
-// Ingest data-freshness indicator — GET /ui/demo/ingest/freshness
+// Ingest data-freshness indicator — GET /ui/dev/ingest/freshness
 // Shows how many timetable_calls rows exist for today; loaded once on page open.
 // ---------------------------------------------------------------------------
 
-pub async fn demo_ingest_freshness(State(state): State<AppState>) -> Markup {
+pub async fn dev_ingest_freshness(State(state): State<AppState>) -> Markup {
     match today_call_count(&state.db).await {
         Ok(0) => html! {
             div .ingest-freshness .freshness-empty {
@@ -1184,10 +708,10 @@ pub async fn demo_ingest_freshness(State(state): State<AppState>) -> Markup {
 }
 
 // ---------------------------------------------------------------------------
-// Ingest start — POST /ui/demo/ingest/start
+// Ingest start — POST /ui/dev/ingest/start
 // ---------------------------------------------------------------------------
 
-pub async fn demo_ingest_start(
+pub async fn dev_ingest_start(
     State(state): State<AppState>,
     Form(form): Form<IngestStartForm>,
 ) -> Markup {
@@ -1233,7 +757,7 @@ pub async fn demo_ingest_start(
                     ") but takes several minutes. Are you sure?"
                 }
                 form
-                    hx-post="/ui/demo/ingest/start"
+                    hx-post="/ui/dev/ingest/start"
                     hx-target="#ingest-feedback"
                     hx-swap="innerHTML"
                     .demo-inline-form
@@ -1276,11 +800,11 @@ pub async fn demo_ingest_start(
 }
 
 // ---------------------------------------------------------------------------
-// Ingest SSE stream — GET /ui/demo/ingest/stream
+// Ingest SSE stream — GET /ui/dev/ingest/stream
 // Emits the full rendered progress panel on every watch-channel change.
 // ---------------------------------------------------------------------------
 
-pub async fn demo_ingest_stream(
+pub async fn dev_ingest_stream(
     State(state): State<AppState>,
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
     let mut rx = state.ingest_status.subscribe();
@@ -1304,12 +828,12 @@ pub async fn demo_ingest_stream(
 }
 
 // ---------------------------------------------------------------------------
-// SSE event monitor — GET /ui/demo/events
+// SSE event monitor — GET /ui/dev/events
 // Streams all state changes on the broadcast channel as plain HTML rows.
-// Consumed by raw EventSource JS on the demo page (not htmx SSE extension).
+// Consumed by raw EventSource JS on the dev page (not htmx SSE extension).
 // ---------------------------------------------------------------------------
 
-pub async fn demo_events_sse(
+pub async fn dev_events_sse(
     State(state): State<AppState>,
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
     let mut rx = state.state_change_tx.subscribe();
