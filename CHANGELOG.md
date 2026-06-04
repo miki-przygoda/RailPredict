@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.16" -- 04/06/2026**
+**version = "1.12.17" -- 04/06/2026**
 
 ---
+
+## v1.12.17 — 04/06/2026
+
+UI overhaul step 3 (Predictions explorer). Rebuilt `/predictions` into a
+predicted-vs-actual explorer: KPI strip (scored, within ±5 min %, MAE, signed
+bias), a calibration plot (predicted vs actual against the perfect-calibration
+diagonal), a daily MAE trend, and three bar charts — signed error distribution,
+MAE by model confidence, and MAE by prediction lead time. New
+`charts::calibration_plot`; `accuracy_summary` now applies the same ±[-120,600]
+delay sanity filter the charts use, so the KPIs and charts share one population.
 
 ## v1.12.16 — 04/06/2026
 
