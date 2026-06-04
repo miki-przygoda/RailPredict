@@ -370,7 +370,10 @@ pub async fn journey_handler(
     .bind(date)
     .fetch_all(&state.db)
     .await
-    .map_err(|e| ApiError::internal(format!("DB error: {e}")))?;
+    .map_err(|e| {
+        tracing::error!("journey lookup query failed: {e}");
+        ApiError::internal("journey lookup failed")
+    })?;
 
     let entries: Vec<DepartureBoardEntry> = rows
         .into_iter()
