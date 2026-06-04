@@ -73,7 +73,7 @@ pub async fn dashboard_page(
     if headers.contains_key("hx-request") {
         body
     } else {
-        base("Dashboard", NavPage::Dashboard, body)
+        base("Overview", NavPage::Dashboard, body)
     }
 }
 
@@ -200,7 +200,7 @@ fn render_cockpit(
                     (nav_card("/search", ICON_BOARD, "Departure Board", "Live departures from any UK station."))
                     (nav_card("/predictions", ICON_CHART, "Prediction analytics", "Accuracy, calibration & biggest errors."))
                     (nav_card("/operators", ICON_TROPHY, "Operators", "Per-operator punctuality league & drill-down."))
-                    (nav_card("/demo", ICON_GEAR, "Dev Console", "Ingest data, probe the registry, simulate checkout."))
+                    (nav_card("/explore", ICON_EXPLORE, "Query Explorer", "Build your own delay & prediction queries."))
                 }
             }
 
@@ -245,4 +245,4 @@ fn nav_card(href: &str, icon: PreEscaped<&'static str>, title: &str, sub: &str) 
 const ICON_BOARD: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18M8 18v3M16 18v3"/></svg>"#);
 const ICON_CHART: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 2 4-6"/></svg>"#);
 const ICON_TROPHY: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12v3a6 6 0 0 1-12 0V4z"/><path d="M6 6H4v1a3 3 0 0 0 3 3M18 6h2v1a3 3 0 0 1-3 3M9 17h6M10 21h4M12 13v4"/></svg>"#);
-const ICON_GEAR: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>"#);
+const ICON_EXPLORE: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>"#);
