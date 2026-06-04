@@ -181,6 +181,40 @@ pub fn bar_cell(fraction: f64) -> Markup {
     }
 }
 
+/// Calibration plot: each `(predicted, actual)` mean is placed against the
+/// perfect-calibration diagonal (`actual == predicted`). A model line below the
+/// diagonal under-predicts; above it over-predicts. Square SVG scaled to the max
+/// of the two axes; colours come from the `.calib-*` CSS classes. Needs ≥2 points.
+pub fn calibration_plot(points: &[(f64, f64)]) -> Markup {
+    const SZ: f64 = 220.0;
+    const PAD: f64 = 8.0;
+    if points.len() < 2 {
+        return html! { svg .calib-svg width=(SZ) height=(SZ) viewBox=(format!("0 0 {SZ} {SZ}")) role="img" aria-label="no data" {} };
+    }
+    // Sort by predicted value so the polyline never crosses itself, regardless of
+    // caller ordering.
+    let mut pts = points.to_vec();
+    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let max = pts.iter().flat_map(|&(p, a)| [p, a]).fold(1.0_f64, f64::max);
+    let sx = |v: f64| PAD + (SZ - 2.0 * PAD) * (v / max);
+    let sy = |v: f64| SZ - PAD - (SZ - 2.0 * PAD) * (v / max);
+    let line: String = pts
+        .iter()
+        .map(|&(p, a)| format!("{:.1},{:.1}", sx(p), sy(a)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    html! {
+        svg .calib-svg width=(SZ) height=(SZ) viewBox=(format!("0 0 {SZ} {SZ}")) role="img" aria-label="calibration: predicted vs actual delay" {
+            line .calib-ideal x1=(format!("{:.1}", sx(0.0))) y1=(format!("{:.1}", sy(0.0)))
+                x2=(format!("{:.1}", sx(max))) y2=(format!("{:.1}", sy(max))) stroke-dasharray="5 5" {}
+            polyline .calib-line points=(line) {}
+            @for &(p, a) in points {
+                circle .calib-dot cx=(format!("{:.1}", sx(p))) cy=(format!("{:.1}", sy(a))) r="3.5" {}
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +297,20 @@ mod tests {
         let s = area_spark(&[], "spk-x").into_string();
         assert!(s.contains("<svg"), "still renders a frame: {s}");
         assert!(!s.contains("<polyline"), "no line for empty data: {s}");
+    }
+
+    #[test]
+    fn calibration_plot_draws_diagonal_line_and_dots() {
+        let m = calibration_plot(&[(0.0, 0.5), (5.0, 4.0), (20.0, 16.0)]).into_string();
+        assert!(m.contains("calib-ideal"), "has the perfect-calibration diagonal: {m}");
+        assert!(m.contains("calib-line"), "has the model line");
+        assert_eq!(m.matches("calib-dot").count(), 3, "one dot per point");
+    }
+
+    #[test]
+    fn calibration_plot_too_few_points_is_blank() {
+        let m = calibration_plot(&[(1.0, 1.0)]).into_string();
+        assert!(m.contains("<svg"), "still a frame");
+        assert!(!m.contains("calib-line"), "no model line for <2 points");
     }
 }
