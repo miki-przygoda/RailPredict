@@ -50,6 +50,7 @@ pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
                         (link("/operators", "Operators", NavPage::Operators))
                         (link("/live", "Live", NavPage::Live))
                         (link("/predictions", "Predictions", NavPage::Predictions))
+                        (link("/stations", "Stations", NavPage::Stations))
                         (link("/explore", "Explore", NavPage::Explore))
                     }
                 }

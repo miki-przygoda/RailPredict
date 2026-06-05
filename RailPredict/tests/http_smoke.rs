@@ -53,6 +53,18 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
     assert!(j["tracking"].is_array(), "snapshot has a tracking array");
     assert!(j["settled"].is_array(), "snapshot has a settled array");
 
+    // Stations: index, explorer (empty-state on an empty DB), 404 on a too-long code.
+    assert!(home.contains(">Stations<"), "nav has Stations");
+    let (s, b) = app.get("/stations").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.contains("Filter by code"), "station index filter");
+
+    let (s, _) = app.get("/stations/WATRLMN").await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (s, _) = app.get("/stations/toolongcode").await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "invalid code rejected");
+
     // Standalone replay page + its scripts are served (board.js shared with /live).
     let (s, _) = app.get("/static/replay.html").await;
     assert_eq!(s, StatusCode::OK);

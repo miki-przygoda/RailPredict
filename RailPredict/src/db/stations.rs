@@ -60,6 +60,44 @@ pub struct ServiceRow {
     pub on_time_pct: Option<f64>,
 }
 
+/// One origin station in the "busiest stations" index, by observation count.
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct OriginRow {
+    /// The origin location code as stored in `delay_history` (TIPLOC-style).
+    pub code: String,
+    pub sample_count: i64,
+    pub on_time_pct: Option<f64>,
+    pub avg_delay_mins: Option<f64>,
+}
+
+/// Busiest origin stations by observation count over the last `hours` hours.
+///
+/// NOTE (perf): a full `GROUP BY origin_crs` over `delay_history` (~7M rows).
+/// The `/stations` index is not a hot path; if it becomes one, back this with a
+/// periodically-refreshed summary table.
+pub async fn busiest_origins(db: &Db, hours: i32, limit: i64) -> sqlx::Result<Vec<OriginRow>> {
+    sqlx::query_as::<_, OriginRow>(
+        r#"
+        SELECT
+            d.origin_crs                                                          AS code,
+            COUNT(*)                                                              AS sample_count,
+            (AVG(CASE WHEN d.delay_mins <= 0 THEN 1.0 ELSE 0.0 END) * 100)::float8 AS on_time_pct,
+            AVG(d.delay_mins::float8)                                             AS avg_delay_mins
+        FROM delay_history d
+        WHERE d.origin_crs IS NOT NULL
+          AND d.recorded_at > NOW() - $1::INT * INTERVAL '1 hour'
+          AND d.delay_mins BETWEEN -120 AND 600
+        GROUP BY d.origin_crs
+        ORDER BY sample_count DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(hours)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// Reliability headline for departures from `crs` over the last `hours` hours.
 ///
 /// The aggregate always produces one row; `sample_count == 0` means the window
