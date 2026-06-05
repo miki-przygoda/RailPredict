@@ -2,9 +2,17 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.2" -- 06/06/2026**
+**version = "1.16.3" -- 06/06/2026**
 
 ---
+
+## v1.16.3 — 06/06/2026
+
+Phase 3 — arrival & recovery on the overview. A new "Arrival & recovery" KPI section on `/`
+(from `journeys`): arrive-within-5-min %, avg arrival delay (the delay passengers actually
+experience at the destination — distinct from the origin-departure figure in the headline
+strip), % of services recovering ≥2 min en route, and avg delay recovered. New
+`db::overview::journey_metrics`.
 
 ## v1.16.2 — 06/06/2026
 
