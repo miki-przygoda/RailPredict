@@ -2,9 +2,23 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.15.1" -- 05/06/2026**
+**version = "1.15.2" -- 05/06/2026**
 
 ---
+
+## v1.15.2 — 05/06/2026
+
+Fix: origin-delay inflation + midnight rollover. `reported_delay_mins` (which feeds
+`delay_history`, `journeys.origin_delay_mins`, and the model) was computed as *(last `<dep>`
+seen in a TS − origin scheduled departure)*. Darwin TS messages are partial, so the "last dep"
+is whatever stop the train has reached — the metric measured journey **progress**, not delay
+(median ~21–32 min of pure journey duration; the "synthetic-looking" old data was actually this
+bug). Now the scalar estimated/actual departure is taken from the **origin** (first Location,
+paired with `scheduled_departure`), and a ±12h **midnight-rollover guard** (`wrapped_delay_mins`)
+corrects post-midnight `HH:MM` times that previously read as −24h (delay_history min was −1435).
+The per-stop `journey_calls` vector (arrival delay, recovery) was already correct — true origin
+delay there is median 0. On the live DB: polluted `delay_history` truncated to re-accumulate
+clean, and `journeys.origin_delay_mins` backfilled from the per-stop origin.
 
 ## v1.15.1 — 05/06/2026
 

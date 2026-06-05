@@ -288,7 +288,7 @@ impl IngestionPipeline {
                         .update(&rid, |status| {
                             if let Some(dep) = estimated_dep {
                                 let delay_mins =
-                                    (dep - status.scheduled_departure.value).num_minutes() as i32;
+                                    wrapped_delay_mins(status.scheduled_departure.value, dep);
                                 status.actual_estimated_departure.apply_if_newer(
                                     Stamped::with_version(Some(dep), darwin_version),
                                 );
@@ -584,10 +584,24 @@ fn call_obs_from(c: &parser::CallUpdate) -> crate::types::CallObservation {
     }
 }
 
+/// Minutes between a scheduled and an observed (estimated/actual) time, correcting for midnight
+/// rollover. Darwin times are `HH:MM` anchored on the schedule-start date, so a stop just after
+/// midnight (00:05) against a 23:55 schedule naively reads −1430 min. A delay/early beyond ±12h
+/// is always such an artifact, so wrap it back into range.
+fn wrapped_delay_mins(scheduled: DateTime<Utc>, observed: DateTime<Utc>) -> i32 {
+    let mut d = (observed - scheduled).num_minutes();
+    if d < -720 {
+        d += 1440;
+    } else if d > 720 {
+        d -= 1440;
+    }
+    d as i32
+}
+
 /// Delay in whole minutes between a scheduled and an actual/estimated time, if both are known.
 fn delay_between(sched: Option<DateTime<Utc>>, actual: Option<DateTime<Utc>>) -> Option<i32> {
     match (sched, actual) {
-        (Some(s), Some(a)) => Some((a - s).num_minutes() as i32),
+        (Some(s), Some(a)) => Some(wrapped_delay_mins(s, a)),
         _ => None,
     }
 }
@@ -830,6 +844,16 @@ mod tests {
         assert_eq!(rec.max_delay_mins, Some(12));
         assert_eq!(rec.recovered_mins, Some(6)); // 12 peak − 6 at arrival
         assert!(!rec.was_cancelled);
+    }
+
+    #[test]
+    fn wrapped_delay_corrects_midnight_rollover() {
+        let base = Utc::now();
+        assert_eq!(wrapped_delay_mins(base, base + chrono::Duration::minutes(8)), 8);
+        // Observed reads 1430 min *before* scheduled = a just-after-midnight rollover → +10.
+        assert_eq!(wrapped_delay_mins(base, base - chrono::Duration::minutes(1430)), 10);
+        // The symmetric case (scheduled just after midnight) wraps the other way.
+        assert_eq!(wrapped_delay_mins(base, base + chrono::Duration::minutes(1435)), -5);
     }
 
     #[test]
