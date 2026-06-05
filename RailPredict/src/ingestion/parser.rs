@@ -332,8 +332,15 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                     }
                     b"dep" if current_ts.is_some() => {
                         let ssd = current_ts.as_ref().map(|t| t.ssd);
-                        // --- existing scalar logic — UNCHANGED ---
-                        if let Some(ref mut ts) = current_ts {
+                        // The scalar reported-delay pair must come from the SAME stop:
+                        // `scheduled_departure` is the first Location's `ptd`, so the scalar
+                        // estimated/actual departure must be the first Location's `<dep>` too —
+                        // the ORIGIN. Using the *last* `<dep>` in the message compared the last
+                        // stop's time against the origin's schedule, inflating delay by the journey
+                        // duration (Darwin TS messages are partial). Per-call data below still
+                        // records every stop's own delay.
+                        let is_origin = current_call.as_ref().map(|c| c.seq) == Some(0);
+                        if is_origin && let Some(ref mut ts) = current_ts {
                             if let Some(et) = attr_opt(e, b"et") {
                                 ts.estimated_departure = parse_hhmm_on_date(&et, ts.ssd).ok();
                             }
@@ -342,7 +349,7 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                             }
                             ts.is_delayed = attr_bool(e, b"delayed");
                         }
-                        // --- new: per-call departure forecast/actual ---
+                        // --- per-call departure forecast/actual (every stop) ---
                         if let (Some(call), Some(ssd)) = (current_call.as_mut(), ssd) {
                             if let Some(et) = parse_time_attr(e, b"et", ssd) {
                                 call.est_dep = Some(et);
@@ -763,6 +770,34 @@ mod tests {
         } else {
             panic!("expected TrainStatus");
         }
+    }
+
+    #[test]
+    fn scalar_departure_comes_from_origin_not_last_stop() {
+        // Origin departs ~on time (+2); a later stop's forecast is 90 min after the origin's
+        // schedule. The scalar estimated_departure must be the ORIGIN's dep (so reported delay
+        // reads ≈ +2), NOT the last stop's (which would read ≈ +90 = the journey length).
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2024-04-17T10:00:00Z" version="16.0">
+  <uR>
+    <TS rid="202404170123456" ssd="2024-04-17" uid="C12345">
+      <Location tpl="LEEDS" ptd="10:00"><dep et="10:02" delayed="true"/></Location>
+      <Location tpl="WAKEFLD" pta="10:30" ptd="10:32"><dep et="11:30"/></Location>
+    </TS>
+  </uR>
+</Pport>"#;
+        let (_, updates) = parse_pport(xml).unwrap();
+        let ParsedUpdate::TrainStatus(ts) = &updates[0] else {
+            panic!("expected TrainStatus");
+        };
+        assert_eq!(
+            ts.estimated_departure.map(|d| d.to_rfc3339()),
+            Some("2024-04-17T10:02:00+00:00".to_string()),
+            "scalar estimated_departure must be the origin's dep, not the last stop's"
+        );
+        // The per-call vector still captures the later stop's forecast.
+        assert_eq!(ts.calls.len(), 2);
+        assert!(ts.calls[1].est_dep.is_some());
     }
 
     #[test]
