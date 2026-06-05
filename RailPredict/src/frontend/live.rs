@@ -11,6 +11,7 @@ use maud::{Markup, html};
 use serde::Serialize;
 
 use crate::api::AppState;
+use crate::cache::location_names;
 use crate::db::predictions;
 
 use super::layout::{NavPage, base};
@@ -90,8 +91,8 @@ pub async fn live_snapshot(State(state): State<AppState>) -> Json<Snapshot> {
             rid: t.rid,
             operator: "—".to_string(),
             brand: NEUTRAL_BRAND.to_string(),
-            origin: t.origin_crs.unwrap_or_else(|| "???".to_string()),
-            dest: t.destination_crs.unwrap_or_else(|| "—".to_string()),
+            origin: t.origin_crs.as_deref().map(location_names::name_or_code).unwrap_or("???").to_string(),
+            dest: t.destination_crs.as_deref().map(location_names::name_or_code).unwrap_or("—").to_string(),
             scheduled: t.scheduled_departure.format("%H:%M").to_string(),
             predicted: t.predicted_delay_mins,
         })
@@ -104,8 +105,8 @@ pub async fn live_snapshot(State(state): State<AppState>) -> Json<Snapshot> {
             rid: o.rid,
             operator: o.operator.unwrap_or_else(|| "—".to_string()),
             brand: o.brand_color.unwrap_or_else(|| NEUTRAL_BRAND.to_string()),
-            origin: o.origin_crs,
-            dest: o.destination_crs.unwrap_or_else(|| "—".to_string()),
+            origin: location_names::name_or_code(&o.origin_crs).to_string(),
+            dest: o.destination_crs.as_deref().map(location_names::name_or_code).unwrap_or("—").to_string(),
             predicted: o.predicted_delay_mins,
             actual: o.final_delay_mins,
             delta: (o.final_delay_mins - o.predicted_delay_mins).abs(),

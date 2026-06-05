@@ -57,7 +57,7 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
     assert!(home.contains(">Stations<"), "nav has Stations");
     let (s, b) = app.get("/stations").await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.contains("Filter by code"), "station index filter");
+    assert!(b.contains("Filter by name or code"), "station index filter");
 
     let (s, _) = app.get("/stations/WATRLMN").await;
     assert_eq!(s, StatusCode::OK);
