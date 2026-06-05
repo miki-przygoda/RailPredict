@@ -12,8 +12,9 @@ use serde::Serialize;
 
 use crate::api::AppState;
 use crate::cache::location_names;
-use crate::db::predictions;
+use crate::db::{overview, predictions};
 
+use super::components::compact_count;
 use super::layout::{NavPage, base};
 
 const NEUTRAL_BRAND: &str = "#9aa7b4";
@@ -52,8 +53,12 @@ pub struct Snapshot {
     settled: Vec<SettledCard>,
 }
 
-/// `GET /live` — the board shell. All board content is rendered by `board.js`.
-pub async fn live_page() -> Markup {
+/// `GET /live` — the board shell. The live cards are rendered by `board.js`; the
+/// arrival/recovery summary strip is a server-rendered rolling-24h snapshot.
+pub async fn live_page(State(state): State<AppState>) -> Markup {
+    let jm = overview::journey_metrics(&state.db, 24).await.unwrap_or_default();
+    let pct = |v: Option<f64>| v.map(|x| format!("{x:.0}%")).unwrap_or_else(|| "—".to_string());
+    let mins = |v: Option<f64>| v.map(|x| format!("{x:.1}m")).unwrap_or_else(|| "—".to_string());
     let body = html! {
         div .live {
             div .lvh {
@@ -63,6 +68,12 @@ pub async fn live_page() -> Markup {
                 div .chips #filters {}
                 button .rec #record type="button" { span .rdot {} span # "record-label" { "Record" } }
                 a .rec-dl.hidden #download href="#" download="railpredict-capture.json" { "Download" }
+            }
+            div .coverage-strip {
+                div .cov-chip { span .cov-value { (pct(jm.arrival_on_time_pct)) } span .cov-label { "arrive ≤5 min" } }
+                div .cov-chip { span .cov-value { (mins(jm.avg_arrival_delay_mins)) } span .cov-label { "avg arrival delay" } }
+                div .cov-chip { span .cov-value { (pct(jm.recovered_pct)) } span .cov-label { "recovering ≥2m" } }
+                div .cov-chip { span .cov-value { (compact_count(jm.journeys, 0)) } span .cov-label { "journeys · 24h" } }
             }
             div #board .zones {
                 p .panel-empty { "Connecting to the live feed…" }
