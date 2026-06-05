@@ -49,6 +49,36 @@ fn ot_text(pct: f64) -> &'static str {
     if pct >= 85.0 { "val-ok" } else if pct >= 75.0 { "val-warn" } else { "val-bad" }
 }
 
+/// Reliability label + colour from the delay std-dev (minutes): low spread = dependable,
+/// high spread = erratic. This is the "systematic vs stochastic" split made visible.
+fn reliability_label(std: Option<f64>) -> (&'static str, &'static str) {
+    match std {
+        Some(s) if s < 3.0 => ("Reliable", "val-ok"),
+        Some(s) if s < 8.0 => ("Moderate", "val-warn"),
+        Some(_) => ("Variable", "val-bad"),
+        None => ("—", "muted"),
+    }
+}
+
+/// Caption for the station "Consistency" KPI, keyed on the delay std-dev.
+fn reliability_caption(std: Option<f64>) -> &'static str {
+    match std {
+        Some(s) if s < 3.0 => "tight spread — dependable",
+        Some(s) if s < 8.0 => "moderate spread",
+        Some(_) => "wide spread — erratic",
+        None => "not enough data",
+    }
+}
+
+/// KPI tone for the station "Consistency" card.
+fn reliability_tone(std: Option<f64>) -> KpiTone {
+    match std {
+        Some(s) if s < 3.0 => KpiTone::Ok,
+        Some(s) if s < 8.0 => KpiTone::Warn,
+        _ => KpiTone::Info,
+    }
+}
+
 /// Heatmap cell colour by average delay (deep green = on time → red = severe).
 fn heat_colour(v: f64) -> &'static str {
     if v < 1.5 { "#1c3a2e" } else if v < 3.0 { "#2f7d5b" } else if v < 6.0 { "#34d399" }
@@ -175,6 +205,7 @@ fn render_station(
                 div .kpi-strip {
                     (kpi("On-time", &fmt_pct(s.on_time_pct), Some("%"), "departures from here", KpiTone::Ok))
                     (kpi("Avg delay", &fmt1(s.avg_delay_mins), Some("min"), "across sampled departures", KpiTone::Warn))
+                    (kpi("Consistency", &fmt1(s.std_delay_mins), Some("± min"), reliability_caption(s.std_delay_mins), reliability_tone(s.std_delay_mins)))
                     (kpi("Prediction MAE", &fmt1(s.mae_mins), Some("min"), "predicted vs actual", KpiTone::Info))
                     (kpi("Departures", &compact_count(s.sample_count, 0), None, "in window", KpiTone::Neutral))
                 }
@@ -199,7 +230,7 @@ fn render_station(
                             table .sv-table {
                                 thead { tr {
                                     th { "Service" } th { "Operator" }
-                                    th .r { "On-time" } th .r { "Avg delay" } th .r { "Departures" }
+                                    th .r { "On-time" } th .r { "Avg delay" } th .r { "Reliability" } th .r { "Departures" }
                                 } }
                                 tbody {
                                     @for r in &busiest {
@@ -221,6 +252,13 @@ fn render_station(
                                             }
                                             td class=(format!("r {}", ot_text(ot))) { (fmt_pct(r.on_time_pct)) }
                                             td .r { (fmt1(r.avg_delay_mins)) " min" }
+                                            td .r {
+                                                @let (lbl, cls) = reliability_label(r.std_delay_mins);
+                                                span class=(cls) { (lbl) }
+                                                @if r.std_delay_mins.is_some() {
+                                                    " " span .muted { "±" (fmt1(r.std_delay_mins)) }
+                                                }
+                                            }
                                             td .r.muted { (compact_count(r.sample_count, 0)) }
                                         }
                                     }
