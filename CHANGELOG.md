@@ -2,9 +2,21 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.15.3" -- 05/06/2026**
+**version = "1.16.0" -- 05/06/2026**
 
 ---
+
+## v1.16.0 — 05/06/2026
+
+Phase 2 — operator league on real Darwin `toc`. The `/operators` league + drill-down now read
+from `journeys` (the per-service operator code captured from the `schedule` message) instead of
+the GTFS-dependent `delay_history` + `services` join — so they light up without a timetable feed.
+Metrics use **arrival delay** (origin departure as fallback): on-time % (within 5 min), avg
+delay, prediction MAE (joined from `prediction_outcomes`), per-day trend, delay distribution, and
+worst routes (origin→destination TIPLOC, name-resolved via `cache::location_names`). Plus a
+`services.toc` backfill — the schedule handler persists `uid → toc` (deduped, fire-and-forget)
+into `services` (origin/destination columns made nullable, migration 120018), so the uid-keyed
+`delay_history` becomes operator-attributable too. Coverage grows as `schedule` messages accrue.
 
 ## v1.15.3 — 05/06/2026
 

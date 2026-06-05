@@ -12,6 +12,7 @@ use maud::{Markup, html};
 use serde::Deserialize;
 
 use crate::api::AppState;
+use crate::cache::location_names;
 use crate::db::operators::{self, OperatorLeagueRow};
 use crate::frontend::charts::{self, KpiTone};
 use crate::frontend::components::{self, compact_count, normalize_range, range_label, range_to_hours};
@@ -73,7 +74,7 @@ pub async fn operators_page(
 ) -> Markup {
     let range = normalize_range(params.range.as_deref());
     let hours = range_to_hours(range);
-    let league = operators::operator_league(&state.db, hours, 20, 30).await.unwrap_or_default();
+    let league = operators::operator_league(&state.db, hours, 5, 30).await.unwrap_or_default();
 
     let body = render_league(range, &league);
     if headers.contains_key("hx-request") {
@@ -97,8 +98,8 @@ fn render_league(range: &str, league: &[OperatorLeagueRow]) -> Markup {
             @if league.is_empty() {
                 div .panel { div .panel-body {
                     p .panel-empty {
-                        "No operator data yet. Operators appear once the timetable ingest "
-                        "links services to their TOC codes."
+                        "No operator data yet. Operators appear as services are captured from "
+                        "the Darwin schedule feed and complete their journeys."
                     }
                 } }
             } @else {
@@ -278,9 +279,9 @@ fn render_operator(
                                             @let ot = r.on_time_pct.unwrap_or(0.0);
                                             tr {
                                                 td {
-                                                    code { (r.origin_crs) }
+                                                    span { (location_names::name_or_code(&r.origin_crs)) }
                                                     span .arrow { "→" }
-                                                    code { (r.destination_crs) }
+                                                    span { (location_names::name_or_code(&r.destination_crs)) }
                                                 }
                                                 td class=(format!("r {}", ot_text(ot))) { (fmt_pct(r.on_time_pct)) }
                                                 td .r { (fmt1(r.avg_delay_mins)) " min" }

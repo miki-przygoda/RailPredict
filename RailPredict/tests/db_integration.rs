@@ -561,28 +561,48 @@ async fn overview_headline_metrics_basic(pool: sqlx::PgPool) -> sqlx::Result<()>
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
 async fn operator_league_ranks_by_on_time(pool: sqlx::PgPool) -> sqlx::Result<()> {
-    sqlx::query("INSERT INTO stations (crs, name) VALUES ('AAA','Alpha'),('BBB','Beta')").execute(&pool).await?;
-    sqlx::query("INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, toc) VALUES
-                 ('C00001','AAA','BBB',127,'GW'),
-                 ('C00002','AAA','BBB',127,'VT')").execute(&pool).await?;
+    use chrono::{TimeZone, Utc};
     sqlx::query("INSERT INTO operators (toc, name, brand_color) VALUES
                  ('GW','Great Western','#0a493e'),
                  ('VT','Avanti','#11354e')").execute(&pool).await?;
-    // GW: 2/2 on time. VT: 0/2 on time.
-    // Use distinct departure_hour values so (uid, weekday, origin_crs, departure_hour, recorded_at)
-    // unique index is satisfied when recorded_at falls at the same instant.
-    sqlx::query("INSERT INTO delay_history (uid, weekday, origin_crs, departure_hour, delay_mins) VALUES
-                 ('C00001',0,'AAA',9, 0),
-                 ('C00001',0,'AAA',10,-2),
-                 ('C00002',0,'AAA',9, 9),
-                 ('C00002',0,'AAA',10,12)").execute(&pool).await?;
+    let sched = Utc.with_ymd_and_hms(2026, 6, 5, 9, 0, 0).unwrap();
+    // Source is now `journeys` (toc from Darwin schedule). GW: 2 journeys arriving on time
+    // (<=5); VT: 2 arriving very late. League ranks GW first.
+    sqlx::query(
+        "INSERT INTO journeys (rid, uid, ssd, weekday, departure_hour, toc, origin_tpl, destination_tpl, scheduled_departure, arrival_delay_mins) VALUES
+         ($1,'C00001','2026-06-05',4,9,'GW','PADTON','BRISTM',$3, 0),
+         ($2,'C00002','2026-06-05',4,9,'GW','PADTON','BRISTM',$3, 2),
+         ($4,'C00003','2026-06-05',4,9,'VT','EUSTON','MNCRPIC',$3, 25),
+         ($5,'C00004','2026-06-05',4,9,'VT','EUSTON','MNCRPIC',$3, 30)",
+    )
+    .bind("202606050000001").bind("202606050000002").bind(sched)
+    .bind("202606050000003").bind("202606050000004")
+    .execute(&pool).await?;
 
     let rows = railpredict::db::operators::operator_league(&pool, 24, 1, 10).await?;
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].toc, "GW", "GW ranks first (100% on time)");
+    assert_eq!(rows[0].toc.trim(), "GW", "GW ranks first (on time)");
     assert!((rows[0].on_time_pct.unwrap() - 100.0).abs() < 0.001);
-    assert_eq!(rows[1].toc, "VT");
+    assert_eq!(rows[1].toc.trim(), "VT");
     assert!(rows[1].on_time_pct.unwrap() < 1.0);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2b: upsert_service_toc persists uid->toc with NULL origin/destination.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn upsert_service_toc_persists_without_crs(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    // The Darwin schedule gives uid + toc but only TIPLOCs, so origin/destination must be
+    // nullable (this also exercises migration 120018).
+    db::operators::upsert_service_toc(&pool, "C12345", "GW").await?;
+    db::operators::upsert_service_toc(&pool, "C12345", "GW").await?; // idempotent
+    let (toc, origin): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT toc, origin_crs FROM services WHERE uid = 'C12345'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(toc.as_deref(), Some("GW"));
+    assert!(origin.is_none(), "origin_crs is NULL for a schedule-only service row");
     Ok(())
 }
 
