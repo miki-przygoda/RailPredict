@@ -2,9 +2,18 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.13.0" -- 04/06/2026**
+**version = "1.13.1" -- 05/06/2026**
 
 ---
+
+## v1.13.1 — 05/06/2026
+
+UI overhaul step 4 (Stations). New `/stations` busiest-station index (browse + a
+code filter) and `/stations/:code` explorer — reliability KPIs, a delay-by-hour×
+weekday heatmap, and busiest services, from `db::stations`. `delay_history` keys
+origins by TIPLOC-style code (e.g. `WATRLMN`), so the explorer browses those codes
+and shows them raw; a friendly CRS→name mapping is deferred data work. Adds
+`db::busiest_origins` and a "Stations" nav item.
 
 ## v1.13.0 — 04/06/2026
 
