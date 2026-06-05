@@ -96,6 +96,9 @@ pub struct PipelineContext {
     /// STOMP reconnects (lives on the shared context). On train deactivation
     /// the entry is removed so memory stays bounded.
     pub persisted_predictions: Arc<DashSet<String>>,
+    /// UIDs we've already written a `services.toc` row for (Phase 2). Per-uid, persists for
+    /// the process lifetime (uids recur daily) — bounded by the ~74k distinct UIDs.
+    pub persisted_services: Arc<DashSet<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +126,7 @@ impl IngestionPipeline {
             prediction_engine,
             db,
             persisted_predictions: Arc::new(DashSet::new()),
+            persisted_services: Arc::new(DashSet::new()),
         };
         Self { stomp, ctx }
     }
@@ -427,6 +431,8 @@ impl IngestionPipeline {
                     // is idempotent (apply_call merges, toc is set-once), so a reconnect replay
                     // must not consume the guard slot a TS message needs.
                     let rid = sched.rid.clone();
+                    let sched_uid = sched.uid.clone();
+                    let sched_toc = sched.toc.clone();
                     // Register the train from its plan if unseen, so toc + the planned calling
                     // pattern are captured even before the first TS message arrives.
                     if self.ctx.registry.get(&rid).is_none()
@@ -465,6 +471,24 @@ impl IngestionPipeline {
                             }
                         })
                         .await;
+
+                    // Phase 2: persist uid→toc (deduped) so delay_history (keyed on uid)
+                    // becomes operator-attributable via services.toc.
+                    if let (Some(db), Some(uid), Some(toc)) =
+                        (self.ctx.db.as_ref(), sched_uid, sched_toc)
+                        && !toc.is_empty()
+                        && uid.len() == 6
+                        && self.ctx.persisted_services.insert(uid.clone())
+                    {
+                        let db_clone = db.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                crate::db::operators::upsert_service_toc(&db_clone, &uid, &toc).await
+                            {
+                                tracing::warn!(error = %e, uid = %uid, "Failed to persist service toc");
+                            }
+                        });
+                    }
                 }
 
                 ParsedUpdate::Association { prev_rid, next_rid } => {
