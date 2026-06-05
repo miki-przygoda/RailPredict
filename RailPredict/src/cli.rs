@@ -52,4 +52,6 @@ pub enum Commands {
 pub enum IngestSource {
     Gtfs,
     Cif,
+    /// Rail Settlement Plan reference CSVs (stations + operators); `--file` is the directory.
+    Rds,
 }
