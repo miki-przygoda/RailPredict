@@ -9,6 +9,7 @@
 //! - `operators`   — `/operators`        operator league + `/operators/:toc` drill-down
 //! - `search`      — `/search`           departure board + journey search (+ `/ui/stations/*`, `/ui/journeys`)
 //! - `predictions` — `/predictions`      prediction-accuracy analytics
+//! - `stations`    — `/stations`         station search + `/stations/:crs` explorer (heatmap)
 //! - `live`        — `/live`             ambient predicted→actual board (+ `/ui/live/snapshot`)
 //! - `detail`      — `/trains/:rid/view` train detail (+ `/ui/trains/:rid/live` SSE)
 //! - `dev`         — `/dev`              internal diagnostics console (+ `/ui/dev/*`)
@@ -25,3 +26,4 @@ pub mod live;
 pub mod operators;
 pub mod predictions;
 pub mod search;
+pub mod stations;

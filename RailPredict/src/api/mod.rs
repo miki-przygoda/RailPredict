@@ -49,7 +49,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::{StationIndex, TrainRegistry},
     db::Db,
-    frontend::{dashboard, dev, detail, explore, live, operators, predictions, search},
+    frontend::{dashboard, dev, detail, explore, live, operators, predictions, search, stations},
     ingestion::gtfs::IngestStatus,
     state_machine::StateChangeEvent,
 };
@@ -200,6 +200,8 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/live", get(live::live_page))
         .route("/ui/live/snapshot", get(live::live_snapshot))
         .route("/predictions", get(predictions::predictions_page))
+        .route("/stations", get(stations::stations_page))
+        .route("/stations/:crs", get(stations::station_page))
         .route("/explore", get(explore::explore_page))
         .route("/trains/:rid/view", get(detail::detail_page))
         // UI fragment routes — consumed by htmx partial swaps
