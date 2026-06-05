@@ -2,9 +2,20 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.15.0" -- 05/06/2026**
+**version = "1.15.1" -- 05/06/2026**
 
 ---
+
+## v1.15.1 — 05/06/2026
+
+RDS reference-data loader. New `ingest-static --source rds --file <dir>` reads the RSP / Rail
+Delivery Group export CSVs in `imports/` (headerless, positional columns) into Tier A:
+`rds_station.csv` + `rds_station_coords.csv` → `stations` (CRS, name, 4-digit NLC, lat/lon
+joined on NLC), and `rds_toc.csv` → `operators` (ATOC code → name). Real CSV parsing (quoted
+address fields), deduped by primary key, batched upserts. New `ingestion/rds.rs`. Used to seed
+the fresh `railpredict_v2` DB with **3,607 stations + 81 operators**, so station
+search/autocomplete and operator names work without a GTFS feed. (`rds_railcard.csv` /
+`rds_ticket_type.csv` remain reference-only — no target table yet.)
 
 ## v1.15.0 — 05/06/2026
 
