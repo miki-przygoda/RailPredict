@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.14.0" -- 05/06/2026**
+**version = "1.14.1" -- 05/06/2026**
 
 ---
+
+## v1.14.1 — 05/06/2026
+
+Friendly station names. `delay_history` / Darwin key locations by TIPLOC code
+(`WATRLMN`); a new embedded TIPLOC→name reference (~3000 entries, from the public
+Darwin-built `fasteroute/national-rail-stations` dataset) resolves them. Wired into
+the stations explorer (title, index, busiest), the live-board cards, and the train
+detail page, falling back to the raw code when unknown. (The operator league still
+needs the per-service `uid→toc` from the timetable ingest; that dataset's
+managing-TOC field is deliberately not used for it.)
 
 ## v1.14.0 — 05/06/2026
 
