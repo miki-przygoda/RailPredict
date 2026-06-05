@@ -12,6 +12,8 @@
 //! Stores the full TIPLOC sequence for the service, populated from Darwin TS `<Location>`
 //! elements. Used by `TrainRegistry`'s reverse TIPLOC index for cascade propagation.
 
+use std::collections::{BTreeMap, HashMap};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +67,84 @@ pub enum UpdateSource {
     RestPoll,
     StompFirehose,
     PredictionEngine,
+}
+
+/// One accumulated calling point of a service's journey (Full-Journey Capture).
+///
+/// Built up across the train's life from Darwin `schedule` (planned times + activity) and
+/// `TS` (live estimated/actual times, platform, per-stop cancel) messages. Stored in
+/// `TrainStatus::journey` keyed by a stable per-TIPLOC `seq`, then snapshotted to the
+/// `journeys` / `journey_calls` tables when the train deactivates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallObservation {
+    pub tpl: String,
+    pub seq: u16,
+    pub sched_arr: Option<DateTime<Utc>>,
+    pub sched_dep: Option<DateTime<Utc>>,
+    pub est_arr: Option<DateTime<Utc>>,
+    pub act_arr: Option<DateTime<Utc>>,
+    pub est_dep: Option<DateTime<Utc>>,
+    pub act_dep: Option<DateTime<Utc>>,
+    pub platform: Option<String>,
+    pub plat_confirmed: Option<bool>,
+    pub is_cancelled: bool,
+    /// Planned activity codes from `schedule` (e.g. "T" stop, "R" request, "U" set-down).
+    pub activity: Option<String>,
+}
+
+impl CallObservation {
+    pub fn new(tpl: String, seq: u16) -> Self {
+        Self {
+            tpl,
+            seq,
+            sched_arr: None,
+            sched_dep: None,
+            est_arr: None,
+            act_arr: None,
+            est_dep: None,
+            act_dep: None,
+            platform: None,
+            plat_confirmed: None,
+            is_cancelled: false,
+            activity: None,
+        }
+    }
+
+    /// Merge a newer observation of the same stop in: fill any non-null field from `inc`,
+    /// never nulling an existing value. Darwin `TS` messages are partial, so a later message
+    /// may only refine one stop's forecast. Cancellation is sticky.
+    pub fn merge_from(&mut self, inc: &CallObservation) {
+        if inc.sched_arr.is_some() {
+            self.sched_arr = inc.sched_arr;
+        }
+        if inc.sched_dep.is_some() {
+            self.sched_dep = inc.sched_dep;
+        }
+        if inc.est_arr.is_some() {
+            self.est_arr = inc.est_arr;
+        }
+        if inc.act_arr.is_some() {
+            self.act_arr = inc.act_arr;
+        }
+        if inc.est_dep.is_some() {
+            self.est_dep = inc.est_dep;
+        }
+        if inc.act_dep.is_some() {
+            self.act_dep = inc.act_dep;
+        }
+        if inc.platform.is_some() {
+            self.platform = inc.platform.clone();
+        }
+        if inc.plat_confirmed.is_some() {
+            self.plat_confirmed = inc.plat_confirmed;
+        }
+        if inc.activity.is_some() {
+            self.activity = inc.activity.clone();
+        }
+        if inc.is_cancelled {
+            self.is_cancelled = true;
+        }
+    }
 }
 
 /// Single source of truth for a UK rail service. Held behind `Arc<RwLock<TrainStatus>>`
@@ -134,6 +214,28 @@ pub struct TrainStatus {
     /// Used by `TrainRegistry::update_tiploc_index` to maintain the reverse TIPLOC → TrainId map.
     pub calling_points: Vec<(String, DateTime<Utc>)>,
 
+    // --- Full-Journey Capture ---
+
+    /// Operating company code (`toc`) from the Darwin `schedule` message. `None` until seen.
+    pub toc: Option<String>,
+
+    /// Train category (express / stopper / freight) from `schedule`. `None` until seen.
+    pub train_category: Option<String>,
+
+    /// The whole journey, accumulated across `schedule` + `TS` messages and keyed by a stable
+    /// per-TIPLOC `seq`. Snapshotted to `journeys` / `journey_calls` on deactivation.
+    #[serde(default)]
+    pub journey: BTreeMap<u16, CallObservation>,
+
+    /// First-seen TIPLOC → canonical `seq`, so partial TS messages reconcile to one ordering.
+    #[serde(default)]
+    pub tpl_seq: HashMap<String, u16>,
+
+    /// Latest late-running reason code + the TIPLOC it was attributed to (Darwin reason codes).
+    pub late_reason_code: Option<i32>,
+    pub cancel_reason_code: Option<i32>,
+    pub reason_tiploc: Option<String>,
+
     // --- Environmental context ---
 
     pub volatility: VolatilityContext,
@@ -171,9 +273,33 @@ impl TrainStatus {
             destination_crs: None,
             uid: None,
             calling_points: Vec::new(),
+            toc: None,
+            train_category: None,
+            journey: BTreeMap::new(),
+            tpl_seq: HashMap::new(),
+            late_reason_code: None,
+            cancel_reason_code: None,
+            reason_tiploc: None,
             volatility: VolatilityContext::unknown(),
             last_update_source: UpdateSource::RestPoll,
         }
+    }
+
+    /// Fold one parsed calling point into the accumulated `journey`, merging with any prior
+    /// observation of the same TIPLOC. The incoming `seq` is advisory — the canonical `seq`
+    /// is resolved (and assigned, first-seen) via `tpl_seq` so partial messages stay aligned.
+    pub fn apply_call(&mut self, incoming: CallObservation) {
+        if incoming.tpl.is_empty() {
+            return;
+        }
+        let next = self.tpl_seq.len() as u16;
+        let seq = *self.tpl_seq.entry(incoming.tpl.clone()).or_insert(next);
+        let mut resolved = incoming;
+        resolved.seq = seq;
+        self.journey
+            .entry(seq)
+            .or_insert_with(|| CallObservation::new(resolved.tpl.clone(), seq))
+            .merge_from(&resolved);
     }
 
     // Returns reported delay if known, otherwise the Tier B prediction.
@@ -298,6 +424,59 @@ mod tests {
         let incoming = Stamped::with_version(2u32, 7);
         existing.apply_if_newer(incoming);
         assert_eq!(existing.value, 1);
+    }
+
+    fn call(tpl: &str, seq: u16) -> CallObservation {
+        CallObservation::new(tpl.to_string(), seq)
+    }
+
+    #[test]
+    fn apply_call_merges_partial_observations_of_same_stop() {
+        let mut s = make_status();
+        let now = Utc::now();
+        // First message: only the scheduled departure for WAKEFLD.
+        let mut c1 = call("WAKEFLD", 0);
+        c1.sched_dep = Some(now);
+        s.apply_call(c1);
+        // Later partial message: only the actual departure for the same stop.
+        let mut c2 = call("WAKEFLD", 0);
+        c2.act_dep = Some(now + chrono::Duration::minutes(3));
+        s.apply_call(c2);
+
+        assert_eq!(s.journey.len(), 1, "same TIPLOC merges into one entry");
+        let merged = &s.journey[&0];
+        assert!(merged.sched_dep.is_some(), "earlier field retained");
+        assert!(merged.act_dep.is_some(), "later field merged in");
+    }
+
+    #[test]
+    fn apply_call_assigns_stable_first_seen_seq() {
+        let mut s = make_status();
+        s.apply_call(call("LEEDS", 9)); // incoming seq is advisory and ignored
+        s.apply_call(call("WAKEFLD", 9));
+        s.apply_call(call("LEEDS", 9)); // revisit — must keep its original canonical seq
+
+        assert_eq!(s.journey.len(), 2);
+        assert_eq!(s.tpl_seq["LEEDS"], 0);
+        assert_eq!(s.tpl_seq["WAKEFLD"], 1);
+        assert_eq!(s.journey[&0].tpl, "LEEDS");
+        assert_eq!(s.journey[&1].tpl, "WAKEFLD");
+    }
+
+    #[test]
+    fn apply_call_ignores_empty_tpl() {
+        let mut s = make_status();
+        s.apply_call(call("", 0));
+        assert!(s.journey.is_empty());
+    }
+
+    #[test]
+    fn merge_does_not_null_existing_actual() {
+        let mut base = call("X", 0);
+        base.act_arr = Some(Utc::now());
+        let empty = call("X", 0); // carries no actual
+        base.merge_from(&empty);
+        assert!(base.act_arr.is_some(), "merging an empty obs must not clear an actual");
     }
 
     #[test]

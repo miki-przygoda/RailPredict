@@ -11,5 +11,5 @@ pub mod train_status;
 pub mod volatility;
 
 pub use train_id::TrainId;
-pub use train_status::{Stamped, TrainStatus, UpdateSource};
+pub use train_status::{CallObservation, Stamped, TrainStatus, UpdateSource};
 pub use volatility::VolatilityContext;
