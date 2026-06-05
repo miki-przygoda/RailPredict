@@ -2,9 +2,18 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.3" -- 06/06/2026**
+**version = "1.16.4" -- 06/06/2026**
 
 ---
+
+## v1.16.4 — 06/06/2026
+
+Phase 3 (journey surfaces complete) — arrival/recovery on the live board. The `/live` header now
+carries a rolling-24h arrival/recovery strip (arrive-within-5 %, avg arrival delay, recovering %,
+journeys), server-rendered from `db::overview::journey_metrics` (one query per page load, not per
+3s poll — the metric is slow-changing); the live cards stay client-rendered by `board.js`. This
+completes the Phase-3 journey surfaces: detail trajectory (1.16.1), station reliability (1.16.2),
+and arrival/recovery on the overview (1.16.3) + live board.
 
 ## v1.16.3 — 06/06/2026
 
