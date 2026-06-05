@@ -2,9 +2,18 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.15.2" -- 05/06/2026**
+**version = "1.15.3" -- 05/06/2026**
 
 ---
+
+## v1.15.3 — 05/06/2026
+
+Follow-up to v1.15.2 — the origin-delay was still inflated. v1.15.2 paired the *registered*
+origin's scheduled time with the *current partial message's* first-stop estimated time, which
+are still different stops on a partial Darwin TS. Now `reported_delay_mins` (→ `delay_history`,
+the model) is derived from the accumulated **origin call** (`journey[0]`), so scheduled and
+estimated/actual come from the **same** stop. Verified live: true delay median 0 vs the prior
+~21–32 (journey duration). delay_history partitions re-truncated for a clean re-accumulation.
 
 ## v1.15.2 — 05/06/2026
 

@@ -262,7 +262,6 @@ impl IngestionPipeline {
                     }
 
                     // Capture values needed inside the closure before borrowing self.
-                    let estimated_dep = ts_update.estimated_departure;
                     let working_dep = ts_update.working_departure;
                     let platform = ts_update.platform.clone();
                     let ts_uid = ts_update.uid.clone();
@@ -286,16 +285,6 @@ impl IngestionPipeline {
                     // Apply live fields to registry (works whether just registered or pre-existing).
                     self.ctx.registry
                         .update(&rid, |status| {
-                            if let Some(dep) = estimated_dep {
-                                let delay_mins =
-                                    wrapped_delay_mins(status.scheduled_departure.value, dep);
-                                status.actual_estimated_departure.apply_if_newer(
-                                    Stamped::with_version(Some(dep), darwin_version),
-                                );
-                                status.reported_delay_mins.apply_if_newer(
-                                    Stamped::with_version(Some(delay_mins), darwin_version),
-                                );
-                            }
                             if let Some(p) = platform {
                                 status.actual_platform.apply_if_newer(
                                     Stamped::with_version(Some(p), darwin_version),
@@ -335,6 +324,28 @@ impl IngestionPipeline {
                                 status.cancel_reason_code = Some(r.code);
                                 if r.tiploc.is_some() {
                                     status.reason_tiploc = r.tiploc.clone();
+                                }
+                            }
+
+                            // Origin departure + delay from the accumulated origin call, so the
+                            // scheduled and estimated/actual times come from the SAME stop. The old
+                            // scalar paired the origin's schedule with a later stop's time (Darwin
+                            // TS messages are partial), measuring journey progress, not delay.
+                            let origin_dep = status
+                                .journey
+                                .get(&0)
+                                .and_then(|o| o.act_dep.or(o.est_dep).map(|obs| (obs, o.sched_dep)));
+                            if let Some((obs, sched)) = origin_dep {
+                                status.actual_estimated_departure.apply_if_newer(
+                                    Stamped::with_version(Some(obs), darwin_version),
+                                );
+                                if let Some(sched) = sched {
+                                    status.reported_delay_mins.apply_if_newer(
+                                        Stamped::with_version(
+                                            Some(wrapped_delay_mins(sched, obs)),
+                                            darwin_version,
+                                        ),
+                                    );
                                 }
                             }
 
