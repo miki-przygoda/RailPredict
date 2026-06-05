@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.0" -- 05/06/2026**
+**version = "1.16.1" -- 05/06/2026**
 
 ---
+
+## v1.16.1 — 05/06/2026
+
+Phase 3 (start) — surface the journey on the train-detail page. A new **Journey panel** shows the
+arrival/recovery summary ("departed +X → arrived +Y · recovered Z · peak +M") and the **per-stop
+delay trajectory** — an area-spark over `journey_calls` plus the full calling-point list with
+arrival/departure delays and platforms, names resolved via `cache::location_names`. The detail
+page now also renders **finalised** trains (falling back to the `journeys` table once a train has
+left the live registry), so any captured journey is viewable. New reads:
+`db::journeys::{journey_header, journey_calls_for}`.
 
 ## v1.16.0 — 05/06/2026
 

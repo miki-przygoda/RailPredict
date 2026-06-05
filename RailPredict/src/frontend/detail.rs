@@ -21,6 +21,7 @@ use crate::{
 };
 
 use crate::cache::location_names;
+use crate::db::journeys::{journey_calls_for, journey_header, JourneyCallView, JourneyHeaderView};
 
 use super::charts;
 use super::components::{delay_badge, pence_to_pounds, platform_chip, prediction_chip};
@@ -137,6 +138,74 @@ fn convergence_panel(points: &[ConvergencePoint]) -> Markup {
     }
 }
 
+/// A signed per-stop delay cell: "+5m" (late), "on time" (≤0), or "—".
+fn delay_cell(d: Option<i32>) -> Markup {
+    html! {
+        @match d {
+            Some(m) if m > 0 => { span .val-bad { "+" (m) "m" } }
+            Some(_)          => { span .val-ok { "on time" } }
+            None             => { span .dim { "—" } }
+        }
+    }
+}
+
+/// The finalised-journey panel: an arrival/recovery summary, the per-stop delay trajectory,
+/// and the full calling-point list — the marquee surface for Full-Journey Capture.
+fn journey_panel(header: &JourneyHeaderView, calls: &[JourneyCallView]) -> Markup {
+    // Trajectory = best per-stop delay (departure, else arrival) along the route.
+    let traj: Vec<f64> = calls
+        .iter()
+        .filter_map(|c| c.dep_delay_mins.or(c.arr_delay_mins))
+        .map(|d| d as f64)
+        .collect();
+    let dest = header
+        .destination_tpl
+        .as_deref()
+        .map(location_names::name_or_code)
+        .unwrap_or("—");
+    html! {
+        section .panel {
+            div .panel-head {
+                h2 { "Journey" }
+                span .panel-meta { (header.n_calls.unwrap_or(calls.len() as i16)) " stops" }
+            }
+            div .panel-body {
+                p .dash-sub {
+                    "Departed " (location_names::name_or_code(&header.origin_tpl)) " "
+                    (delay_cell(header.origin_delay_mins))
+                    " · arrived " (dest) " " (delay_cell(header.arrival_delay_mins))
+                    @if let Some(r) = header.recovered_mins { @if r > 0 {
+                        " · " span .val-ok { "recovered " (r) " min" }
+                    } }
+                    @if let Some(m) = header.max_delay_mins { " · peak +" (m.max(0)) "m" }
+                }
+                @if traj.len() >= 2 {
+                    div .conv-wrap { (charts::area_spark(&traj, "journey-traj")) }
+                    p .chart-note { "Delay (min) at each calling point · origin → destination." }
+                }
+                @if !calls.is_empty() {
+                    table .rt-table {
+                        thead { tr { th { "Stop" } th .r { "Arr" } th .r { "Dep" } th .r { "Plat" } } }
+                        tbody {
+                            @for c in calls {
+                                tr {
+                                    td {
+                                        (location_names::name_or_code(&c.tpl))
+                                        @if c.is_cancelled { " " span .op-code { "cancelled" } }
+                                    }
+                                    td .r { (delay_cell(c.arr_delay_mins)) }
+                                    td .r { (delay_cell(c.dep_delay_mins)) }
+                                    td .r.muted { (c.platform.as_deref().unwrap_or("—")) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>) -> Markup {
     let snapshot = match TrainId::rid(&rid).ok().and_then(|id| state.registry.get(&id)) {
         Some(arc) => {
@@ -173,6 +242,8 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
     // Persisted first-prediction snapshot + (optional) finalised outcome.
     let outcome = prediction_for_rid(&state.db, &rid).await.ok().flatten();
     let convergence = convergence_for_rid(&state.db, &rid).await.unwrap_or_default();
+    let journey = journey_header(&state.db, &rid).await.ok().flatten();
+    let journey_calls = journey_calls_for(&state.db, &rid).await.unwrap_or_default();
 
     base(
         &format!("Train {rid}"),
@@ -207,8 +278,25 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                         }
                     }
                 }
+            } @else if let Some(h) = &journey {
+                div .dash-header {
+                    div {
+                        h1 .dash-title { "Train " (rid) }
+                        p .dash-sub {
+                            "From " (location_names::name_or_code(&h.origin_tpl))
+                            " · scheduled " (h.scheduled_departure.format("%H:%M")) " UTC · finalised"
+                            @if let Some(t) = &h.toc { " · " (t.trim()) }
+                        }
+                    }
+                    div .dash-header-right.train-header-badges {
+                        (delay_badge(h.arrival_delay_mins, h.was_cancelled))
+                    }
+                }
+                (prediction_card(None, None, outcome.as_ref()))
+                (convergence_panel(&convergence))
+                (journey_panel(h, &journey_calls))
             } @else {
-                div .panel { div .panel-body { p .panel-empty { "Train " (rid) " not found in registry." } } }
+                div .panel { div .panel-body { p .panel-empty { "Train " (rid) " not found." } } }
             }
         },
     )

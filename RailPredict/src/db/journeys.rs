@@ -159,3 +159,58 @@ pub async fn count_recent(db: &Db, hours: i32) -> sqlx::Result<i64> {
     .fetch_one(db)
     .await
 }
+
+// ---------------------------------------------------------------------------
+// Read path — the train-detail "Journey" panel.
+// ---------------------------------------------------------------------------
+
+/// Header view of one finalised journey, for the train-detail page.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct JourneyHeaderView {
+    pub uid: String,
+    pub toc: Option<String>,
+    pub origin_tpl: String,
+    pub destination_tpl: Option<String>,
+    pub scheduled_departure: DateTime<Utc>,
+    pub origin_delay_mins: Option<i32>,
+    pub arrival_delay_mins: Option<i32>,
+    pub recovered_mins: Option<i32>,
+    pub max_delay_mins: Option<i32>,
+    pub n_calls: Option<i16>,
+    pub was_cancelled: bool,
+    pub finalised_at: DateTime<Utc>,
+}
+
+/// Fetch the finalised-journey header for one RID, if captured.
+pub async fn journey_header(db: &Db, rid: &str) -> sqlx::Result<Option<JourneyHeaderView>> {
+    sqlx::query_as::<_, JourneyHeaderView>(
+        "SELECT uid, toc, origin_tpl, destination_tpl, scheduled_departure, origin_delay_mins, \
+                arrival_delay_mins, recovered_mins, max_delay_mins, n_calls, was_cancelled, finalised_at \
+         FROM journeys WHERE rid = $1",
+    )
+    .bind(rid)
+    .fetch_optional(db)
+    .await
+}
+
+/// One stop in the detail-page journey trajectory.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct JourneyCallView {
+    pub seq: i16,
+    pub tpl: String,
+    pub arr_delay_mins: Option<i32>,
+    pub dep_delay_mins: Option<i32>,
+    pub platform: Option<String>,
+    pub is_cancelled: bool,
+}
+
+/// Fetch the ordered per-stop calls for one RID's journey.
+pub async fn journey_calls_for(db: &Db, rid: &str) -> sqlx::Result<Vec<JourneyCallView>> {
+    sqlx::query_as::<_, JourneyCallView>(
+        "SELECT seq, tpl, arr_delay_mins, dep_delay_mins, platform, is_cancelled \
+         FROM journey_calls WHERE rid = $1 ORDER BY seq",
+    )
+    .bind(rid)
+    .fetch_all(db)
+    .await
+}
