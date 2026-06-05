@@ -70,6 +70,46 @@ pub async fn daily_series(db: &Db, hours: i32) -> sqlx::Result<Vec<DailyPoint>> 
     .await
 }
 
+/// Arrival-punctuality + recovery headline from `journeys` (Full-Journey Capture).
+///
+/// Distinct from `HeadlineMetrics` (origin-departure delay over `delay_history`): this is the
+/// delay passengers actually experience at the destination, plus how much delay services shed
+/// en route. Sanity-bounded the same way.
+#[derive(Debug, Clone, Default, FromRow)]
+pub struct JourneyMetrics {
+    /// Percentage of journeys arriving within 5 minutes. `None` when empty.
+    pub arrival_on_time_pct: Option<f64>,
+    /// Mean arrival delay in minutes. `None` when empty.
+    pub avg_arrival_delay_mins: Option<f64>,
+    /// Percentage of journeys that shed ≥2 min of delay en route. `None` when empty.
+    pub recovered_pct: Option<f64>,
+    /// Mean delay recovered (minutes) over journeys that actually recovered. `None` when none.
+    pub avg_recovered_mins: Option<f64>,
+    /// Number of finalised journeys with an arrival delay in the window.
+    pub journeys: i64,
+}
+
+/// Arrival/recovery metrics over the last `hours` hours, from `journeys`.
+pub async fn journey_metrics(db: &Db, hours: i32) -> sqlx::Result<JourneyMetrics> {
+    sqlx::query_as::<_, JourneyMetrics>(
+        r#"
+        SELECT
+            (AVG(CASE WHEN arrival_delay_mins <= 5 THEN 1.0 ELSE 0.0 END) * 100)::float8   AS arrival_on_time_pct,
+            AVG(arrival_delay_mins::float8)                                                AS avg_arrival_delay_mins,
+            (AVG(CASE WHEN recovered_mins >= 2 THEN 1.0 ELSE 0.0 END) * 100)::float8         AS recovered_pct,
+            (AVG(recovered_mins::float8) FILTER (WHERE recovered_mins > 0))                 AS avg_recovered_mins,
+            COUNT(*)                                                                        AS journeys
+        FROM journeys
+        WHERE finalised_at > NOW() - $1::INT * INTERVAL '1 hour'
+          AND arrival_delay_mins IS NOT NULL
+          AND arrival_delay_mins BETWEEN -120 AND 600
+        "#,
+    )
+    .bind(hours)
+    .fetch_one(db)
+    .await
+}
+
 /// Range-independent data-coverage totals shown in the cockpit footer strip.
 ///
 /// `predictions_scored` counts finalised `prediction_outcomes` (predictions that

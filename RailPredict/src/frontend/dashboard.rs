@@ -33,12 +33,13 @@ pub async fn dashboard_page(
 
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
 
-    let (headline, series, accuracy, acc_series, coverage) = tokio::join!(
+    let (headline, series, accuracy, acc_series, coverage, journeys) = tokio::join!(
         overview::headline_metrics(&state.db, hours),
         overview::daily_series(&state.db, hours),
         predictions::accuracy_summary(&state.db, hours),
         analytics::accuracy_over_time(&state.db, hours),
         overview::coverage_counts(&state.db),
+        overview::journey_metrics(&state.db, hours),
     );
     let net = state.registry.network_summary(6).await;
 
@@ -50,6 +51,7 @@ pub async fn dashboard_page(
         accuracy.ok(),
         acc_series.unwrap_or_default(),
         coverage.unwrap_or_default(),
+        journeys.unwrap_or_default(),
         net,
     );
 
@@ -92,6 +94,7 @@ fn render_cockpit(
     accuracy: Option<predictions::AccuracySummary>,
     acc_series: Vec<analytics::AccuracyPoint>,
     coverage: overview::CoverageCounts,
+    jm: overview::JourneyMetrics,
     net: crate::cache::train_registry::NetworkSummary,
 ) -> Markup {
     let ontime_spark = col(&series, |p| p.on_time_pct);
@@ -197,6 +200,20 @@ fn render_cockpit(
                             }
                         }
                     }
+                }
+            }
+
+            section .dash-section {
+                p .dash-section-label { "Arrival & recovery · " (compact_count(jm.journeys, 0)) " journeys captured" }
+                div .kpi-strip {
+                    (charts::kpi_card("Arrive within 5 min", &fmt_opt(jm.arrival_on_time_pct, 0), Some("%"),
+                        Some("delay at the destination"), None, None, KpiTone::Ok))
+                    (charts::kpi_card("Avg arrival delay", &fmt_opt(jm.avg_arrival_delay_mins, 1), Some("min"),
+                        Some("what passengers experience"), None, None, KpiTone::Warn))
+                    (charts::kpi_card("Services recovering", &fmt_opt(jm.recovered_pct, 0), Some("%"),
+                        Some("shed ≥2 min en route"), None, None, KpiTone::Info))
+                    (charts::kpi_card("Avg delay recovered", &fmt_opt(jm.avg_recovered_mins, 1), Some("min"),
+                        Some("when a service recovers"), None, None, KpiTone::Neutral))
                 }
             }
 
