@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.13.1" -- 05/06/2026**
+**version = "1.14.0" -- 05/06/2026**
 
 ---
+
+## v1.14.0 — 05/06/2026
+
+UI overhaul complete (step 5 — reskin sweep). Reskinned the train-detail page onto
+the panel system and added a per-train prediction-convergence chart
+(`charts::convergence_plot` over `prediction_snapshots`); aligned the departure-board
+chrome to the amber accent (green stays for punctuality data) with a mono hero;
+removed ~296 lines of dead purchase/checkout demo CSS + orphan suggestion classes.
+This completes the Signal Terminal overhaul — nav/IA, cockpit, operators, predictions,
+stations, the live board + server-free replay, and the detail page.
 
 ## v1.13.1 — 05/06/2026
 
