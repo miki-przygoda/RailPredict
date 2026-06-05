@@ -646,3 +646,100 @@ async fn cancellations_record_and_count(pool: sqlx::PgPool) -> sqlx::Result<()> 
     assert_eq!(hr, 8);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// journeys: header + per-stop calls round-trip + idempotent re-insert.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn insert_journey_persists_header_and_calls(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    use chrono::{Duration, TimeZone, Utc};
+    use railpredict::db::journeys::{insert_journey, JourneyCallRecord, JourneyRecord};
+
+    let sched = Utc.with_ymd_and_hms(2026, 6, 5, 8, 0, 0).unwrap();
+    let rid = "202606050123456";
+    let rec = JourneyRecord {
+        rid: rid.to_string(),
+        uid: "C12345".into(),
+        ssd: NaiveDate::from_ymd_opt(2026, 6, 5).unwrap(),
+        weekday: 4,
+        departure_hour: 8,
+        toc: Some("GW".into()),
+        train_category: Some("OO".into()),
+        origin_tpl: "PADTON".into(),
+        destination_tpl: Some("BRISTM".into()),
+        scheduled_departure: sched,
+        actual_departure: Some(sched + Duration::minutes(2)),
+        origin_delay_mins: Some(2),
+        arrival_delay_mins: Some(6),
+        late_reason_code: Some(168),
+        cancel_reason_code: None,
+        reason_tiploc: Some("READING".into()),
+        reason_class: 1,
+        was_cancelled: false,
+        partial_cancel: false,
+        n_calls: 2,
+        max_delay_mins: Some(12),
+        min_delay_mins: Some(2),
+        recovered_mins: Some(6),
+        origin_platform: Some("9".into()),
+        platform_confirmed: Some(true),
+        wind_mph: Some(14.0),
+    };
+    let calls = vec![
+        JourneyCallRecord {
+            seq: 0,
+            tpl: "PADTON".into(),
+            sched_arr: None,
+            actual_arr: None,
+            arr_delay_mins: None,
+            sched_dep: Some(sched),
+            actual_dep: Some(sched + Duration::minutes(2)),
+            dep_delay_mins: Some(2),
+            platform: Some("9".into()),
+            plat_confirmed: Some(true),
+            is_cancelled: false,
+            dwell_secs: None,
+        },
+        JourneyCallRecord {
+            seq: 1,
+            tpl: "BRISTM".into(),
+            sched_arr: Some(sched + Duration::minutes(90)),
+            actual_arr: Some(sched + Duration::minutes(96)),
+            arr_delay_mins: Some(6),
+            sched_dep: None,
+            actual_dep: None,
+            dep_delay_mins: None,
+            platform: None,
+            plat_confirmed: None,
+            is_cancelled: false,
+            dwell_secs: None,
+        },
+    ];
+
+    insert_journey(&pool, &rec, &calls).await?;
+    // Idempotent: a re-finalisation must not duplicate or error.
+    insert_journey(&pool, &rec, &calls).await?;
+
+    let n_journeys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journeys WHERE rid = $1")
+        .bind(rid)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(n_journeys, 1, "header inserted once");
+
+    let n_calls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journey_calls WHERE rid = $1")
+        .bind(rid)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(n_calls, 2, "both calls inserted, no duplicates");
+
+    let (arr, toc): (Option<i32>, Option<String>) =
+        sqlx::query_as("SELECT arrival_delay_mins, toc FROM journeys WHERE rid = $1")
+            .bind(rid)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(arr, Some(6));
+    assert_eq!(toc.as_deref().map(str::trim), Some("GW"));
+
+    assert_eq!(db::journeys::count_recent(&pool, 24).await?, 1);
+    Ok(())
+}

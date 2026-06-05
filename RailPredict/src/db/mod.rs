@@ -18,6 +18,7 @@ pub mod analytics;
 pub mod cancellations;
 pub mod explore;
 pub mod history;
+pub mod journeys;
 pub mod maintenance;
 pub mod operators;
 pub mod overview;
