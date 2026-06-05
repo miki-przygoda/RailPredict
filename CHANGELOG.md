@@ -2,9 +2,24 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.14.1" -- 05/06/2026**
+**version = "1.15.0" -- 05/06/2026**
 
 ---
+
+## v1.15.0 — 05/06/2026
+
+Full-Journey Capture (Phase 1). Darwin messages were being distilled to a single
+origin-delay integer; now we parse the `schedule` message (operator `toc`, train category,
+the ordered calling pattern) and **every** `<Location>` in `TS` (per-stop estimated/actual
+arrival + departure, platform confidence, per-stop cancel, and late/cancel reason codes),
+accumulate the whole journey on `TrainStatus` (merging across partial messages, keyed by a
+stable per-TIPLOC `seq`), and persist a "fat record" when a train deactivates: a wide
+`journeys` header (toc, arrival delay, reason + structural/exogenous class, recovery, cheap
+rollups) plus a `journey_calls` child (one row per stop — for trajectory / per-segment /
+dwell analysis). Additive — `delay_history` stays the live predictor's untouched hot path.
+New modules: `db::journeys`, `ingestion::reason`; migrations `journeys` + `journey_calls`.
+Spec: `docs/superpowers/specs/2026-06-05-full-journey-capture-design.md`. Phase 2 (operator
+league from real `toc`) and Phase 3 (surface arrival delay / "why late" / reliability) follow.
 
 ## v1.14.1 — 05/06/2026
 
