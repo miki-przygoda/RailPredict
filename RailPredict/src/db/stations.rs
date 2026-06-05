@@ -20,6 +20,9 @@ pub struct StationSummary {
     pub on_time_pct: Option<f64>,
     /// Mean recorded delay in minutes. `None` when empty.
     pub avg_delay_mins: Option<f64>,
+    /// Std-dev of delay (minutes) — the stochastic component. Low = "reliably ~X late",
+    /// high = "wildly variable". `None` with fewer than 2 samples.
+    pub std_delay_mins: Option<f64>,
     /// Mean absolute prediction error in minutes over rows that carried a prediction. `None` when none.
     pub mae_mins: Option<f64>,
     /// Number of observations in the window (0 = no data).
@@ -56,6 +59,8 @@ pub struct ServiceRow {
     pub sample_count: i64,
     /// Mean recorded delay in minutes for this service.
     pub avg_delay_mins: Option<f64>,
+    /// Std-dev of delay (minutes) — this service's reliability (low = dependable). `None` < 2 obs.
+    pub std_delay_mins: Option<f64>,
     /// On-time percentage for this service.
     pub on_time_pct: Option<f64>,
 }
@@ -113,6 +118,7 @@ pub async fn station_summary(
             $1                                                                    AS crs,
             (AVG(CASE WHEN d.delay_mins <= 0 THEN 1.0 ELSE 0.0 END) * 100)::float8 AS on_time_pct,
             AVG(d.delay_mins::float8)                                             AS avg_delay_mins,
+            STDDEV_SAMP(d.delay_mins::float8)                                     AS std_delay_mins,
             (AVG(ABS(d.predicted_delay_mins - d.delay_mins))
                 FILTER (WHERE d.predicted_delay_mins IS NOT NULL))::float8         AS mae_mins,
             COUNT(*)                                                              AS sample_count
@@ -172,6 +178,7 @@ pub async fn station_busiest_services(
             s.toc                                                                 AS toc,
             COUNT(*)                                                              AS sample_count,
             AVG(d.delay_mins::float8)                                             AS avg_delay_mins,
+            STDDEV_SAMP(d.delay_mins::float8)                                     AS std_delay_mins,
             (AVG(CASE WHEN d.delay_mins <= 0 THEN 1.0 ELSE 0.0 END) * 100)::float8 AS on_time_pct
         FROM delay_history d
         LEFT JOIN services s ON s.uid = d.uid

@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.1" -- 05/06/2026**
+**version = "1.16.2" -- 06/06/2026**
 
 ---
+
+## v1.16.2 — 06/06/2026
+
+Phase 3 — reliability score on `/stations`. The station explorer now shows the *spread* of
+delay, not just the mean: a **Consistency** KPI (delay std-dev → "tight spread — dependable" /
+"moderate spread" / "wide spread — erratic") and a per-service **Reliability** column (Reliable /
+Moderate / Variable, ± the std). This makes the systematic-vs-stochastic split visible — "reliably
+~2 late" reads very differently from "wildly variable ±12", which a bare on-time % hides. Pure
+query (`STDDEV_SAMP` over the now-clean `delay_history`); `db::stations` `StationSummary` +
+`ServiceRow` gain `std_delay_mins`.
 
 ## v1.16.1 — 05/06/2026
 
