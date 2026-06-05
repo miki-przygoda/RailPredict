@@ -2186,3 +2186,9 @@ input[type="text"]:focus { border-color: var(--border-focus); }
 .conv-legend span::before { content:""; display:inline-block; width:14px; height:2px; margin-right:6px; }
 .conv-l-line::before { background:var(--info); }
 .conv-l-final::before { border-top:2px dashed var(--text-dim); height:0; }
+
+/* station-name resolution: index code tag + live-board route truncation */
+.sr-codetag { font:500 10px var(--font-mono); color:var(--text-dim); margin-left:8px; }
+.tc-route { overflow:hidden; }
+.tc-route code { flex:0 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tc-route .ar { flex:none; }

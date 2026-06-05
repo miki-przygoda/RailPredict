@@ -15,6 +15,7 @@ use maud::{Markup, PreEscaped, html};
 use serde::Deserialize;
 
 use crate::api::AppState;
+use crate::cache::location_names;
 use crate::db::stations::{self, HeatCell};
 use crate::frontend::charts::KpiTone;
 use crate::frontend::components::{self, compact_count, normalize_range, range_label, range_to_hours};
@@ -76,15 +77,17 @@ pub async fn stations_page(State(state): State<AppState>) -> Markup {
                 }
             }
             div .st-filter-wrap {
-                input # "st-filter" .st-search type="text" placeholder="Filter by code…" autocomplete="off";
+                input # "st-filter" .st-search type="text" placeholder="Filter by name or code…" autocomplete="off";
             }
             @if origins.is_empty() {
                 p .panel-empty { "No station data yet." }
             } @else {
                 div .station-list {
                     @for o in &origins {
-                        a .station-row href=(format!("/stations/{}", o.code)) data-code=(o.code) {
-                            span .sr-code { (o.code) }
+                        @let nm = location_names::name_or_code(&o.code);
+                        a .station-row href=(format!("/stations/{}", o.code)) data-code=(o.code)
+                            data-name=(nm.to_uppercase()) {
+                            span .sr-code { (nm) span .sr-codetag { (o.code) } }
                             span .sr-stats {
                                 span class=(format!("sr-ot {}", o.on_time_pct.map(ot_text).unwrap_or("muted"))) { (fmt_pct(o.on_time_pct)) }
                                 span .muted { (fmt1(o.avg_delay_mins)) "m avg" }
@@ -99,7 +102,8 @@ pub async fn stations_page(State(state): State<AppState>) -> Markup {
 (function(){var i=document.getElementById('st-filter');if(!i)return;
 i.addEventListener('input',function(e){var q=e.target.value.trim().toUpperCase();
 document.querySelectorAll('.station-row').forEach(function(r){
-r.style.display=(q===''||r.dataset.code.indexOf(q)===0)?'':'none';});});})();
+var hit=q===''||r.dataset.code.indexOf(q)===0||(r.dataset.name||'').indexOf(q)>=0;
+r.style.display=hit?'':'none';});});})();
 "#)) }
     };
     base("Stations", NavPage::Stations, body)
@@ -137,7 +141,7 @@ pub async fn station_page(
     if headers.contains_key("hx-request") {
         body.into_response()
     } else {
-        base(&code, NavPage::Stations, body).into_response()
+        base(location_names::name_or_code(&code), NavPage::Stations, body).into_response()
     }
 }
 
@@ -153,7 +157,7 @@ fn render_station(
         div .stations {
             div .dash-header {
                 div {
-                    h1 .dash-title { (code) }
+                    h1 .dash-title { (location_names::name_or_code(code)) span .crs { (code) } }
                     p .dash-sub { "Departures from this station · " (range_label(range)) }
                 }
                 div .dash-header-right {
@@ -202,8 +206,12 @@ fn render_station(
                                         @let ot = r.on_time_pct.unwrap_or(0.0);
                                         tr {
                                             td {
-                                                code { (code) } " → "
-                                                code { (r.destination_crs.as_deref().unwrap_or("—")) }
+                                                (location_names::name_or_code(code))
+                                                span .arrow { "→" }
+                                                @match &r.destination_crs {
+                                                    Some(d) => { (location_names::name_or_code(d)) }
+                                                    None => { "—" }
+                                                }
                                             }
                                             td {
                                                 span .sv-op {

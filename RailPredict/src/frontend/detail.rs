@@ -20,6 +20,8 @@ use crate::{
     types::TrainId,
 };
 
+use crate::cache::location_names;
+
 use super::charts;
 use super::components::{delay_badge, pence_to_pounds, platform_chip, prediction_chip};
 use super::layout::{base, NavPage};
@@ -181,7 +183,7 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                     div {
                         h1 .dash-title { "Train " (rid) }
                         p .dash-sub {
-                            @if let Some(o) = &origin { "From " (o) " · " }
+                            @if let Some(o) = &origin { "From " (location_names::name_or_code(o)) " · " }
                             "scheduled " (scheduled.get(11..16).unwrap_or("--:--"))
                         }
                     }
