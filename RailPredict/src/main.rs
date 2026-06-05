@@ -191,6 +191,18 @@ async fn main() -> anyhow::Result<()> {
                 IngestSource::Cif => {
                     anyhow::bail!("CIF ingest is not yet implemented");
                 }
+                IngestSource::Rds => {
+                    let dir = file.ok_or_else(|| {
+                        anyhow::anyhow!("--file <dir> (the imports/ directory) is required for RDS ingest")
+                    })?;
+                    let summary =
+                        railpredict::ingestion::rds::run_ingest_rds(&db_pool, &dir).await?;
+                    tracing::info!(
+                        stations = summary.stations,
+                        operators = summary.operators,
+                        "RDS reference ingest complete"
+                    );
+                }
             },
             Commands::ExportSite { output, days } => {
                 export::export_site(&db_pool, &output, days).await?;

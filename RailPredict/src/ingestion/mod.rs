@@ -38,6 +38,7 @@ pub mod filter;
 pub mod gtfs;
 pub mod operators;
 pub mod parser;
+pub mod rds;
 pub mod reason;
 pub mod stomp_client;
 
