@@ -215,6 +215,45 @@ pub fn calibration_plot(points: &[(f64, f64)]) -> Markup {
     }
 }
 
+/// Prediction-convergence chart: how a train's predicted delay moved toward the
+/// final actual delay as departure approached. `predicted` is ordered earliest →
+/// latest (far-from-departure first); `final_delay` is drawn as a dashed reference.
+/// Colours come from `.conv-*` CSS classes. Needs ≥2 points.
+pub fn convergence_plot(predicted: &[i32], final_delay: i32) -> Markup {
+    const W: f64 = 320.0;
+    const H: f64 = 110.0;
+    const PAD: f64 = 10.0;
+    if predicted.len() < 2 {
+        return html! { svg .conv-svg width=(W) height=(H) viewBox=(format!("0 0 {W} {H}")) role="img" aria-label="no data" {} };
+    }
+    let mut lo = final_delay;
+    let mut hi = final_delay;
+    for &p in predicted {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    let range = if hi == lo { 1.0 } else { (hi - lo) as f64 };
+    let n = predicted.len();
+    let dx = (W - 2.0 * PAD) / (n as f64 - 1.0);
+    let y = |v: f64| PAD + (H - 2.0 * PAD) * (1.0 - (v - lo as f64) / range);
+    let line: String = predicted
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| format!("{:.1},{:.1}", PAD + dx * i as f64, y(p as f64)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let fy = y(final_delay as f64);
+    html! {
+        svg .conv-svg width=(W) height=(H) viewBox=(format!("0 0 {W} {H}")) preserveAspectRatio="none" role="img" aria-label="prediction convergence" {
+            line .conv-final x1=(format!("{PAD:.1}")) y1=(format!("{fy:.1}")) x2=(format!("{:.1}", W - PAD)) y2=(format!("{fy:.1}")) stroke-dasharray="5 4" {}
+            polyline .conv-line points=(line) {}
+            @for (i, &p) in predicted.iter().enumerate() {
+                circle .conv-dot cx=(format!("{:.1}", PAD + dx * i as f64)) cy=(format!("{:.1}", y(p as f64))) r="3" {}
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +351,20 @@ mod tests {
         let m = calibration_plot(&[(1.0, 1.0)]).into_string();
         assert!(m.contains("<svg"), "still a frame");
         assert!(!m.contains("calib-line"), "no model line for <2 points");
+    }
+
+    #[test]
+    fn convergence_plot_draws_line_dots_and_final() {
+        let m = convergence_plot(&[10, 7, 5, 4], 4).into_string();
+        assert!(m.contains("conv-final"), "has the final-delay reference: {m}");
+        assert!(m.contains("conv-line"), "has the predicted line");
+        assert_eq!(m.matches("conv-dot").count(), 4, "one dot per snapshot");
+    }
+
+    #[test]
+    fn convergence_plot_too_few_is_blank() {
+        let m = convergence_plot(&[5], 5).into_string();
+        assert!(m.contains("<svg"), "still a frame");
+        assert!(!m.contains("conv-line"), "no line for <2 points");
     }
 }
