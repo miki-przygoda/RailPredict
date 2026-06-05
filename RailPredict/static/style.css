@@ -1772,22 +1772,8 @@ details[open].checkout-dev-info summary::before   { content: "▼ "; }
    Prediction card — train detail page
    ============================================================ */
 
-.prediction-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 1.4rem;
-  margin-bottom: 1rem;
-}
-
-.prediction-card h2 {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  margin-bottom: 1rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-weight: 600;
-}
+/* prediction/convergence/live panels now use the shared .panel chrome */
+.prediction-card, .conv-panel, .live-section { margin-bottom: 14px; }
 
 .prediction-grid {
   display: grid;
@@ -2483,3 +2469,15 @@ details[open].checkout-dev-info summary::before   { content: "▼ "; }
 .sv-table code { font:600 12.5px var(--font-mono); color:var(--text); }
 .sv-op { display:inline-flex; align-items:center; gap:8px; }
 .sv-brand { width:3px; height:18px; border-radius:2px; display:inline-block; flex:none; }
+
+/* prediction convergence chart (train detail) */
+.conv-wrap { padding:4px 0; }
+.conv-svg { width:100%; max-width:360px; height:110px; }
+.conv-line { fill:none; stroke:var(--info); stroke-width:2; }
+.conv-dot { fill:var(--info); }
+.conv-final { stroke:var(--text-dim); stroke-width:1.2; }
+.conv-legend { display:flex; gap:16px; margin-top:10px; font:500 11px var(--font-mono); color:var(--text-muted); }
+.conv-legend span { display:inline-flex; align-items:center; }
+.conv-legend span::before { content:""; display:inline-block; width:14px; height:2px; margin-right:6px; }
+.conv-l-line::before { background:var(--info); }
+.conv-l-final::before { border-top:2px dashed var(--text-dim); height:0; }

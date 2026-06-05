@@ -15,11 +15,12 @@ use crate::{
         types::LiveUpdateEvent,
         AppState,
     },
-    db::predictions::{prediction_for_rid, PredictionOutcome},
+    db::predictions::{convergence_for_rid, prediction_for_rid, ConvergencePoint, PredictionOutcome},
     state_machine::{StateChangeEvent, TrainState},
     types::TrainId,
 };
 
+use super::charts;
 use super::components::{delay_badge, pence_to_pounds, platform_chip, prediction_chip};
 use super::layout::{base, NavPage};
 
@@ -39,8 +40,9 @@ fn prediction_card(
     outcome: Option<&PredictionOutcome>,
 ) -> Markup {
     html! {
-        section .prediction-card {
-            h2 { "Prediction" }
+        section .panel.prediction-card {
+            div .panel-head { h2 { "Prediction" } }
+            div .panel-body {
             div .prediction-grid {
                 // Live prediction (from registry)
                 div .prediction-cell {
@@ -102,6 +104,33 @@ fn prediction_card(
                     }
                 }
             }
+            }
+        }
+    }
+}
+
+/// Per-train prediction-convergence panel from `prediction_snapshots`.
+fn convergence_panel(points: &[ConvergencePoint]) -> Markup {
+    html! {
+        section .panel.conv-panel {
+            div .panel-head {
+                h2 { "Prediction convergence" }
+                span .panel-meta { "predicted delay as departure nears" }
+            }
+            div .panel-body {
+                @if points.len() >= 2 {
+                    @let predicted: Vec<i32> = points.iter().map(|p| p.predicted_delay_mins).collect();
+                    @let final_delay = points[0].final_delay_mins;
+                    div .conv-wrap { (charts::convergence_plot(&predicted, final_delay)) }
+                    div .conv-legend {
+                        span .conv-l-line { "predicted" }
+                        span .conv-l-final { "actual · " (final_delay) "m" }
+                    }
+                    p .chart-note { "Snapshots from far before departure (left) to near departure (right)." }
+                } @else {
+                    p .panel-empty { "No prediction snapshots recorded for this train." }
+                }
+            }
         }
     }
 }
@@ -141,21 +170,22 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
 
     // Persisted first-prediction snapshot + (optional) finalised outcome.
     let outcome = prediction_for_rid(&state.db, &rid).await.ok().flatten();
+    let convergence = convergence_for_rid(&state.db, &rid).await.unwrap_or_default();
 
     base(
         &format!("Train {rid}"),
         NavPage::Departures,
         html! {
             @if let Some((origin, scheduled, delay, platform, cancelled, _dest, pred, conf)) = snapshot {
-                div .train-header {
-                    h1 { "Train " (rid) }
-                    @if let Some(o) = &origin {
-                        p .train-meta { "Departing from " (o) }
+                div .dash-header {
+                    div {
+                        h1 .dash-title { "Train " (rid) }
+                        p .dash-sub {
+                            @if let Some(o) = &origin { "From " (o) " · " }
+                            "scheduled " (scheduled.get(11..16).unwrap_or("--:--"))
+                        }
                     }
-                    p .train-meta {
-                        "Scheduled departure " (scheduled.get(11..16).unwrap_or("--:--"))
-                    }
-                    div .train-header-badges {
+                    div .dash-header-right.train-header-badges {
                         (delay_badge(delay, cancelled))
                         (platform_chip(platform.as_deref(), false))
                         @if let Some(pence) = fare_pence {
@@ -165,15 +195,18 @@ pub async fn detail_page(Path(rid): Path<String>, State(state): State<AppState>)
                 }
 
                 (prediction_card(pred, conf, outcome.as_ref()))
+                (convergence_panel(&convergence))
 
-                div .live-section hx-ext="sse" sse-connect={ "/ui/trains/" (rid) "/live" } {
-                    h2 { "Live updates" }
-                    div # "live-status" sse-swap="update" hx-swap="outerHTML" {
-                        p .connecting { "Connecting…" }
+                section .panel.live-section hx-ext="sse" sse-connect={ "/ui/trains/" (rid) "/live" } {
+                    div .panel-head { h2 { "Live updates" } }
+                    div .panel-body {
+                        div # "live-status" sse-swap="update" hx-swap="outerHTML" {
+                            p .connecting { "Connecting…" }
+                        }
                     }
                 }
             } @else {
-                p .not-found { "Train " (rid) " not found in registry." }
+                div .panel { div .panel-body { p .panel-empty { "Train " (rid) " not found in registry." } } }
             }
         },
     )
