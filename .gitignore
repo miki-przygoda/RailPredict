@@ -45,3 +45,8 @@ skills-lock.json
 
 # Visual brainstorming companion (superpowers)
 .superpowers/
+
+# Local runtime artefacts (the live railpredict_v2 instance)
+/railpredict-v2.log
+# Convenience symlink so the binary run from the crate dir resolves repo-root models/
+/RailPredict/models
