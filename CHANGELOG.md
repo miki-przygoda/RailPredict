@@ -23,9 +23,8 @@ Repositioning: from public portfolio/open-source piece to a privately-owned prod
   Reworded the `make export` comment so it no longer suggests public GitHub Pages/Vercel
   deployment.
 
-> Owner follow-ups (cannot be done from the repo): privatize or delete the public
-> HuggingFace dataset `miki-przygoda/uk-rail-delays`, and set the GitHub repository
-> visibility to private.
+> External privacy actions (both confirmed done, 06/06): the GitHub repository is
+> private, and the HuggingFace dataset `miki-przygoda/uk-rail-delays` is private.
 
 ## v1.16.8 — 06/06/2026
 
