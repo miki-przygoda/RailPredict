@@ -1,4 +1,10 @@
 //! Train detail page and HTML SSE handler.
+//!
+//! For a finalised service the page renders the captured journey: a per-stop trajectory
+//! panel (scheduled vs actual per call, delay cell, cancellations) plus arrival/recovery
+//! rollups, sourced from `db::journeys`. Live services keep the prediction card + htmx SSE
+//! section. A per-train convergence chart (`charts::convergence_plot`) shows how the
+//! prediction tracked toward the actual.
 
 use std::convert::Infallible;
 
