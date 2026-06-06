@@ -313,7 +313,8 @@ pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
     // (journey_metrics takes hours, the demo window is days).
     let journey = crate::db::overview::journey_metrics(db, days_i * 24).await?;
 
-    let frames = build_frames(&replay_trains, 6, 4);
+    // Zones are stacked full-width in the demo, so keep each frame compact.
+    let frames = build_frames(&replay_trains, 5, 3);
 
     Ok(DemoData {
         generated_at,

@@ -58,9 +58,8 @@
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   .replay-bar .t{font:700 14px var(--mono)}
   .replay-bar .f{margin-left:auto;font:600 13px var(--mono);color:var(--dim)}
-  .zones{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:22px}
-  @media(max-width:820px){.zones{grid-template-columns:1fr}}
-  .zone{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:16px 16px 18px}
+  .zones{display:flex;flex-direction:column;gap:18px;padding:22px}
+  .zone{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:16px 18px 18px}
   .zone-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid var(--line)}
   .zone-head h3{font:800 15px var(--sans);letter-spacing:-.01em;color:var(--ink);display:flex;align-items:center;gap:8px}
   .zone-head h3::before{content:"";width:9px;height:9px;border-radius:50%;flex-shrink:0}
@@ -68,28 +67,30 @@
   .zone-settled .zone-head h3::before{background:var(--good)}
   .zone-head .ct{font:600 12px var(--mono);color:var(--dim)}
   .tgrid{display:flex;flex-direction:column;gap:10px}
-  .tcard{position:relative;display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px 14px 20px;overflow:hidden}
+  /* fixed 3-column grid → cards stay a constant size regardless of operator-name length */
+  .tcard{position:relative;display:grid;grid-template-columns:168px minmax(120px,1fr) auto;align-items:center;column-gap:20px;min-height:62px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 18px 8px 22px;overflow:hidden}
   .tcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--op,#94a3b8)}
   .tcard.fresh{animation:slidein .5s ease}
   @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-  .tc-id{display:flex;flex-direction:column;gap:2px;min-width:82px}
-  .tc-hc{font:700 15px var(--mono);letter-spacing:.01em}
-  .tc-op{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
-  .tc-route{display:flex;align-items:center;gap:6px;font:700 15px var(--mono)}
-  .tc-route .ar{color:var(--dim)}
-  .tc-meta{margin-left:auto;display:flex;align-items:center;gap:16px}
-  .tc-sched{font:600 12px var(--mono);color:var(--dim)}
-  .cell{text-align:center;line-height:1.1}
+  .tc-id{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .tc-hc{font:700 15px var(--mono);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tc-op{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tc-route{display:flex;align-items:center;gap:7px;font:700 15px var(--mono);white-space:nowrap;min-width:0;overflow:hidden}
+  .tc-route code{overflow:hidden;text-overflow:ellipsis}
+  .tc-route .ar{color:var(--dim);flex-shrink:0}
+  .tc-meta{justify-self:end;display:flex;align-items:center;gap:18px}
+  .tc-sched{font:600 12px var(--mono);color:var(--dim);white-space:nowrap}
+  .cell{text-align:center;line-height:1.15;min-width:56px}
   .cell .k{display:block;font:700 9px var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--dim);margin-bottom:5px}
-  .cell .v{font:700 16px var(--mono)}
+  .cell .v{font:700 16px var(--mono);white-space:nowrap}
   .cell .v.pred{color:var(--muted)}
   .cell .v.act{color:var(--ink)}
-  .cell.arrow{font-size:17px;color:var(--dim);align-self:center;padding-top:10px}
-  .pchip{font:700 13px var(--mono);padding:5px 12px;border-radius:999px}
+  .cell.arrow{font-size:17px;color:var(--dim);min-width:auto;align-self:flex-end;padding-bottom:1px}
+  .pchip{font:700 13px var(--mono);padding:5px 12px;border-radius:999px;white-space:nowrap}
   .p-ontime{color:var(--good);background:var(--good-bg)}
   .p-min{color:var(--proj);background:var(--proj-bg)}
   .p-late{color:var(--bad);background:var(--bad-bg)}
-  .acc{font:700 12px var(--mono);padding:6px 11px;border-radius:999px;white-space:nowrap}
+  .acc{font:700 12px var(--mono);padding:6px 11px;border-radius:999px;white-space:nowrap;min-width:84px;text-align:center}
   .acc-good{color:var(--good);background:var(--good-bg)}
   .acc-ok{color:var(--accent);background:#dbeafe}
   .acc-bad{color:var(--bad);background:var(--bad-bg)}
