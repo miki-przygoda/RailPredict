@@ -2,9 +2,35 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.17.4" -- 06/06/2026**
+**version = "1.18.0" -- 06/06/2026**
 
 ---
+
+## v1.18.0 — 06/06/2026
+
+**RailPredict OS** — the exec demo is now a fully-offline, macOS-style browser
+desktop that presents the product as a suite of app-windows, replacing the
+scrollytelling demo. Built across five stages:
+
+- **GB coordinate data** (`cache::location_coords`): TIPLOC→lat/lon for 2,751 GB
+  stations (fasteroute, GB-only filter) + `scripts/build_tiploc_coords.py`.
+- **Map command-centre**: vendored D3 v7 (ISC) + GB basemap assets (ONS coastline
+  OGL, OSM rail ODbL); `map_render.js` draws delay-coloured dots gliding
+  origin→destination over a Mercator GB silhouette, flipping to actual on arrival.
+  `export-map` / `make map` → offline `docs/map.html`.
+- **OS shell**: vanilla-JS desktop — wallpaper, dock, draggable min/max/close
+  windows, menubar clock; boots to the Map app maximised.
+- **Six apps**: Live Map (flagship), Operators, Predictions, Reliability, Replay,
+  About — real data baked from the DB. `export-os` / `make os` → offline
+  `docs/os.html`.
+- **Live `/map` dashboard**: server-rendered command-centre that reuses the same
+  renderer ("one renderer, two drivers"), polling `/ui/map/snapshot` every 20 s;
+  trains drawn from the live tracking registry + recently-settled outcomes,
+  TIPLOC-coordinate-attached (unresolved locations silently omitted).
+
+All offline — no network, tiles, or API keys. The shared renderer is idempotent
+(cancels its prior animation loop + clears the SVG) so it serves both the baked
+export and the live polled page without stacking loops.
 
 ## v1.17.4 — 06/06/2026
 
