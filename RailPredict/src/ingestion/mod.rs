@@ -307,9 +307,14 @@ impl IngestionPipeline {
                             if ts_destination_crs.is_some() {
                                 status.destination_crs = ts_destination_crs;
                             }
-                            status.is_cancelled.apply_if_newer(
-                                Stamped::with_version(Some(is_cancelled), darwin_version),
-                            );
+                            // Sticky: only ever set cancelled=true. Darwin signals cancellation
+                            // via the schedule's can="true" calls, not the TS — writing the TS
+                            // flag's `false` here would revert a schedule-signalled cancellation.
+                            if is_cancelled {
+                                status.is_cancelled.apply_if_newer(
+                                    Stamped::with_version(Some(true), darwin_version),
+                                );
+                            }
                             status.last_update_source = UpdateSource::StompFirehose;
 
                             // Full-Journey Capture: fold every parsed call into the accumulated
@@ -433,6 +438,7 @@ impl IngestionPipeline {
                     let rid = sched.rid.clone();
                     let sched_uid = sched.uid.clone();
                     let sched_toc = sched.toc.clone();
+                    let sched_version = msg_ts.timestamp_millis() as u64;
                     // Register the train from its plan if unseen, so toc + the planned calling
                     // pattern are captured even before the first TS message arrives.
                     if self.ctx.registry.get(&rid).is_none()
@@ -468,6 +474,15 @@ impl IngestionPipeline {
                                 if r.tiploc.is_some() {
                                     status.reason_tiploc = r.tiploc.clone();
                                 }
+                            }
+                            // Whole-service cancellation: Darwin flags can="true" on every
+                            // planned call. Sticky (set only to true).
+                            if !sched.calls.is_empty()
+                                && sched.calls.iter().all(|c| c.is_cancelled)
+                            {
+                                status.is_cancelled.apply_if_newer(
+                                    Stamped::with_version(Some(true), sched_version),
+                                );
                             }
                         })
                         .await;

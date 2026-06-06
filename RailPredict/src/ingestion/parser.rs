@@ -437,6 +437,8 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                             call.sched_dep = parse_time_attr(e, b"ptd", sched.ssd)
                                 .or_else(|| parse_time_attr(e, b"wtd", sched.ssd));
                             call.activity = attr_opt(e, b"act");
+                            // Darwin signals cancellation on the schedule's calling points.
+                            call.is_cancelled = attr_bool(e, b"can");
                             sched.calls.push(call);
                         }
                     }
@@ -1011,5 +1013,25 @@ mod tests {
             panic!("expected Schedule");
         };
         assert_eq!(s.cancel_reason.as_ref().unwrap().code, 100);
+    }
+
+    #[test]
+    fn schedule_marks_cancelled_calls() {
+        // Real Darwin signals a cancellation via can="true" on the schedule's calling points.
+        let xml = r#"<?xml version="1.0"?>
+<Pport ts="2026-06-06T08:00:00Z" version="16.0">
+  <uR>
+    <schedule rid="202606060000001" uid="C00001" ssd="2026-06-06" toc="ME">
+      <OR tpl="HBOLTN" ptd="07:56" can="true"/>
+      <DT tpl="MNCRPIC" pta="08:40" can="true"/>
+    </schedule>
+  </uR>
+</Pport>"#;
+        let (_, updates) = parse_pport(xml).unwrap();
+        let ParsedUpdate::Schedule(s) = &updates[0] else {
+            panic!("expected Schedule");
+        };
+        assert_eq!(s.calls.len(), 2);
+        assert!(s.calls.iter().all(|c| c.is_cancelled), "all calls flagged cancelled");
     }
 }

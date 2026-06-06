@@ -2,9 +2,20 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.4" -- 06/06/2026**
+**version = "1.16.5" -- 06/06/2026**
 
 ---
+
+## v1.16.5 — 06/06/2026
+
+Fix: cancellation capture. Cancellations were never recorded (`was_cancelled` / `cancel_reason` /
+the `cancellations` table all stuck at 0 across thousands of journeys). Root cause found by
+tapping the live feed: Darwin signals a cancellation via **`can="true"` on the `schedule`
+message's calling points** (`<…:OR … can="true"/>`), not on TS — and the schedule parser dropped
+`can`. Now: the schedule parser reads `can` on OR/IP/DT calls; a service is marked cancelled when
+**all** its planned calls carry `can`; `is_cancelled` is **sticky** (only ever set true, so a
+later TS's absent flag can't revert it); and `cancellations.origin_crs` is widened to `VARCHAR(8)`
+(migration 120019) — origins are TIPLOCs, not 3-letter CRS, so the insert was overflowing CHAR(3).
 
 ## v1.16.4 — 06/06/2026
 
