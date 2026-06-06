@@ -11,6 +11,7 @@ pub enum NavPage {
     // (step 0 adds the variants so steps 2/4 only add the nav `link(...)` line).
     Operators,
     Live,
+    Map,
     Predictions,
     Stations,
     Explore,
@@ -49,6 +50,7 @@ pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
                         (link("/", "Overview", NavPage::Dashboard))
                         (link("/operators", "Operators", NavPage::Operators))
                         (link("/live", "Live", NavPage::Live))
+                        (link("/map", "Map", NavPage::Map))
                         (link("/predictions", "Predictions", NavPage::Predictions))
                         (link("/stations", "Stations", NavPage::Stations))
                         (link("/explore", "Explore", NavPage::Explore))

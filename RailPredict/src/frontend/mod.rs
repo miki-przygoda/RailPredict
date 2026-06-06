@@ -23,6 +23,7 @@ pub mod detail;
 pub mod explore;
 pub mod layout;
 pub mod live;
+pub mod map;
 pub mod operators;
 pub mod predictions;
 pub mod search;
