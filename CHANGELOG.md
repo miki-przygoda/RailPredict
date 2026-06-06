@@ -2,9 +2,27 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.7" -- 06/06/2026**
+**version = "1.16.8" -- 06/06/2026**
 
 ---
+
+## v1.16.8 — 06/06/2026
+
+Chore: small codebase-cleanup sweep (docs + comments; no behaviour change).
+- **Archived** the 5 shipped specs/plans (dashboard-overhaul, UI-overhaul step-0 +
+  execution, live-board-replay, full-journey-capture) into `docs/superpowers/archive/`
+  with an index README; kept the still-active `visual-changes-plan` ledger in `specs/`.
+- **tech-debt.md:** old §C3 (operator league empty until GTFS populates `services.toc`)
+  resolved by the Phase-2 `journeys.toc` re-point — moved to Completed; §C now C1–C2.
+- **CLAUDE.md / README.md:** refreshed the "Current state" snapshot (v1.12.0 → v1.16.x)
+  and the README "What's Built" table for the journey-capture-era surfaces.
+- **Module `//!` headers:** reconciled `types/train_status.rs` (lead with the FJC `journey`
+  accumulator, not the superseded `calling_points`), `db/overview.rs` (split delay_history
+  vs `journeys`-sourced metrics), `db/stations.rs` (std-dev reliability), `frontend/detail.rs`
+  (journey trajectory panel).
+- **Verified clean:** FJC code carries no cruft (no debug taps, no orphaned re-point paths;
+  the lone `#[allow(dead_code)]` on `Stamped::is_stale` and the Tier-C metrics TODO are both
+  intentional/pre-existing). Clippy green; 79 ingestion unit tests pass.
 
 ## v1.16.7 — 06/06/2026
 
