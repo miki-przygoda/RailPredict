@@ -5,6 +5,8 @@
 //! HTML page with Chart.js (CDN) and all data baked in as a JSON literal — no
 //! server or database connection needed to view it.
 
+pub mod demo;
+
 use std::path::Path;
 
 use chrono::Utc;
