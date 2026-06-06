@@ -325,6 +325,27 @@ pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
     })
 }
 
+/// Query the DB, render the demo page, and write it to `output_path`.
+pub async fn export_demo(db: &Db, output_path: &Path, days: u32) -> anyhow::Result<()> {
+    let data = gather_demo(db, days).await?;
+    let html = render_demo_html(&data)?;
+
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(output_path, &html)?;
+
+    println!(
+        "Demo site exported: {} observations, {} replay frames → {}",
+        data.hero_observations,
+        data.frames.len(),
+        output_path.display()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
