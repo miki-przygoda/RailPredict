@@ -2,9 +2,23 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.17.0" -- 06/06/2026**
+**version = "1.17.1" -- 06/06/2026**
 
 ---
+
+## v1.17.1 — 06/06/2026
+
+Polish: demo-site cleanup pass.
+- **Replay** now shows only services where the model made a non-trivial call
+  (`predicted_delay_mins <> 0`) — filters on prediction *activity*, not accuracy
+  — so the board stops reading as "it just guesses on-time".
+- **Operator brand colours**: chips + replay card borders now use real TOC
+  colours derived from the name (`ingestion::operators::brand_color`) instead of
+  the unseeded grey DB column.
+- **Beat 3** gains a journey-reliability strip (destination arrival on-time %,
+  delay-recovery %) from `journey_metrics`, and surfaces the previously-dead
+  distinct-services count.
+- `docs/demo.html` is now tracked (regenerate with `make demo`).
 
 ## v1.17.0 — 06/06/2026
 
