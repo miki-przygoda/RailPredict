@@ -119,6 +119,7 @@
   function closeWin(id) {
     var w = windows[id];
     if (!w) return;
+    if (w.dragAbort) w.dragAbort.abort(); // remove this window's document drag listeners
     w.el.parentNode && w.el.parentNode.removeChild(w.el);
     delete windows[id];
     updateDockDot(id);
@@ -127,11 +128,16 @@
   /* ── Drag logic ───────────────────────────────────────────────── */
   function makeDraggable(bar, el, getId) {
     var startX, startY, origX, origY, dragging = false;
+    // One AbortController per window so the document-level listeners below are
+    // removed when the window closes (no global-listener leak).
+    var ac = new AbortController();
+    var sig = ac.signal;
+    var wid = getId();
+    if (windows[wid]) windows[wid].dragAbort = ac;
 
     bar.addEventListener("mousedown", function (e) {
       // Don't drag if clicking traffic-light buttons
       if (e.target.closest && e.target.closest(".traffic")) return;
-      if (e.target.classList && e.target.classList.contains("traffic")) return;
       var id = getId();
       var w = windows[id];
       if (w && w.isMax) return; // Can't drag maximised window
@@ -143,7 +149,7 @@
       origY = r.y;
       focusWin(id);
       e.preventDefault();
-    });
+    }, { signal: sig });
 
     document.addEventListener("mousemove", function (e) {
       if (!dragging) return;
@@ -156,11 +162,11 @@
       var newY = Math.max(0,   Math.min(origY + dy, lh - 40));
       el.style.left = newX + "px";
       el.style.top  = newY + "px";
-    });
+    }, { signal: sig });
 
     document.addEventListener("mouseup", function () {
       dragging = false;
-    });
+    }, { signal: sig });
   }
 
   /* ── Create a window ──────────────────────────────────────────── */
