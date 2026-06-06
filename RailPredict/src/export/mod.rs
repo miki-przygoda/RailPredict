@@ -6,6 +6,7 @@
 //! server or database connection needed to view it.
 
 pub mod demo;
+pub mod map;
 
 use std::path::Path;
 

@@ -59,6 +59,17 @@ pub enum Commands {
         #[arg(long, default_value = "7")]
         days: u32,
     },
+
+    /// Export the self-contained offline command-centre map (GB delay map).
+    ExportMap {
+        /// Output file path.
+        #[arg(long, default_value = "docs/map.html")]
+        output: PathBuf,
+
+        /// How many days of history to include.
+        #[arg(long, default_value = "7")]
+        days: u32,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]
