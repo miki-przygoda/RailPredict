@@ -2,9 +2,16 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.17.2" -- 06/06/2026**
+**version = "1.17.3" -- 06/06/2026**
 
 ---
+
+## v1.17.3 — 06/06/2026
+
+Demo: uniform replay cards. The banner cards auto-sized to the operator-name
+length, so rows looked ragged. Cards are now a fixed 3-column grid (constant ID
+column; long operator names truncate with ellipsis) at a uniform height, and the
+two zones stack full-width so the banners have room and line up cleanly.
 
 ## v1.17.2 — 06/06/2026
 
