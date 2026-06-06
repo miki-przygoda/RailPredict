@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.9" -- 06/06/2026**
+**version = "1.17.0" -- 06/06/2026**
 
 ---
+
+## v1.17.0 — 06/06/2026
+
+Feature: exec demo site (`export-demo`). A single self-contained, offline,
+scrollytelling HTML page for a CEO sales/handover demo — real KPIs + a
+DB-reconstructed predicted→actual replay (auto-plays on scroll) + a clearly
+labelled "with your ticketing data" vision beat. New `src/export/demo.rs`
+(+ `demo_template.html`/`demo.js`), `export-demo` CLI, and `make demo`. Replay
+frames are reconstructed from real `prediction_outcomes` into the existing
+board.js frame shape. See `docs/superpowers/specs/2026-06-06-demo-site-design.md`.
 
 ## v1.16.9 — 06/06/2026
 
