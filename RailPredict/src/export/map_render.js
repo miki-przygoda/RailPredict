@@ -16,6 +16,11 @@ window.RailPredictMap = { init: function () {
 
   if (!svg || !window.d3 || !outline) return;
 
+  // Idempotent: cancel any prior animation loop and clear the SVG so this can be
+  // re-called (the live /map page re-inits on each poll).
+  if (window.RailPredictMap._raf) cancelAnimationFrame(window.RailPredictMap._raf);
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
   var rect = svg.parentNode.getBoundingClientRect();
   var W = Math.max(Math.round(rect.width), 240), H = Math.max(Math.round(rect.height), 360);
   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
@@ -74,7 +79,7 @@ window.RailPredictMap = { init: function () {
       if (trackBox) trackBox.innerHTML = trackList.slice(0, 6).map(trackCard).join("") || '<p class="empty">—</p>';
       if (settleBox) settleBox.innerHTML = settledList.slice(0, 4).map(settledCard).join("") || '<p class="empty">—</p>';
     }
-    requestAnimationFrame(frame);
+    window.RailPredictMap._raf = requestAnimationFrame(frame);
   }
-  requestAnimationFrame(frame);
+  window.RailPredictMap._raf = requestAnimationFrame(frame);
 } };
