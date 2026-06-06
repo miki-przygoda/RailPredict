@@ -185,7 +185,6 @@ struct KpiRow {
 #[derive(FromRow)]
 struct OperatorRow {
     name: Option<String>,
-    brand_color: Option<String>,
     on_time_pct: Option<f64>,
     journeys: i64,
 }
@@ -195,7 +194,6 @@ struct ReplayRow {
     rid: String,
     uid: String,
     operator: Option<String>,
-    brand_color: Option<String>,
     origin_crs: String,
     destination_crs: Option<String>,
     scheduled_departure: chrono::DateTime<Utc>,
@@ -233,7 +231,6 @@ async fn query_operator_highlights(db: &Db, days: i32) -> anyhow::Result<Vec<Ope
         r#"
         SELECT
             COALESCE(op.name, j.toc)                                          AS name,
-            op.brand_color                                                    AS brand_color,
             (AVG(CASE WHEN COALESCE(j.arrival_delay_mins, j.origin_delay_mins) <= 5
                  THEN 1.0 ELSE 0.0 END) * 100)::float8                        AS on_time_pct,
             COUNT(*)                                                          AS journeys
@@ -241,7 +238,7 @@ async fn query_operator_highlights(db: &Db, days: i32) -> anyhow::Result<Vec<Ope
         LEFT JOIN operators op ON op.toc = j.toc
         WHERE j.scheduled_departure > NOW() - $1::INT * INTERVAL '1 day'
           AND j.toc IS NOT NULL AND j.toc <> ''
-        GROUP BY j.toc, op.name, op.brand_color
+        GROUP BY j.toc, op.name
         HAVING COUNT(*) >= 20
         ORDER BY on_time_pct DESC NULLS LAST
         LIMIT 6
@@ -250,13 +247,20 @@ async fn query_operator_highlights(db: &Db, days: i32) -> anyhow::Result<Vec<Ope
     .bind(days)
     .fetch_all(db)
     .await?;
+    // Brand colour is derived from the operator name via the curated mapping
+    // (`operators::brand_color`) rather than the DB column, which is unseeded
+    // (all default grey) for the RDS-loaded operators.
     Ok(rows
         .into_iter()
-        .map(|r| OperatorHighlight {
-            name: r.name.unwrap_or_else(|| "—".into()),
-            brand: r.brand_color.unwrap_or_else(|| "#64748b".into()),
-            on_time_pct: r.on_time_pct.unwrap_or(0.0),
-            journeys: r.journeys,
+        .map(|r| {
+            let name = r.name.unwrap_or_else(|| "—".into());
+            let brand = crate::ingestion::operators::brand_color(&name).to_string();
+            OperatorHighlight {
+                name,
+                brand,
+                on_time_pct: r.on_time_pct.unwrap_or(0.0),
+                journeys: r.journeys,
+            }
         })
         .collect())
 }
@@ -272,7 +276,6 @@ async fn query_replay_trains(db: &Db, limit: i64) -> anyhow::Result<Vec<ReplayTr
         SELECT
             o.rid, o.uid,
             op.name                AS operator,
-            op.brand_color         AS brand_color,
             o.origin_crs,
             o.destination_crs,
             o.scheduled_departure,
@@ -294,16 +297,20 @@ async fn query_replay_trains(db: &Db, limit: i64) -> anyhow::Result<Vec<ReplayTr
     .await?;
     Ok(rows
         .into_iter()
-        .map(|r| ReplayTrain {
-            rid: r.rid,
-            operator: r.operator.unwrap_or_else(|| "—".into()),
-            brand: r.brand_color.unwrap_or_else(|| "#64748b".into()),
-            label: r.uid,
-            origin: r.origin_crs,
-            dest: r.destination_crs.unwrap_or_else(|| "—".into()),
-            scheduled: r.scheduled_departure.format("%H:%M").to_string(),
-            predicted: r.predicted_delay_mins,
-            actual: r.final_delay_mins,
+        .map(|r| {
+            let operator = r.operator.unwrap_or_else(|| "—".into());
+            let brand = crate::ingestion::operators::brand_color(&operator).to_string();
+            ReplayTrain {
+                rid: r.rid,
+                operator,
+                brand,
+                label: r.uid,
+                origin: r.origin_crs,
+                dest: r.destination_crs.unwrap_or_else(|| "—".into()),
+                scheduled: r.scheduled_departure.format("%H:%M").to_string(),
+                predicted: r.predicted_delay_mins,
+                actual: r.final_delay_mins,
+            }
         })
         .collect())
 }
