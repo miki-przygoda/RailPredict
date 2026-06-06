@@ -12,11 +12,11 @@
   /* ── App registry ─────────────────────────────────────────────── */
   var APPS = [
     { id: "map",         title: "Live Map",          icon: "🗺️",  kind: "map"  },
-    { id: "operators",   title: "Operators",          icon: "🚆",  kind: "soon" },
-    { id: "predictions", title: "Predictions",        icon: "🎯",  kind: "soon" },
-    { id: "reliability", title: "Reliability",        icon: "📊",  kind: "soon" },
-    { id: "replay",      title: "Replay",             icon: "▶️",  kind: "soon" },
-    { id: "about",       title: "About RailPredict",  icon: "ⓘ",  kind: "soon" }
+    { id: "operators",   title: "Operators",          icon: "🚆",  kind: "view" },
+    { id: "predictions", title: "Predictions",        icon: "🎯",  kind: "view" },
+    { id: "reliability", title: "Reliability",        icon: "📊",  kind: "view" },
+    { id: "replay",      title: "Replay",             icon: "▶️",  kind: "view" },
+    { id: "about",       title: "About RailPredict",  icon: "ⓘ",  kind: "view" }
   ];
 
   /* ── State ────────────────────────────────────────────────────── */
@@ -300,8 +300,43 @@
           });
         });
       }
+    } else if (def.kind === "view") {
+      // Windowed view: clone template and call OsApps initialiser
+      var tplId = "app-" + id;
+      var tpl = document.getElementById(tplId);
+      var initialised = false;
+
+      if (tpl && window.OsApps && typeof window.OsApps[id] === "function") {
+        var content = document.importNode(tpl.content, true);
+        w.body.appendChild(content);
+        // Wait for layout before calling the initialiser (some views measure DOM)
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            if (!windows[id]) return; // window may have been closed already
+            try {
+              window.OsApps[id](w.body);
+            } catch (e) {
+              if (typeof console !== "undefined" && console.warn) {
+                console.warn("OsApps." + id + "() failed:", e);
+              }
+            }
+          });
+        });
+        initialised = true;
+      }
+
+      if (!initialised) {
+        // Fallback: coming soon placeholder (template or OsApps entry missing)
+        w.body.innerHTML =
+          '<div class="soon-body">' +
+            '<div class="soon-icon">' + def.icon + '</div>' +
+            '<div class="soon-title">' + def.title + '</div>' +
+            '<div class="soon-sub">Coming soon — part of the RailPredict suite</div>' +
+            '<div class="soon-tag">Stage 4</div>' +
+          '</div>';
+      }
     } else {
-      // "Coming soon" placeholder
+      // Explicit "soon" fallback (kind === "soon")
       w.body.innerHTML =
         '<div class="soon-body">' +
           '<div class="soon-icon">' + def.icon + '</div>' +

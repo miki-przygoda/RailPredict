@@ -267,6 +267,182 @@
     text-transform: uppercase; letter-spacing: .06em;
   }
 
+  /* ── App views: shared applet scaffold ────────────────────────── */
+  .win-body .applet {
+    padding: 22px 24px;
+    overflow: auto;
+    height: 100%;
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .win-body .applet-h {
+    font: 800 18px var(--sans);
+    color: var(--ink);
+    letter-spacing: -.02em;
+    margin-bottom: 3px;
+  }
+  .win-body .applet-sub {
+    font: 400 12.5px var(--sans);
+    color: var(--muted);
+    margin-bottom: 18px;
+    line-height: 1.5;
+    max-width: 520px;
+  }
+  .win-body .applet-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .win-body .kcard-sm {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 13px;
+    min-width: 110px;
+  }
+  .win-body .kcard-sm .n { font: 800 19px var(--sans); color: var(--accent-ink); }
+  .win-body .kcard-sm .l { font: 600 9px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-top: 1px; }
+
+  /* ── Operator bar rows ─────────────────────────────────────────── */
+  .win-body .op-row {
+    display: grid;
+    grid-template-columns: 8px 1fr auto auto;
+    align-items: center;
+    gap: 0 10px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+  }
+  .win-body .op-swatch {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .win-body .op-name {
+    font: 600 12.5px var(--sans);
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .win-body .op-pct {
+    font: 700 12px var(--mono);
+    color: var(--accent-ink);
+    white-space: nowrap;
+  }
+  .win-body .op-journeys {
+    font: 500 10.5px var(--mono);
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .win-body .op-rank {
+    font: 600 10px var(--mono);
+    color: var(--dim);
+    text-align: right;
+    padding-left: 4px;
+  }
+  .win-body .section-label {
+    font: 800 9.5px var(--mono);
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    margin: 16px 0 8px;
+  }
+  .win-body .applet-note {
+    font: 400 11px var(--sans);
+    color: var(--dim);
+    line-height: 1.55;
+    margin-top: 14px;
+  }
+
+  /* ── Replay two-zone board ─────────────────────────────────────── */
+  .win-body .replay-wrap {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 12px;
+  }
+  .win-body .replay-zone-h {
+    font: 800 9.5px var(--mono);
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .win-body .replay-zone-h::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+  }
+  .win-body .replay-zone-h.t::before { background: var(--accent); }
+  .win-body .replay-zone-h.s::before { background: var(--good); }
+  .win-body .rp-counter {
+    font: 600 10.5px var(--mono);
+    color: var(--dim);
+    margin-left: auto;
+  }
+
+  /* ── About page ────────────────────────────────────────────────── */
+  .win-body .about-section {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+  }
+  .win-body .about-section h3 {
+    font: 700 13px var(--sans);
+    color: var(--ink);
+    margin-bottom: 7px;
+    letter-spacing: -.01em;
+  }
+  .win-body .about-section p {
+    font: 400 12px var(--sans);
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 6px;
+  }
+  .win-body .about-section p:last-child { margin-bottom: 0; }
+  .win-body .about-section ul {
+    margin: 6px 0 0 16px;
+    font: 400 12px var(--sans);
+    color: var(--muted);
+    line-height: 1.65;
+  }
+  .win-body .about-highlight {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 9px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+  }
+  .win-body .about-highlight h3 {
+    font: 700 13px var(--sans);
+    color: #1e3a8a;
+    margin-bottom: 6px;
+  }
+  .win-body .about-highlight p, .win-body .about-highlight ul {
+    font: 400 12px var(--sans);
+    color: #1e40af;
+    line-height: 1.6;
+  }
+  .win-body .about-highlight ul { margin: 6px 0 0 16px; }
+  .win-body .about-footer {
+    font: 500 10.5px var(--mono);
+    color: var(--dim);
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    margin-top: 4px;
+    line-height: 1.55;
+  }
+
   /* ── Map app body (reused from map_template.html) ─────────────── */
   /* Scoped to .win-body to avoid conflicts with desktop chrome */
   .win-body {
@@ -400,10 +576,120 @@
   </div>
 </template>
 
+<!-- ── Operators app ───────────────────────────────────────────────── -->
+<template id="app-operators">
+  <div class="applet">
+    <div class="applet-h">Operator league</div>
+    <div class="applet-sub">Ranked by on-time performance (departures within 5 minutes of schedule), based on all finalised journeys observed.</div>
+    <div id="op-list"></div>
+  </div>
+</template>
+
+<!-- ── Predictions app ────────────────────────────────────────────── -->
+<template id="app-predictions">
+  <div class="applet">
+    <div class="applet-h">Prediction accuracy</div>
+    <div class="applet-sub">How well the LightGBM models forecast arrival delay — measured against every finalised service where a prediction was made and the actual outcome was recorded.</div>
+    <div class="applet-row">
+      <div class="kcard-sm"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean abs. error</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">on time (≤5 min)</div></div>
+    </div>
+    <div class="about-section">
+      <h3>How predictions work</h3>
+      <p>Two models run in tandem: a <b>day-ahead</b> model that forecasts delay from timetable features and historical patterns, and a <b>real-time</b> model that updates as live Darwin messages arrive. Both export to ONNX and run locally — no round-trips to an external inference server.</p>
+      <p>The engine blends the model output with preceding-service correlation (when a train on the same origin within ±20 min is delayed, downstream trains inherit a weighted signal) and applies weather-driven volatility from the Open-Meteo wind feed.</p>
+    </div>
+    <div class="applet-note">Accuracy is measured on finalised services only. Services with no recorded actual outcome are excluded from all statistics above.</div>
+  </div>
+</template>
+
+<!-- ── Reliability app ────────────────────────────────────────────── -->
+<template id="app-reliability">
+  <div class="applet">
+    <div class="applet-h">Journey reliability</div>
+    <div class="applet-sub">Arrival punctuality and delay-recovery rates across all observed services — a measure of how consistently trains complete their journey close to schedule.</div>
+    <div class="applet-row">
+      <div class="kcard-sm"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
+    </div>
+    <div class="section-label">Most reliable operators</div>
+    <div id="rel-op-list"></div>
+    <div class="applet-note">Recovery rate counts services that departed late but arrived within 5 minutes of schedule. Reliability scores are derived from Darwin real-time messages ingested continuously.</div>
+  </div>
+</template>
+
+<!-- ── Replay app ─────────────────────────────────────────────────── -->
+<template id="app-replay">
+  <div class="applet">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;">
+      <div class="applet-h" style="margin-bottom:0">Predicted → actual</div>
+      <span class="rp-counter" id="rp-frame"></span>
+    </div>
+    <div class="applet-sub" style="margin-bottom:10px">Live replay of board snapshots — each frame shows active tracking predictions and freshly-settled outcomes.</div>
+    <div class="replay-wrap">
+      <div>
+        <div class="replay-zone-h t">Tracking now</div>
+        <div id="rp-track"><p class="empty">—</p></div>
+      </div>
+      <div>
+        <div class="replay-zone-h s">Just settled</div>
+        <div id="rp-settled"><p class="empty">—</p></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- ── About app ──────────────────────────────────────────────────── -->
+<template id="app-about">
+  <div class="applet">
+    <div class="applet-h">About RailPredict</div>
+    <div class="applet-sub">An intelligent buffer between passengers and the rail network — built to make delay information instant, accurate, and actionable.</div>
+
+    <div class="about-section">
+      <h3>Every delay is a customer moment</h3>
+      <p>UK rail carries hundreds of millions of passenger journeys each year. When a train runs late, the disruption cascades: missed connections, rebooking queues, and support calls that arrive long after the moment of impact has passed.</p>
+      <p>A ticket retailer learns about disruption the same way the passenger does — by watching it happen. RailPredict closes that gap by shadowing the live Darwin feed and predicting outcomes <em>before</em> the passenger reaches the platform.</p>
+    </div>
+
+    <div class="about-section">
+      <h3>What the engine does</h3>
+      <p>RailPredict runs a three-tier data pipeline:</p>
+      <ul>
+        <li><b>Tier A — Static:</b> timetables, station names, and route geometry, loaded from GTFS/CIF weekly. Zero cost at query time.</li>
+        <li><b>Tier B — Predictive:</b> two LightGBM ONNX models (day-ahead and real-time) trained on historical Darwin delay records. Blended with weather-volatility signals and preceding-service correlation. Runs entirely on local compute.</li>
+        <li><b>Tier C — Transactional:</b> live GBR Darwin push-port stream for exact real-time positions and platform changes. Used only when Tier B confidence falls below threshold or the passenger is at the point of purchase.</li>
+      </ul>
+      <p>The result: most queries are served from local state in under a millisecond. A live GBR API call is the exception, not the rule.</p>
+    </div>
+
+    <div class="about-highlight">
+      <h3>With your ticketing data →</h3>
+      <p>Connect a ticket retailer's booking feed and the engine unlocks proactive, per-passenger intelligence:</p>
+      <ul>
+        <li><b>Proactive rebooking:</b> surface the next viable service the moment a delay makes the booked connection unreachable — before the customer opens the app.</li>
+        <li><b>Point-of-sale reliability:</b> show a live punctuality score for the specific service being purchased, grounded in recent actual outcomes rather than static timetable data.</li>
+        <li><b>Automated Delay Repay:</b> match finalised delay outcomes directly to affected bookings and trigger compensation claims without customer action.</li>
+      </ul>
+    </div>
+
+    <div class="about-section">
+      <h3>Technical posture</h3>
+      <p>Written in Rust for predictable latency and low resource footprint. The full pipeline — Darwin STOMP ingestion, ONNX inference, PostgreSQL persistence, and this UI — ships as a single Docker appliance. Bring a Darwin licence, a PostgreSQL instance, and optionally a ticketing feed; the engine handles the rest.</p>
+    </div>
+
+    <div class="about-footer">
+      Generated <span data-fill="generated_at">—</span> · RailPredict · Darwin data © Network Rail · fully offline snapshot
+    </div>
+  </div>
+</template>
+
 <!-- ── Script injection points (generator replaces these) ─────────── -->
 <script>__D3__</script>
 <script>window.GB_OUTLINE=__GB_OUTLINE__;window.GB_RAIL=__GB_RAIL__;window.MAP=__MAP_DATA__;</script>
 <script>/* __MAP_JS__ */</script>
+<script>/* __APPS_JS__ */</script>
 <script>/* __OS_JS__ */</script>
 
 </body>
