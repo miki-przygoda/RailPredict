@@ -2,9 +2,16 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.17.3" -- 06/06/2026**
+**version = "1.17.4" -- 06/06/2026**
 
 ---
+
+## v1.17.4 — 06/06/2026
+
+Demo replay: route pinned right + more journeys. The from→to stations now sit in
+a fixed right-hand column on every card (identity left, prediction centre, route
+right) so rows line up cleanly. More journeys on the board too — 8 tracking / 4
+just-settled per frame, drawing from 64 trains (65 frames) for a livelier replay.
 
 ## v1.17.3 — 06/06/2026
 
