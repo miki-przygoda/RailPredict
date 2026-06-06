@@ -99,6 +99,10 @@ pub struct PipelineContext {
     /// UIDs we've already written a `services.toc` row for (Phase 2). Per-uid, persists for
     /// the process lifetime (uids recur daily) — bounded by the ~74k distinct UIDs.
     pub persisted_services: Arc<DashSet<String>>,
+    /// RIDs we've already recorded a cancellation for. Cancelled trains don't move, so they
+    /// rarely deactivate while tracked (they get evicted) — we persist on schedule-detection,
+    /// deduped here so a schedule replay doesn't double-count.
+    pub persisted_cancellations: Arc<DashSet<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +131,7 @@ impl IngestionPipeline {
             db,
             persisted_predictions: Arc::new(DashSet::new()),
             persisted_services: Arc::new(DashSet::new()),
+            persisted_cancellations: Arc::new(DashSet::new()),
         };
         Self { stomp, ctx }
     }
@@ -439,6 +444,12 @@ impl IngestionPipeline {
                     let sched_uid = sched.uid.clone();
                     let sched_toc = sched.toc.clone();
                     let sched_version = msg_ts.timestamp_millis() as u64;
+                    // Whole-service cancellation: every planned call carries can="true". Build the
+                    // cancelled-journey record now, before `sched` moves into the update closure.
+                    let cancelled_record = (!sched.calls.is_empty()
+                        && sched.calls.iter().all(|c| c.is_cancelled))
+                        .then(|| build_cancelled_journey(&sched))
+                        .flatten();
                     // Register the train from its plan if unseen, so toc + the planned calling
                     // pattern are captured even before the first TS message arrives.
                     if self.ctx.registry.get(&rid).is_none()
@@ -501,6 +512,31 @@ impl IngestionPipeline {
                                 crate::db::operators::upsert_service_toc(&db_clone, &uid, &toc).await
                             {
                                 tracing::warn!(error = %e, uid = %uid, "Failed to persist service toc");
+                            }
+                        });
+                    }
+
+                    // Persist the cancellation now (deduped) — cancelled trains rarely deactivate
+                    // while tracked, so the journey/cancellation would otherwise never be recorded.
+                    if let (Some(record), Some(db)) = (cancelled_record, self.ctx.db.as_ref())
+                        && self.ctx.persisted_cancellations.insert(record.rid.clone())
+                    {
+                        let db_clone = db.clone();
+                        let uid = record.uid.clone();
+                        let origin = record.origin_tpl.clone();
+                        let sched_dep = record.scheduled_departure;
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                crate::db::journeys::insert_journey(&db_clone, &record, &[]).await
+                            {
+                                tracing::warn!(error = %e, "Failed to persist cancelled journey");
+                            }
+                            if let Err(e) = crate::db::cancellations::record_cancellation(
+                                &db_clone, &uid, &origin, sched_dep,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, "Failed to record cancellation");
                             }
                         });
                     }
@@ -772,6 +808,47 @@ fn build_journey_record(
         wind_mph: status.volatility.wind_speed_mph,
     };
     Some((record, calls))
+}
+
+/// Build a finalised journey record for a whole-service cancellation, from the `schedule` alone
+/// (a cancelled train doesn't run, so there are no actuals). `None` without a uid or a scheduled
+/// origin departure.
+fn build_cancelled_journey(
+    sched: &parser::ScheduleUpdate,
+) -> Option<crate::db::journeys::JourneyRecord> {
+    use crate::db::journeys::JourneyRecord;
+    let uid = sched.uid.clone()?;
+    let first = sched.calls.first()?;
+    let last = sched.calls.last()?;
+    let sched_dep = first.sched_dep?;
+    Some(JourneyRecord {
+        rid: sched.rid.as_str().to_string(),
+        uid,
+        ssd: sched.ssd,
+        weekday: sched_dep.weekday().num_days_from_monday() as i16,
+        departure_hour: sched_dep.hour() as i16,
+        toc: sched.toc.clone(),
+        train_category: sched.train_category.clone(),
+        origin_tpl: first.tpl.clone(),
+        destination_tpl: Some(last.tpl.clone()),
+        scheduled_departure: sched_dep,
+        actual_departure: None,
+        origin_delay_mins: None,
+        arrival_delay_mins: None,
+        late_reason_code: None,
+        cancel_reason_code: sched.cancel_reason.as_ref().map(|r| r.code as i16),
+        reason_tiploc: sched.cancel_reason.as_ref().and_then(|r| r.tiploc.clone()),
+        reason_class: 0,
+        was_cancelled: true,
+        partial_cancel: false,
+        n_calls: sched.calls.len() as i16,
+        max_delay_mins: None,
+        min_delay_mins: None,
+        recovered_mins: None,
+        origin_platform: None,
+        platform_confirmed: None,
+        wind_mph: None,
+    })
 }
 
 // ---------------------------------------------------------------------------
