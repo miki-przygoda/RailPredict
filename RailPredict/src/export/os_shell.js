@@ -120,6 +120,7 @@
     var w = windows[id];
     if (!w) return;
     if (w.dragAbort) w.dragAbort.abort(); // remove this window's document drag listeners
+    if (w.body && w.body._replayTimer) clearInterval(w.body._replayTimer); // stop replay cycling
     w.el.parentNode && w.el.parentNode.removeChild(w.el);
     delete windows[id];
     updateDockDot(id);
