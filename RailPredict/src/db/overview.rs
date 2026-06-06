@@ -1,8 +1,11 @@
 //! Read-only aggregate metrics for the overview cockpit (`/`).
 //!
-//! All queries bound on a rolling window of `hours` and apply the same delay
-//! sanity filter (`delay_mins BETWEEN -120 AND 600`) used elsewhere, so the
-//! severe-delay tail of the Darwin feed can't distort the headline figures.
+//! Two sources, both bound on a rolling window of `hours`:
+//!   - the headline delay figures aggregate `delay_history` and apply the standard delay
+//!     sanity filter (`delay_mins BETWEEN -120 AND 600`), so the severe-delay tail of the
+//!     Darwin feed can't distort them;
+//!   - `journey_metrics` reads the `journeys` table (arrival on-time %, avg arrival delay,
+//!     recovery rate) — whole-journey outcomes that delay_history doesn't carry.
 
 use sqlx::FromRow;
 

@@ -8,9 +8,15 @@
 //! Each time-varying field carries a `last_updated` timestamp so stale-data detection
 //! can be applied per-field rather than per-record.
 //!
-//! ## Phase 2 (AdvancedAnalytics): `calling_points` added
-//! Stores the full TIPLOC sequence for the service, populated from Darwin TS `<Location>`
-//! elements. Used by `TrainRegistry`'s reverse TIPLOC index for cascade propagation.
+//! ## Full-Journey Capture: the `journey` accumulator
+//! The primary analytics structure is `journey: BTreeMap<u16, CallObservation>` — the whole
+//! per-call journey, accumulated across `schedule` + partial TS messages and keyed by a stable
+//! per-TIPLOC `seq` (`tpl_seq`). Each `CallObservation` merges sticky (never overwrite a known
+//! actual/cancel with a later null); on deactivation the journey is snapshotted to the
+//! `journeys` / `journey_calls` tables. `toc` / `train_category` / reason codes ride alongside.
+//!
+//! The older `calling_points: Vec<(TIPLOC, scheduled_arr)>` field is retained separately for
+//! `TrainRegistry`'s reverse TIPLOC index (cascade propagation, Tier-C-staged).
 
 use std::collections::{BTreeMap, HashMap};
 

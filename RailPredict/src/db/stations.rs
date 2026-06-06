@@ -4,7 +4,9 @@
 //! `services` (on `uid`) where route O–D pairs are needed. All queries apply
 //! the standard delay sanity filter (`delay_mins BETWEEN -120 AND 600`).
 //!
-//! Populated by Phase 5 (station-explorer data layer).
+//! Both `StationSummary` and the per-service `ServiceRow` carry `std_delay_mins`
+//! (`STDDEV_SAMP` of delay) — the spread that drives the Reliable/Variable
+//! reliability score on the explorer, not just the mean.
 
 use super::Db;
 
