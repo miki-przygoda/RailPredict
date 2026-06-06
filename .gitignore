@@ -34,8 +34,7 @@ models/feature_meta.json
 # Python venv for ML training
 scripts/.venv/
 
-# Dataset export — regenerate with `python3 scripts/export_dataset.py`
-# Push the Parquet and README to HuggingFace, not git
+# Local training-data artefacts — internal only, never committed
 fetch_progress_shard*.txt
 /dataset
 docs/railpredict-site-integration.md

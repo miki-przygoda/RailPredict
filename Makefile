@@ -26,7 +26,7 @@ ingest:
 	docker compose --profile ingest run --rm ingest
 
 # Export a static HTML snapshot of the last 7 days' delay and prediction data.
-# Output: docs/index.html  (open in any browser, or deploy to Vercel/GitHub Pages).
+# Output: docs/index.html  (an internal report — open in any browser).
 # Requires a running DB with delay history — start the server first with `make up`.
 # Override the window with: make export DAYS=14
 DAYS ?= 7
