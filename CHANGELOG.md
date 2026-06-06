@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.5" -- 06/06/2026**
+**version = "1.16.6" -- 06/06/2026**
 
 ---
+
+## v1.16.6 — 06/06/2026
+
+Fix (cancellation capture, part 2): persist on detection, not deactivation. v1.16.5 *detected*
+cancellations (the live "Cancelled" count worked) but nothing reached the tables — cancelled
+trains don't move, so they're evicted from the registry before any `deactivated` ever arrives,
+and the deactivation-gated journey/cancellation capture missed them entirely. Now a whole-service
+cancellation (all `schedule` calls `can="true"`) is persisted immediately from the schedule
+handler, deduped per RID: a cancelled `journeys` row (`was_cancelled=true`, no actuals) + a
+`cancellations` row. `build_cancelled_journey` builds the record from the schedule alone.
 
 ## v1.16.5 — 06/06/2026
 
