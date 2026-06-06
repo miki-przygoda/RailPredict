@@ -20,7 +20,9 @@ window.RailPredictMap = { init: function () {
   var W = Math.max(Math.round(rect.width), 240), H = Math.max(Math.round(rect.height), 360);
   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
 
-  var projection = d3.geoConicConformal().rotate([4, 0]).center([0, 56.5]).fitSize([W, H], outline);
+  // Mercator gives a clean, recognisable GB silhouette at this scale; fitSize
+  // auto-centres + scales the outline to the SVG (padded a touch).
+  var projection = d3.geoMercator().fitExtent([[14, 14], [W - 14, H - 14]], outline);
   var path = d3.geoPath(projection);
 
   function el(tag, attrs) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); return e; }
@@ -30,10 +32,10 @@ window.RailPredictMap = { init: function () {
   var gDots = el("g", {}); svg.appendChild(gDots);
 
   (outline.features || [outline]).forEach(function (f) {
-    gLand.appendChild(el("path", { d: path(f) || "", fill: "#16273d", stroke: "#2b557e", "stroke-width": "0.8" }));
+    gLand.appendChild(el("path", { d: path(f) || "", fill: "#1d3a63", stroke: "#5b93d6", "stroke-width": "1", "stroke-linejoin": "round" }));
   });
   if (rail) (rail.features || [rail]).forEach(function (f) {
-    gRail.appendChild(el("path", { d: path(f) || "", fill: "none", stroke: "#33506f", "stroke-width": "0.5", "stroke-opacity": "0.7" }));
+    gRail.appendChild(el("path", { d: path(f) || "", fill: "none", stroke: "#4a76ab", "stroke-width": "0.6", "stroke-opacity": "0.5" }));
   });
 
   function colorFor(v) { return v <= 0 ? "#34d399" : v <= 5 ? "#f2c14e" : "#f04545"; }
