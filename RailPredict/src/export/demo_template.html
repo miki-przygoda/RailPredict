@@ -1,11 +1,163 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>RailPredict — Demo</title></head>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RailPredict — Turning delay data into customer experience</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#0f172a; --muted:#475569; --dim:#94a3b8;
+    --line:#e5e7eb; --soft:#f5f6f8; --accent:#2563eb; --accent-ink:#1e3a8a;
+    --good:#16a34a; --good-bg:#dcfce7; --bad:#dc2626; --bad-bg:#fee2e2;
+    --proj:#b45309; --proj-bg:#fef3c7;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 28px}
+  section{padding:96px 0;border-top:1px solid var(--line)}
+  section:first-child{border-top:0}
+  .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+  .eyebrow{font:700 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+  h1{font:800 clamp(34px,5vw,60px)/1.05 var(--sans);letter-spacing:-.02em;margin:14px 0}
+  h2{font:800 clamp(26px,3.4vw,40px)/1.1 var(--sans);letter-spacing:-.02em;margin:10px 0 14px}
+  p.lead{font-size:clamp(17px,2vw,21px);color:var(--muted);max-width:62ch}
+  .badge{display:inline-block;font:700 11px var(--mono);letter-spacing:.06em;padding:3px 9px;border-radius:6px}
+  .b-real{color:var(--good);background:var(--good-bg)}
+  .b-proj{color:var(--proj);background:var(--proj-bg)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:28px}
+  @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  .kpi{background:var(--soft);border:1px solid var(--line);border-radius:var(--r);padding:20px}
+  .kpi .n{font:800 30px var(--sans);letter-spacing:-.02em;color:var(--accent-ink)}
+  .kpi .l{font-size:13px;color:var(--muted);margin-top:4px}
+  .hero-n{font:800 clamp(56px,9vw,104px)/1 var(--sans);letter-spacing:-.03em;color:var(--accent-ink)}
+  .ops{display:flex;flex-direction:column;gap:8px;margin-top:22px}
+  .op{display:flex;align-items:center;gap:12px;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:11px 14px}
+  .op .bar{width:4px;align-self:stretch;border-radius:4px;background:var(--op,#64748b)}
+  .op .nm{font-weight:600}
+  .op .pct{margin-left:auto;font:700 15px var(--mono)}
+  .op .ct{font:600 12px var(--mono);color:var(--dim);width:84px;text-align:right}
+  .vis-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
+  @media(max-width:760px){.vis-grid{grid-template-columns:1fr}}
+  .vcard{background:#eef2ff;border:1px dashed #93c5fd;border-radius:var(--r);padding:20px}
+  .vcard .n{font:800 30px var(--sans);color:var(--accent)}
+  .vcard .l{font-size:13px;color:var(--muted);margin-top:6px}
+  .note{font-size:13px;color:var(--proj);margin-top:14px;font-style:italic}
+  .cta{display:inline-block;margin-top:20px;background:var(--accent);color:#fff;font-weight:700;
+    padding:13px 24px;border-radius:10px;text-decoration:none}
+  .own-list{margin:18px 0 0;padding-left:20px;color:var(--muted)}
+  .own-list li{margin:6px 0}
+  footer{padding:40px 0;color:var(--dim);font-size:13px;text-align:center}
+  /* ---- replay board (light-themed mirror of static/board.js markup) ---- */
+  .replay-shell{margin-top:26px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#fff}
+  .replay-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--soft)}
+  .replay-bar .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .replay-bar .t{font:700 13px var(--mono)}
+  .replay-bar .f{margin-left:auto;font:600 12px var(--mono);color:var(--dim)}
+  .zones{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px}
+  @media(max-width:760px){.zones{grid-template-columns:1fr}}
+  .zone-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .zone-head h3{font:700 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .zone-head .ct{font:600 12px var(--mono);color:var(--dim)}
+  .tgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:520px){.tgrid{grid-template-columns:1fr}}
+  .tcard{position:relative;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 13px;overflow:hidden}
+  .tcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--op,#94a3b8)}
+  .tcard.fresh{animation:slidein .5s ease}
+  @keyframes slidein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .tc-top{display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
+  .tc-hc{font:700 13px var(--mono)}
+  .tc-op{font:600 10.5px var(--mono);color:var(--dim);text-transform:uppercase}
+  .tc-route{display:flex;align-items:center;gap:4px;margin-bottom:8px}
+  .tc-route code{font:700 13.5px var(--mono)}
+  .tc-route .ar{color:var(--dim);margin:0 4px}
+  .tc-bot{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .tc-sched{font:600 11.5px var(--mono);color:var(--dim)}
+  .pchip{font:700 11.5px var(--mono);padding:3px 9px;border-radius:999px}
+  .p-ontime{color:var(--good);background:var(--good-bg)}
+  .p-min{color:var(--proj);background:var(--proj-bg)}
+  .p-late{color:var(--bad);background:var(--bad-bg)}
+  .settled-row{display:flex;align-items:center;gap:7px}
+  .pa{font:700 11.5px var(--mono)}.pa.pred{color:var(--muted)}.pa.act{color:var(--ink)}
+  .acc{font:700 10.5px var(--mono);padding:2px 7px;border-radius:999px;margin-left:auto}
+  .acc-good{color:var(--good);background:var(--good-bg)}
+  .acc-ok{color:var(--accent);background:#dbeafe}
+  .acc-bad{color:var(--bad);background:var(--bad-bg)}
+  .panel-empty{color:var(--dim);font-size:13px;padding:18px 0;text-align:center}
+</style>
+</head>
 <body>
-<section id="beat-hero"></section>
-<section id="beat-gap"></section>
-<section id="beat-proof"></section>
-<section id="beat-replay"></section>
-<section id="beat-vision"></section>
-<section id="beat-own"></section>
+
+<section id="beat-hero" class="reveal"><div class="wrap">
+  <span class="eyebrow">RailPredict</span>
+  <h1>Every delay is a customer moment.</h1>
+  <p class="lead">We turn the UK rail delay firehose into decisions — predicting which journeys won't run to time before your customer feels it.</p>
+  <div class="hero-n" data-fill="hero_number">—</div>
+  <p class="lead">departures analysed on the live national feed.</p>
+</div></section>
+
+<section id="beat-gap" class="reveal"><div class="wrap">
+  <span class="eyebrow">The gap</span>
+  <h2>You sell the journey. The delay is someone else's surprise.</h2>
+  <p class="lead">Across your operators and Uber you sell millions of journeys. When one is disrupted it becomes a refund, a complaint, a dented trust score — and today you find out <em>after</em> the passenger does. That lag is the opportunity.</p>
+</div></section>
+
+<section id="beat-proof" class="reveal"><div class="wrap">
+  <span class="badge b-real">REAL · LIVE DATA</span>
+  <h2>The engine already works.</h2>
+  <p class="lead">Live numbers from the running system on the national Darwin feed — not a slide.</p>
+  <div class="kpis">
+    <div class="kpi"><div class="n" data-fill="hero_number">—</div><div class="l">Departures analysed</div></div>
+    <div class="kpi"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">On time (≤5 min)</div></div>
+    <div class="kpi"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">Mean prediction error</div></div>
+    <div class="kpi"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">Predictions within 5 min</div></div>
+  </div>
+  <div class="ops" id="op-list"></div>
+</div></section>
+
+<section id="beat-replay" class="reveal"><div class="wrap">
+  <span class="badge b-real">REAL · LIVE REPLAY</span>
+  <h2>Watch it call the delay — then be proven right.</h2>
+  <p class="lead">A recorded window of the live board. Each train appears with a prediction, then settles to its actual arrival and an accuracy score. Real predictions, real outcomes.</p>
+  <div class="replay-shell">
+    <div class="replay-bar"><span class="dot"></span><span class="t">Predicted → actual</span><span class="f" id="replay-frame">—</span></div>
+    <div class="zones" id="replay-board"><p class="panel-empty">Replay loads as you scroll here…</p></div>
+  </div>
+</div></section>
+
+<section id="beat-vision" class="reveal"><div class="wrap">
+  <span class="badge b-proj">PROJECTED · WITH YOUR DATA</span>
+  <h2>Now point it at your ticket sales.</h2>
+  <p class="lead">The same engine, joined to your ticketing data, turns a delay into a save: spot the journeys you've already sold that are about to be disrupted, and act before departure.</p>
+  <div class="vis-grid">
+    <div class="vcard"><div class="n" data-fill="projected.disrupted_tickets_pct" data-suffix="%">—</div><div class="l">of tickets sold today are on routes we predict will be disrupted — notify &amp; rebook first</div></div>
+    <div class="vcard"><div class="n" data-fill="projected.recoverable_revenue">—</div><div class="l">recoverable revenue/yr via automated Delay Repay &amp; proactive rebooking</div></div>
+    <div class="vcard"><div class="n" data-fill="projected.churn_reduction_pct" data-suffix="%">—</div><div class="l">fewer disruption-driven churned customers</div></div>
+  </div>
+  <p class="note" data-fill="projected.note">—</p>
+</div></section>
+
+<section id="beat-own" class="reveal"><div class="wrap">
+  <span class="badge" style="color:var(--accent);background:#dbeafe">THE PRODUCT</span>
+  <h2>Own it, run it, grow it.</h2>
+  <ul class="own-list">
+    <li>Ships as a Docker appliance — <code>docker compose up</code> and it runs.</li>
+    <li>Ingests Darwin + your ticketing + GBR data out of the box.</li>
+    <li>Models retrain on your data, so accuracy compounds with your scale.</li>
+  </ul>
+  <p class="lead" style="margin-top:18px">Buy the IP, and I build it out with you.</p>
+  <a class="cta" href="mailto:mikolaj.mikuliszyn@gmail.com">Let's talk →</a>
+</div></section>
+
+<footer>Generated <span data-fill="generated_at">—</span> · RailPredict · Proprietary &amp; confidential</footer>
+
 <script>window.DEMO = __DEMO_DATA__;</script>
-</body></html>
+<script>/* __DEMO_JS__ */</script>
+</body>
+</html>
