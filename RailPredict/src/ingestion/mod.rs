@@ -426,7 +426,7 @@ impl IngestionPipeline {
 
                     // Emit state-change event for emergency promotions.
                     if is_cancelled || is_delayed {
-                        tracing::info!(rid = %rid, cancelled = is_cancelled, delayed = is_delayed, "Emergency Critical promotion");
+                        tracing::debug!(rid = %rid, cancelled = is_cancelled, delayed = is_delayed, "Emergency Critical promotion");
                         let event = StateChangeEvent {
                             train_id: rid,
                             old_state: TrainState::Active,
@@ -558,7 +558,7 @@ impl IngestionPipeline {
                     }
 
                     let rid = deact.rid.clone();
-                    tracing::info!(rid = %rid, "Train deactivated — removing from registry");
+                    tracing::debug!(rid = %rid, "Train deactivated — removing from registry");
 
                     // Capture the final delay (to close out the prediction_outcomes row)
                     // and, if the service was cancelled, the cancellation pattern — both

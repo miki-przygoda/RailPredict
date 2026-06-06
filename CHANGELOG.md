@@ -2,9 +2,16 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.6" -- 06/06/2026**
+**version = "1.16.7" -- 06/06/2026**
 
 ---
+
+## v1.16.7 — 06/06/2026
+
+Chore: trim hot-path logging. The per-deactivation ("Train deactivated — removing from registry")
+and per-delayed-train ("Emergency Critical promotion") lines were at INFO, flooding the log
+(thousands of lines per hour). Both dropped to `debug`; the once-per-connection pipeline
+running/stopped lines stay at INFO.
 
 ## v1.16.6 — 06/06/2026
 
