@@ -18,8 +18,12 @@ ignore = [
     { id = "RUSTSEC-2024-0370", reason = "transitive dep of maud v0.26.0 with no upstream fix" },
 ]
 
+# The allow-list governs THIRD-PARTY DEPENDENCY licences only. RailPredict itself
+# is proprietary (LicenseRef-Proprietary, publish = false); `private.ignore` keeps
+# cargo-deny from evaluating the workspace crate against this permissive list.
 [licenses]
 version = 2
+private = { ignore = true }
 allow = [
     "MIT",
     "MIT-0",

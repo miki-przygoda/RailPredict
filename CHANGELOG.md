@@ -2,9 +2,30 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.8" -- 06/06/2026**
+**version = "1.16.9" -- 06/06/2026**
 
 ---
+
+## v1.16.9 — 06/06/2026
+
+Repositioning: from public portfolio/open-source piece to a privately-owned product.
+- **License → proprietary.** Replaced the Apache-2.0 `LICENSE` with an "All Rights
+  Reserved" proprietary licence (© 2026 Mikolaj Mikuliszyn). `Cargo.toml` is now
+  `license = "LicenseRef-Proprietary"` + `publish = false`; `deny.toml` gains
+  `[licenses] private.ignore = true` so the proprietary workspace crate isn't measured
+  against the third-party dependency allow-list.
+- **Removed the public-dataset surface.** Deleted `scripts/export_dataset.py` and the
+  HuggingFace dataset card; stripped the "published to HuggingFace / uk-rail-delays"
+  references from `docs/model-performance.md`, `CLAUDE.md`, and `.gitignore`. The
+  training corpus is now described as internal-only.
+- **Removed portfolio/contributor framing.** Deleted `CONTRIBUTING.md` and the README
+  "AI-Assisted Development" section; replaced it with a proprietary **License** section.
+  Reworded the `make export` comment so it no longer suggests public GitHub Pages/Vercel
+  deployment.
+
+> Owner follow-ups (cannot be done from the repo): privatize or delete the public
+> HuggingFace dataset `miki-przygoda/uk-rail-delays`, and set the GitHub repository
+> visibility to private.
 
 ## v1.16.8 — 06/06/2026
 

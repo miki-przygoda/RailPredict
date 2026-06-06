@@ -1,6 +1,6 @@
 # RailPredict
 
-**v1.16.8 — June 2026**
+**v1.16.9 — June 2026**
 
 A UK rail data engine written in Rust. RailPredict subscribes directly to the **Darwin Push Port** — National Rail's STOMP-based firehose of every train movement in the country — and uses that stream to build an intelligent buffer between users and the Great British Railways API. The vast majority of queries are answered from local state, in-memory cache, and statistical prediction; the only call that ever hits GBR directly is the one that genuinely requires it: final ticket purchase.
 
@@ -181,8 +181,7 @@ scripts/            Python ML training, data export, and DB seeding utilities
 | [`docs/improvements.md`](docs/improvements.md) | Full index of architectural decisions made across all epics. Treat as constraints before touching any module. |
 | [`docs/model-performance.md`](docs/model-performance.md) | ML model accuracy breakdown — MAE, tier distribution, feature importance. |
 | [`docs/model-improvement-plan.md`](docs/model-improvement-plan.md) | Rationale behind the v1.12.0 LightGBM improvements (bias correction, feature fixes, hyperparameter scaling). |
-| [`CLAUDE.md`](CLAUDE.md) | AI session seed — full architecture reference, module map, and key patterns. Useful as a human reference too. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup guide, code conventions, PR process, and notes on AI-assisted development. |
+| [`CLAUDE.md`](CLAUDE.md) | Architecture reference — full module map, key patterns, and engineering conventions. |
 | [`SECURITY.md`](SECURITY.md) | Secrets inventory and rotation procedure. |
 
 ---
@@ -207,17 +206,13 @@ scripts/            Python ML training, data export, and DB seeding utilities
 
 ---
 
-## AI-Assisted Development
+## License
 
-RailPredict was built with [Claude Code](https://claude.ai/code) — Anthropic's CLI for agentic software development. The bulk of the implementation, from the Darwin ingestion pipeline to the LightGBM ONNX inference layer, was written in pair with Claude Sonnet.
+**Proprietary — © 2026 Mikolaj Mikuliszyn. All rights reserved.**
 
-**`CLAUDE.md`** is the session seed that gives Claude full architectural context before it writes any code — module map, key patterns, concurrency model, versioning protocol. It is the single most important file for understanding the project's design decisions in one place, and doubles as a human architecture reference.
+RailPredict is closed-source commercial software. The source code, models, and
+datasets are confidential and may not be used, copied, modified, or distributed
+without prior written permission. See [`LICENSE`](LICENSE) for the full terms.
 
-If you want to contribute using Claude Code:
-
-```bash
-# Claude Code reads CLAUDE.md automatically at session start
-claude   # from the repo root
-```
-
-The warm-up order in `CLAUDE.md` tells Claude what to read first. For significant new features, use `/plan` before implementation — Claude will propose and seek approval on a design before writing anything. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for more detail.
+Underlying UK rail data is sourced from the National Rail Darwin Push Port feed
+under Network Rail's data-feed terms and remains subject to its own licence.

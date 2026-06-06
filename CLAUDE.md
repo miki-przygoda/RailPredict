@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.16.8" -- 06/06/2026**
+**version = "1.16.9" -- 06/06/2026**
 
 ---
 
@@ -46,9 +46,8 @@ This is strict — follow it exactly:
 
 ```
 RailPredict/                        ← repo root
-├── CLAUDE.md                       ← this file; AI session seed + architecture reference
-├── CONTRIBUTING.md                 ← contributor guide; read before opening a PR
-├── README.md                       ← project vision + current status table
+├── CLAUDE.md                       ← this file; architecture reference + engineering conventions
+├── README.md                       ← product overview + current status table
 ├── TODO.md                         ← active sprint tracker + remaining epics
 ├── CHANGELOG.md                    ← completed epics log; updated on minor version bumps
 ├── SECURITY.md                     ← secrets rotation procedure + security posture
@@ -65,7 +64,6 @@ RailPredict/                        ← repo root
 │   └── index.html                  ← generated static snapshot (make export); not hand-edited
 ├── scripts/
 │   ├── compare_models.py           ← LightGBM training + ONNX export; run to retrain models
-│   ├── export_dataset.py           ← export delay_history to Parquet + HuggingFace README
 │   ├── fetch_hsp_history.py        ← bulk HSP historical delay fetch (route-based O-D pairs)
 │   ├── run_hsp_fetch.sh            ← launcher for 4 parallel HSP shards
 │   ├── seed_history.py             ← synthetic delay backfill (use before live data exists)
@@ -207,7 +205,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 ### ML Pipeline (`scripts/`)
 - `compare_models.py` trains day-ahead and real-time LightGBM models, applies equal-tier sample weighting to correct the severe-delay bias in the Darwin feed, and exports to ONNX
 - Feature count is fixed: 14 for day-ahead, 22 for real-time (= day-ahead + 8 live signals) — changing this requires matching updates to `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`)
-- `export_dataset.py` regenerates `dataset/delay_history.parquet` and the HuggingFace README from the live DB; run after each retrain
+- The training corpus stays internal (`delay_history` + the frozen `railpredict` corpus DB); it is not exported or distributed
 
 ---
 
