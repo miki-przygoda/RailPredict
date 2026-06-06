@@ -49,7 +49,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::{StationIndex, TrainRegistry},
     db::Db,
-    frontend::{dashboard, dev, detail, explore, live, operators, predictions, search, stations},
+    frontend::{dashboard, dev, detail, explore, live, map, operators, predictions, search, stations},
     ingestion::gtfs::IngestStatus,
     state_machine::StateChangeEvent,
 };
@@ -199,6 +199,8 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/operators/:toc", get(operators::operator_page))
         .route("/live", get(live::live_page))
         .route("/ui/live/snapshot", get(live::live_snapshot))
+        .route("/map", get(map::map_page))
+        .route("/ui/map/snapshot", get(map::map_snapshot))
         .route("/predictions", get(predictions::predictions_page))
         .route("/stations", get(stations::stations_page))
         .route("/stations/:crs", get(stations::station_page))
