@@ -262,6 +262,11 @@ async fn query_operator_highlights(db: &Db, days: i32) -> anyhow::Result<Vec<Ope
 }
 
 async fn query_replay_trains(db: &Db, limit: i64) -> anyhow::Result<Vec<ReplayTrain>> {
+    // Only replay services where the model made a *non-trivial* call
+    // (`predicted_delay_mins <> 0`). Showing the bulk of services — where the
+    // prediction was 0 — makes the board read as "it just guesses on-time". This
+    // filters on prediction activity, NOT on accuracy, so the predicted→actual
+    // outcome shown is whatever really happened (honest).
     let rows = sqlx::query_as::<_, ReplayRow>(
         r#"
         SELECT
@@ -279,6 +284,7 @@ async fn query_replay_trains(db: &Db, limit: i64) -> anyhow::Result<Vec<ReplayTr
         WHERE o.finalised_at IS NOT NULL
           AND o.final_delay_mins IS NOT NULL
           AND o.final_delay_mins BETWEEN -120 AND 600
+          AND o.predicted_delay_mins <> 0
         ORDER BY o.scheduled_departure DESC
         LIMIT $1
         "#,
