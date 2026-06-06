@@ -7,6 +7,7 @@
 
 pub mod demo;
 pub mod map;
+pub mod os;
 
 use std::path::Path;
 
