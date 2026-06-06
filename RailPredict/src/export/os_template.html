@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RailPredict OS</title>
+<style>
+  /* ── Design tokens ─────────────────────────────────────────────── */
+  :root {
+    --ink: #0f172a; --muted: #475569; --dim: #94a3b8; --line: #e5e7eb; --soft: #f7f8fa;
+    --accent: #2563eb; --accent-ink: #1e3a8a; --good: #16a34a;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --mb-h: 28px;
+    --dock-h: 70px;
+    --win-radius: 11px;
+    --win-shadow: 0 24px 80px rgba(0,0,0,.55), 0 4px 16px rgba(0,0,0,.35);
+  }
+
+  /* ── Reset ─────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+
+  /* ── Desktop ───────────────────────────────────────────────────── */
+  body {
+    background: radial-gradient(ellipse at 30% 20%, #1a3a5c 0%, #0d1f35 45%, #070c14 100%);
+    color: #f1f5f9;
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  #desktop { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+  /* ── Menu bar ──────────────────────────────────────────────────── */
+  #menubar {
+    flex: 0 0 var(--mb-h);
+    height: var(--mb-h);
+    background: rgba(255,255,255,.14);
+    backdrop-filter: blur(20px) saturate(1.6);
+    -webkit-backdrop-filter: blur(20px) saturate(1.6);
+    border-bottom: 1px solid rgba(255,255,255,.12);
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255,255,255,.92);
+    z-index: 9000;
+  }
+  #menubar .brand {
+    font-weight: 700;
+    font-size: 13px;
+    margin-right: 16px;
+    letter-spacing: -.01em;
+  }
+  #menubar .brand .dot { color: #34d399; }
+  #menubar .menu-items { display: flex; gap: 1px; }
+  #menubar .menu-items span {
+    padding: 2px 9px;
+    border-radius: 4px;
+    cursor: default;
+    font-size: 13px;
+    font-weight: 400;
+    color: rgba(255,255,255,.82);
+    transition: background .1s;
+  }
+  #menubar .menu-items span:hover { background: rgba(255,255,255,.14); }
+  #menubar .menu-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(255,255,255,.82);
+  }
+  #os-clock { font-variant-numeric: tabular-nums; }
+
+  /* ── Desktop icon grid ─────────────────────────────────────────── */
+  #desktop-icons {
+    position: absolute;
+    top: calc(var(--mb-h) + 20px);
+    left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    z-index: 10;
+  }
+  .desk-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 72px;
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 6px 4px;
+    transition: background .12s;
+  }
+  .desk-icon:hover { background: rgba(255,255,255,.1); }
+  .desk-icon:active { background: rgba(255,255,255,.18); transform: scale(.96); }
+  .desk-icon .icon-glyph {
+    font-size: 30px;
+    line-height: 1;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,.4));
+  }
+  .desk-icon .icon-label {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: rgba(255,255,255,.9);
+    text-align: center;
+    text-shadow: 0 1px 4px rgba(0,0,0,.7);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 70px;
+  }
+
+  /* ── Window layer ─────────────────────────────────────────────── */
+  #windows {
+    position: absolute;
+    top: var(--mb-h);
+    left: 0;
+    right: 0;
+    bottom: var(--dock-h);
+  }
+
+  /* ── Window chrome ────────────────────────────────────────────── */
+  .win {
+    position: absolute;
+    background: #fff;
+    border-radius: var(--win-radius);
+    box-shadow: var(--win-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 320px;
+    min-height: 200px;
+    transition: box-shadow .15s;
+  }
+  .win:focus-within { box-shadow: 0 28px 90px rgba(0,0,0,.65), 0 6px 20px rgba(0,0,0,.4); }
+  .win.min { display: none; }
+  .win.max {
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 0;
+  }
+  .win-bar {
+    flex: 0 0 36px;
+    height: 36px;
+    background: #ececec;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    cursor: default;
+    border-bottom: 1px solid rgba(0,0,0,.1);
+    position: relative;
+    border-radius: var(--win-radius) var(--win-radius) 0 0;
+    user-select: none;
+  }
+  .win.max .win-bar { border-radius: 0; }
+  .win-bar .traffic { display: flex; gap: 7px; align-items: center; position: relative; z-index: 1; }
+  .win-bar .traffic button {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    position: relative;
+    transition: filter .1s;
+  }
+  .win-bar .traffic button:hover { filter: brightness(.8); }
+  .win-bar .traffic .t-close  { background: #fe5f57; }
+  .win-bar .traffic .t-min    { background: #febc2e; }
+  .win-bar .traffic .t-max    { background: #28c840; }
+  .win-bar .traffic button .tt {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 8px; color: rgba(0,0,0,.5); opacity: 0; transition: opacity .1s; line-height: 1;
+  }
+  .win-bar .traffic button:hover .tt { opacity: 1; }
+  .win-title {
+    position: absolute; left: 0; right: 0; text-align: center;
+    font: 600 12.5px var(--sans); color: #2d2d2d;
+    pointer-events: none;
+  }
+  .win-body {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    background: #f7f8fa;
+  }
+
+  /* ── Dock ─────────────────────────────────────────────────────── */
+  #dock {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    height: calc(var(--dock-h) - 12px);
+    background: rgba(255,255,255,.18);
+    backdrop-filter: blur(24px) saturate(1.8);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    border: 1px solid rgba(255,255,255,.22);
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 14px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.25);
+    z-index: 8000;
+  }
+  .dock-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+    padding: 4px 6px 0;
+    border-radius: 10px;
+    transition: transform .12s cubic-bezier(.34,1.56,.64,1), background .1s;
+    position: relative;
+  }
+  .dock-item:hover { transform: scale(1.22) translateY(-4px); background: rgba(255,255,255,.12); }
+  .dock-item:active { transform: scale(1.05); }
+  .dock-item .d-glyph {
+    font-size: 28px; line-height: 1;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,.45));
+  }
+  .dock-item .d-dot {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.85);
+    opacity: 0;
+    transition: opacity .15s;
+    margin-top: 1px;
+  }
+  .dock-item.running .d-dot { opacity: 1; }
+  .dock-divider {
+    width: 1px; height: 36px;
+    background: rgba(255,255,255,.2);
+    margin: 0 4px;
+  }
+
+  /* ── "Coming soon" placeholder ────────────────────────────────── */
+  .soon-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    color: #475569;
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .soon-body .soon-icon { font-size: 42px; opacity: .6; }
+  .soon-body .soon-title { font: 700 17px var(--sans); color: #1e293b; }
+  .soon-body .soon-sub {
+    font: 400 13px var(--sans); color: #64748b;
+    text-align: center; max-width: 260px; line-height: 1.5;
+  }
+  .soon-body .soon-tag {
+    margin-top: 8px; font: 600 10px var(--mono); color: #94a3b8;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+
+  /* ── Map app body (reused from map_template.html) ─────────────── */
+  /* Scoped to .win-body to avoid conflicts with desktop chrome */
+  .win-body {
+    --ink: #0f172a; --muted: #475569; --dim: #94a3b8; --line: #e5e7eb; --soft: #f7f8fa;
+    --accent: #2563eb; --accent-ink: #1e3a8a; --good: #16a34a;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .win-body .cc-body {
+    display: grid;
+    grid-template-columns: 230px 1fr 220px;
+    height: 100%;
+    overflow: hidden;
+  }
+  .win-body .rail { padding: 14px; overflow: auto; color: var(--ink); background: #fff; }
+  .win-body .rail.l { border-right: 1px solid var(--line); }
+  .win-body .rail.r { border-left: 1px solid var(--line); background: #fbfcfd; }
+  .win-body .rail-h {
+    font: 800 10px var(--sans); text-transform: uppercase; letter-spacing: .07em;
+    color: #64748b; display: flex; align-items: center; gap: 6px; margin: 4px 0 9px;
+  }
+  .win-body .rail-h::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+  .win-body .rail-h.t::before { background: var(--accent); }
+  .win-body .rail-h.s::before { background: var(--good); }
+  .win-body .mini {
+    display: grid; grid-template-columns: 1fr auto; gap: 1px 8px;
+    border: 1px solid var(--line); border-left: 3px solid var(--c, #94a3b8);
+    border-radius: 6px; padding: 6px 9px; margin-bottom: 6px;
+  }
+  .win-body .mini .hc { font: 700 11px var(--mono); }
+  .win-body .mini .rt { grid-column: 1; font: 600 9.5px var(--mono); color: #64748b; }
+  .win-body .mini .pa { grid-column: 2; grid-row: 1/3; align-self: center; font: 700 11px var(--mono); text-align: right; }
+  .win-body .mini .pa small { display: block; font: 700 6.5px var(--mono); color: var(--dim); text-transform: uppercase; }
+  .win-body .empty { color: var(--dim); font: 600 11px var(--mono); padding: 8px 0; }
+  .win-body .cc-map {
+    position: relative;
+    background: radial-gradient(120% 70% at 50% -5%, #13233b, #0a0e12);
+    overflow: hidden;
+  }
+  .win-body #map-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .win-body .kcard {
+    background: #fff; border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 11px; margin-bottom: 8px;
+  }
+  .win-body .kcard .n { font: 800 20px var(--sans); color: var(--accent-ink); }
+  .win-body .kcard .l { font: 600 9px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-top: 1px; }
+  .win-body .info { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 10px; }
+  .win-body .info b { color: var(--ink); }
+  .win-body .cc-foot {
+    display: flex; align-items: center; gap: 16px;
+    padding: 9px 20px; border-top: 1px solid var(--line); background: var(--soft);
+    font: 600 9.5px var(--mono); color: var(--dim); flex-wrap: wrap;
+    flex: 0 0 auto;
+  }
+  .win-body .lg { display: flex; align-items: center; gap: 5px; }
+  .win-body .lg b { width: 9px; height: 9px; border-radius: 50%; }
+
+  /* Map window body needs flex column for footer */
+  .win-body .map-wrap { display: flex; flex-direction: column; height: 100%; }
+
+  /* ── Wallpaper grain ──────────────────────────────────────────── */
+  #desktop::after {
+    content: "";
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+<div id="desktop">
+
+  <!-- ── Menu bar ─────────────────────────────────────────────── -->
+  <div id="menubar">
+    <span class="brand"><span class="dot">●</span> RailPredict</span>
+    <div class="menu-items">
+      <span>File</span>
+      <span>View</span>
+      <span>Help</span>
+    </div>
+    <div class="menu-right">
+      <span id="os-clock">00:00:00</span>
+    </div>
+  </div>
+
+  <!-- ── Desktop icons ─────────────────────────────────────────── -->
+  <div id="desktop-icons">
+    <!-- populated by os_shell.js -->
+  </div>
+
+  <!-- ── Window layer ──────────────────────────────────────────── -->
+  <div id="windows"></div>
+
+  <!-- ── Dock ──────────────────────────────────────────────────── -->
+  <div id="dock">
+    <!-- populated by os_shell.js -->
+  </div>
+
+</div>
+
+<!-- ── Map app body template ─────────────────────────────────────── -->
+<template id="app-map">
+  <div class="map-wrap">
+    <div class="cc-body">
+      <aside class="rail l">
+        <div class="rail-h t">Tracking</div>
+        <div id="rail-track"><p class="empty">…</p></div>
+        <div class="rail-h s">Just settled</div>
+        <div id="rail-settled"><p class="empty">…</p></div>
+      </aside>
+      <main class="cc-map"><svg id="map-svg"></svg></main>
+      <aside class="rail r">
+        <div class="rail-h">The numbers</div>
+        <div class="kcard"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean prediction error</div></div>
+        <div class="kcard"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
+        <div class="kcard"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
+        <div class="kcard"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
+        <div class="kcard"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
+        <div class="info"><b>What you're seeing:</b> every dot is a real train, coloured by predicted delay, gliding origin→destination; it flips to the actual as it arrives. The left rail shows the same predicted→actual outcomes.</div>
+      </aside>
+    </div>
+    <div class="cc-foot">
+      <span class="lg"><b style="background:#34d399"></b>on time</span>
+      <span class="lg"><b style="background:#f2c14e"></b>slight</span>
+      <span class="lg"><b style="background:#f04545"></b>late</span>
+      <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · map © Crown copyright/ONS (OGL) · rail © OpenStreetMap (ODbL) · D3 (ISC) · fully offline</span>
+    </div>
+  </div>
+</template>
+
+<!-- ── Script injection points (generator replaces these) ─────────── -->
+<script>__D3__</script>
+<script>window.GB_OUTLINE=__GB_OUTLINE__;window.GB_RAIL=__GB_RAIL__;window.MAP=__MAP_DATA__;</script>
+<script>/* __MAP_JS__ */</script>
+<script>/* __OS_JS__ */</script>
+
+</body>
+</html>
