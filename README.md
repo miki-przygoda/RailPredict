@@ -87,6 +87,10 @@ Per-service delay history is stored in Postgres and loaded into memory at startu
 | Rate limiting (`tower_governor`, 60 req/s per IP)                       | Complete |
 | Weather volatility promotions (Open-Meteo, configurable anchors)        | Complete |
 | Push notifications (ntfy.sh, fires on Critical state promotions)        | Complete |
+| Full-journey capture (`journeys` + `journey_calls`, cancellation capture)| Complete |
+| Operator league + drill-down (`/operators`, real per-TOC coverage)      | Complete |
+| Journey reliability surfaces (detail trajectory, station reliability, arrival/recovery KPIs) | Complete |
+| Live Board + server-free Replay (`/live`, `static/replay.html`)         | Complete |
 | Tier C wiring (live GBR purchase API)                                   | Pending  |
 
 ---

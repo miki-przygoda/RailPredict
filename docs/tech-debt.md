@@ -2,13 +2,14 @@
 
 Forward-looking ledger of deferred work. The two approved refactor surgeries (§A) and the
 full dead-code / no-value sweep (§B) from the read-only audit are **complete** — see the
-summary below and `CHANGELOG.md` (v1.12.9–v1.12.11). What remains live is the **Tier-C
-production-handoff checklist (§C)**. Full per-finding detail for everything lives in the
-audit in `data/refactor-audit/` (six files).
+summary below and `CHANGELOG.md` (v1.12.9–v1.12.11). The operator-league emptiness item
+(old §C3) was also **resolved** by the Phase-2 journeys re-point (v1.16.0). What remains
+live is the **Tier-C client/cascade handoff (§C, items C1–C2)**. Full per-finding detail
+for everything lives in the audit in `data/refactor-audit/` (six files).
 
 ---
 
-## Completed (this session)
+## Completed
 
 **Robustness pass (v1.12.9):** typed circuit-breaker routing (no more `msg.contains("503")`);
 `journey_handler` no longer leaks raw DB errors; request-path query failures now logged;
@@ -20,6 +21,13 @@ fabricating "today"; dead `Config` fields removed; startup ingest channel unifie
 - **NP association fix & wire** (`caab859`) — the filter now routes the capital `<Association>` local-name (`Conditional`) to the parser, so the turnround predecessor-delay signal flows end-to-end (covered by an integration test).
 
 **§B — dead-code / no-value sweep (v1.12.11):** removed `trains_at_tiploc`, `TrainStatus.cancellation_reason`, `ParseError::Empty`, `GtfsTrip.trip_headsign`, the `extract_stops_txt` wrapper, the orphan JSON `/stations/search` route + `trains_today`, and the stale `#[allow]`s; moved the journey self-join SQL into `db::static_data::direct_journeys`; deduped the two startup paths (`build_station_index` + `assemble_app_state`). **Kept on purpose:** `db::operators::list_operators` (Phase 3 `/operators` UI), `TrainId::headcode` (public API), `Stamped::is_stale`, and the Tier-C-staged `check_tiploc_cascade`.
+
+**Old §C3 — operator league emptiness (resolved v1.16.0–v1.16.x):** the league/drill-down
+no longer wait on a GTFS `services.toc` backfill. Phase 2 re-pointed `db/operators.rs` to
+read `toc` directly from the `journeys` table (populated by live Darwin `schedule` frames),
+and the `/operators` + `/operators/:toc` pages are registered (`api/mod.rs`). The league now
+renders real operator coverage (24 TOCs) straight from the live feed — no static-ingest
+prerequisite. Closed; only C1 (RTT client contract) and C2 (cascade wiring) remain in §C.
 
 ---
 
@@ -40,11 +48,7 @@ checklist for flipping Tier C on.
 - **Issue:** the knock-on-delay cascade detector and its registry helper are built and tested but have no production call site — staged for Tier C, currently inert. (The unrelated dead `trains_at_tiploc` probe was removed in v1.12.11.)
 - **Action:** wire into `ingestion/mod.rs` when Tier C is active.
 
-### C3. Operator league / drill-down render empty until GTFS populates `services.toc`
-- **Refs:** `db/operators.rs` (`operator_league`/drill-down filter on `services.toc`); dashboard `/operators` links in `frontend/dashboard.rs`.
-- **Issue:** the operator analytics queries filter on `services.toc`; until the GTFS static ingest runs (CLI `ingest-static`, or Dev Console → Ingest panel), `toc` is null and these render empty. The dashboard also links to a not-yet-registered `/operators` page (Phase 3 UI).
-- **Action:** run the GTFS ingest once on deploy to backfill `services.toc` + seed `operators` (small tables; `delay_history` untouched). The `/operators` links land with the Phase 3 page (see the visual-changes-plan).
-- **Audit:** `data/refactor-audit/db-layer.md` (awaiting-UI section) + `data/refactor-audit/frontend.md`.
+*(Former C3 — operator-league emptiness — is resolved; see the Completed section above.)*
 
 ---
 
