@@ -103,6 +103,7 @@ pub fn build_frames(
 }
 
 const DEMO_TEMPLATE: &str = include_str!("demo_template.html");
+const DEMO_JS: &str = include_str!("demo.js");
 
 #[derive(Serialize, Clone, Debug)]
 pub struct OperatorHighlight {
@@ -164,7 +165,10 @@ pub fn human_count(n: i64) -> String {
 /// host <script> (mirrors `export::render_html`).
 pub fn render_demo_html(data: &DemoData) -> anyhow::Result<String> {
     let json = serde_json::to_string(data)?.replace("</", "<\\/");
-    Ok(DEMO_TEMPLATE.replace("__DEMO_DATA__", &json))
+    let html = DEMO_TEMPLATE
+        .replace("__DEMO_DATA__", &json)
+        .replace("/* __DEMO_JS__ */", DEMO_JS);
+    Ok(html)
 }
 
 use sqlx::FromRow;
@@ -432,6 +436,8 @@ mod tests {
         assert!(!html.contains("__DEMO_DATA__"), "placeholder must be replaced");
         assert!(html.contains(r#"id="beat-replay""#));
         assert!(html.contains("2.5M+") || html.contains("2546226"));
+        assert!(!html.contains("/* __DEMO_JS__ */"), "JS marker must be replaced");
+        assert!(html.contains("IntersectionObserver"), "inlined JS must be present");
     }
 
     #[test]
