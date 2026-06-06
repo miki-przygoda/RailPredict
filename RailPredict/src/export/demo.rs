@@ -306,15 +306,15 @@ pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
     let (kpis, operators, replay_trains) = tokio::try_join!(
         query_kpis(db, days_i),
         query_operator_highlights(db, days_i),
-        query_replay_trains(db, 40),
+        query_replay_trains(db, 64),
     )?;
 
     // Destination arrival + recovery reliability from the journeys table
     // (journey_metrics takes hours, the demo window is days).
     let journey = crate::db::overview::journey_metrics(db, days_i * 24).await?;
 
-    // Zones are stacked full-width in the demo, so keep each frame compact.
-    let frames = build_frames(&replay_trains, 5, 3);
+    // More journeys on screen for a livelier board (8 tracking / 4 just-settled).
+    let frames = build_frames(&replay_trains, 8, 4);
 
     Ok(DemoData {
         generated_at,

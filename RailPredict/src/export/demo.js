@@ -46,15 +46,18 @@
     return '<span class="acc ' + cls + '">' + txt + '</span>';
   }
   function idBlock(c) {
-    return '<div class="tc-id"><span class="tc-hc">' + esc(c.label) + '</span><span class="tc-op">' + esc(c.operator) + '</span></div>' +
-      '<div class="tc-route"><code>' + esc(c.origin) + '</code><span class="ar">→</span><code>' + esc(c.dest) + '</code></div>';
+    return '<div class="tc-id"><span class="tc-hc">' + esc(c.label) + '</span><span class="tc-op">' + esc(c.operator) + '</span></div>';
+  }
+  // Route is rendered last so the grid pins it to the right edge of every card.
+  function routeBlock(c) {
+    return '<div class="tc-route"><code>' + esc(c.origin) + '</code><span class="ar">→</span><code>' + esc(c.dest) + '</code></div>';
   }
   function trackCard(t) {
     return '<div class="tcard" data-rid="' + esc(t.rid) + '" style="--op:' + esc(t.brand) + '">' + idBlock(t) +
       '<div class="tc-meta">' +
         '<span class="tc-sched">dep ' + esc(t.scheduled) + '</span>' +
         '<div class="cell"><span class="k">Predicted</span>' + predChip(t.predicted) + '</div>' +
-      '</div></div>';
+      '</div>' + routeBlock(t) + '</div>';
   }
   function settledCard(s) {
     return '<div class="tcard" data-rid="' + esc(s.rid) + '" style="--op:' + esc(s.brand) + '">' + idBlock(s) +
@@ -63,7 +66,7 @@
         '<span class="cell arrow">→</span>' +
         '<div class="cell"><span class="k">Actual</span><span class="v act">' + delayVal(s.actual) + '</span></div>' +
         accChip(s.delta) +
-      '</div></div>';
+      '</div>' + routeBlock(s) + '</div>';
   }
   var board = document.getElementById("replay-board");
   var frameLabel = document.getElementById("replay-frame");
