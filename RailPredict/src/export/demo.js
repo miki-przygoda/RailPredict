@@ -30,36 +30,50 @@
     }).join("");
   }
 
-  // --- replay board renderer (mirrors static/board.js markup) ---
+  // --- replay board renderer (banner cards; explicit predicted/actual/error) ---
+  // A signed minute value: "+4m" late, "0m" on time, "-2m" early.
+  function delayVal(v) { return v > 0 ? "+" + v + "m" : v < 0 ? v + "m" : "0m"; }
+  // The prediction pill on a still-tracking train.
   function predChip(p) {
-    if (p <= 0) return '<span class="pchip p-ontime">on time</span>';
+    if (p === 0) return '<span class="pchip p-ontime">on time</span>';
+    if (p < 0) return '<span class="pchip p-ontime">' + (-p) + 'm early</span>';
     return '<span class="pchip ' + (p <= 5 ? "p-min" : "p-late") + '">+' + p + 'm</span>';
   }
-  function delayText(v, pre) { return v <= 0 ? pre + " on time" : pre + " +" + v + "m"; }
+  // How far the prediction was off — the accuracy of the call.
   function accChip(d) {
     var cls = d <= 3 ? "acc-good" : d <= 8 ? "acc-ok" : "acc-bad";
-    return '<span class="acc ' + cls + '">Δ' + d + '</span>';
+    var txt = d === 0 ? "spot on" : "off by " + d + "m";
+    return '<span class="acc ' + cls + '">' + txt + '</span>';
+  }
+  function idBlock(c) {
+    return '<div class="tc-id"><span class="tc-hc">' + esc(c.label) + '</span><span class="tc-op">' + esc(c.operator) + '</span></div>' +
+      '<div class="tc-route"><code>' + esc(c.origin) + '</code><span class="ar">→</span><code>' + esc(c.dest) + '</code></div>';
   }
   function trackCard(t) {
-    return '<div class="tcard" data-rid="' + esc(t.rid) + '" style="--op:' + esc(t.brand) + '">' +
-      '<div class="tc-top"><span class="tc-hc">' + esc(t.label) + '</span><span class="tc-op">' + esc(t.operator) + '</span></div>' +
-      '<div class="tc-route"><code>' + esc(t.origin) + '</code><span class="ar">→</span><code>' + esc(t.dest) + '</code></div>' +
-      '<div class="tc-bot"><span class="tc-sched">dep ' + esc(t.scheduled) + '</span>' + predChip(t.predicted) + '</div></div>';
+    return '<div class="tcard" data-rid="' + esc(t.rid) + '" style="--op:' + esc(t.brand) + '">' + idBlock(t) +
+      '<div class="tc-meta">' +
+        '<span class="tc-sched">dep ' + esc(t.scheduled) + '</span>' +
+        '<div class="cell"><span class="k">Predicted</span>' + predChip(t.predicted) + '</div>' +
+      '</div></div>';
   }
   function settledCard(s) {
-    return '<div class="tcard" data-rid="' + esc(s.rid) + '" style="--op:' + esc(s.brand) + '">' +
-      '<div class="tc-top"><span class="tc-hc">' + esc(s.label) + '</span><span class="tc-op">' + esc(s.operator) + '</span></div>' +
-      '<div class="tc-route"><code>' + esc(s.origin) + '</code><span class="ar">→</span><code>' + esc(s.dest) + '</code></div>' +
-      '<div class="tc-bot settled-row"><span class="pa pred">' + delayText(s.predicted, "pred") + '</span><span class="ar">→</span><span class="pa act">' + delayText(s.actual, "actual") + '</span>' + accChip(s.delta) + '</div></div>';
+    return '<div class="tcard" data-rid="' + esc(s.rid) + '" style="--op:' + esc(s.brand) + '">' + idBlock(s) +
+      '<div class="tc-meta">' +
+        '<div class="cell"><span class="k">Predicted</span><span class="v pred">' + delayVal(s.predicted) + '</span></div>' +
+        '<span class="cell arrow">→</span>' +
+        '<div class="cell"><span class="k">Actual</span><span class="v act">' + delayVal(s.actual) + '</span></div>' +
+        accChip(s.delta) +
+      '</div></div>';
   }
   var board = document.getElementById("replay-board");
   var frameLabel = document.getElementById("replay-frame");
   function renderFrame(snap, existing) {
     var tracking = (snap.tracking || []).map(trackCard).join("");
     var settled = (snap.settled || []).map(settledCard).join("");
+    var nTrack = (snap.tracking || []).length;
     board.innerHTML =
-      '<div><div class="zone-head"><h3>Tracking now</h3><span class="ct">' + (snap.tracking || []).length + ' trains</span></div><div class="tgrid">' + (tracking || '<p class="panel-empty">—</p>') + '</div></div>' +
-      '<div><div class="zone-head"><h3>Just settled</h3><span class="ct">predicted vs actual</span></div><div class="tgrid">' + (settled || '<p class="panel-empty">—</p>') + '</div></div>';
+      '<div class="zone zone-track"><div class="zone-head"><h3>Tracking now</h3><span class="ct">' + nTrack + ' live · predicted delay</span></div><div class="tgrid">' + (tracking || '<p class="panel-empty">—</p>') + '</div></div>' +
+      '<div class="zone zone-settled"><div class="zone-head"><h3>Just settled</h3><span class="ct">predicted → actual</span></div><div class="tgrid">' + (settled || '<p class="panel-empty">—</p>') + '</div></div>';
     board.querySelectorAll("[data-rid]").forEach(function (el) {
       if (existing && !existing.has(el.dataset.rid)) el.classList.add("fresh");
     });

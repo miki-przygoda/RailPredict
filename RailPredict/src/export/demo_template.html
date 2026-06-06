@@ -45,50 +45,51 @@
   .op .nm{font-weight:600}
   .op .pct{margin-left:auto;font:700 15px var(--mono)}
   .op .ct{font:600 12px var(--mono);color:var(--dim);width:84px;text-align:right}
-  .vis-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
+  .vis-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:26px}
   @media(max-width:760px){.vis-grid{grid-template-columns:1fr}}
-  .vcard{background:#eef2ff;border:1px dashed #93c5fd;border-radius:var(--r);padding:20px}
-  .vcard .n{font:800 30px var(--sans);color:var(--accent)}
-  .vcard .l{font-size:13px;color:var(--muted);margin-top:6px}
-  .note{font-size:13px;color:var(--proj);margin-top:14px;font-style:italic}
-  .cta{display:inline-block;margin-top:20px;background:var(--accent);color:#fff;font-weight:700;
-    padding:13px 24px;border-radius:10px;text-decoration:none}
-  .own-list{margin:18px 0 0;padding-left:20px;color:var(--muted)}
-  .own-list li{margin:6px 0}
+  .vcard{background:var(--soft);border:1px solid var(--line);border-radius:var(--r);padding:22px}
+  .vcard .vh{font:700 16px var(--sans);color:var(--accent-ink);margin-bottom:8px}
+  .vcard p{font-size:14px;color:var(--muted)}
   footer{padding:40px 0;color:var(--dim);font-size:13px;text-align:center}
   /* ---- replay board (light-themed mirror of static/board.js markup) ---- */
-  .replay-shell{margin-top:26px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#fff}
-  .replay-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--soft)}
-  .replay-bar .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
+  .replay-shell{margin-top:26px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#fff;box-shadow:0 1px 4px rgba(15,23,42,.06)}
+  .replay-bar{display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--line);background:var(--soft)}
+  .replay-bar .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-  .replay-bar .t{font:700 13px var(--mono)}
-  .replay-bar .f{margin-left:auto;font:600 12px var(--mono);color:var(--dim)}
-  .zones{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px}
-  @media(max-width:760px){.zones{grid-template-columns:1fr}}
-  .zone-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-  .zone-head h3{font:700 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .replay-bar .t{font:700 14px var(--mono)}
+  .replay-bar .f{margin-left:auto;font:600 13px var(--mono);color:var(--dim)}
+  .zones{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:22px}
+  @media(max-width:820px){.zones{grid-template-columns:1fr}}
+  .zone{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:16px 16px 18px}
+  .zone-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid var(--line)}
+  .zone-head h3{font:800 15px var(--sans);letter-spacing:-.01em;color:var(--ink);display:flex;align-items:center;gap:8px}
+  .zone-head h3::before{content:"";width:9px;height:9px;border-radius:50%;flex-shrink:0}
+  .zone-track .zone-head h3::before{background:var(--accent)}
+  .zone-settled .zone-head h3::before{background:var(--good)}
   .zone-head .ct{font:600 12px var(--mono);color:var(--dim)}
-  .tgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  @media(max-width:520px){.tgrid{grid-template-columns:1fr}}
-  .tcard{position:relative;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 13px;overflow:hidden}
-  .tcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--op,#94a3b8)}
+  .tgrid{display:flex;flex-direction:column;gap:10px}
+  .tcard{position:relative;display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px 14px 20px;overflow:hidden}
+  .tcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--op,#94a3b8)}
   .tcard.fresh{animation:slidein .5s ease}
-  @keyframes slidein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-  .tc-top{display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
-  .tc-hc{font:700 13px var(--mono)}
-  .tc-op{font:600 10.5px var(--mono);color:var(--dim);text-transform:uppercase}
-  .tc-route{display:flex;align-items:center;gap:4px;margin-bottom:8px}
-  .tc-route code{font:700 13.5px var(--mono)}
-  .tc-route .ar{color:var(--dim);margin:0 4px}
-  .tc-bot{display:flex;justify-content:space-between;align-items:center;gap:8px}
-  .tc-sched{font:600 11.5px var(--mono);color:var(--dim)}
-  .pchip{font:700 11.5px var(--mono);padding:3px 9px;border-radius:999px}
+  @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .tc-id{display:flex;flex-direction:column;gap:2px;min-width:82px}
+  .tc-hc{font:700 15px var(--mono);letter-spacing:.01em}
+  .tc-op{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+  .tc-route{display:flex;align-items:center;gap:6px;font:700 15px var(--mono)}
+  .tc-route .ar{color:var(--dim)}
+  .tc-meta{margin-left:auto;display:flex;align-items:center;gap:16px}
+  .tc-sched{font:600 12px var(--mono);color:var(--dim)}
+  .cell{text-align:center;line-height:1.1}
+  .cell .k{display:block;font:700 9px var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--dim);margin-bottom:5px}
+  .cell .v{font:700 16px var(--mono)}
+  .cell .v.pred{color:var(--muted)}
+  .cell .v.act{color:var(--ink)}
+  .cell.arrow{font-size:17px;color:var(--dim);align-self:center;padding-top:10px}
+  .pchip{font:700 13px var(--mono);padding:5px 12px;border-radius:999px}
   .p-ontime{color:var(--good);background:var(--good-bg)}
   .p-min{color:var(--proj);background:var(--proj-bg)}
   .p-late{color:var(--bad);background:var(--bad-bg)}
-  .settled-row{display:flex;align-items:center;gap:7px}
-  .pa{font:700 11.5px var(--mono)}.pa.pred{color:var(--muted)}.pa.act{color:var(--ink)}
-  .acc{font:700 10.5px var(--mono);padding:2px 7px;border-radius:999px;margin-left:auto}
+  .acc{font:700 12px var(--mono);padding:6px 11px;border-radius:999px;white-space:nowrap}
   .acc-good{color:var(--good);background:var(--good-bg)}
   .acc-ok{color:var(--accent);background:#dbeafe}
   .acc-bad{color:var(--bad);background:var(--bad-bg)}
@@ -141,27 +142,14 @@
 </div></section>
 
 <section id="beat-vision" class="reveal"><div class="wrap">
-  <span class="badge b-proj">PROJECTED · WITH YOUR DATA</span>
+  <span class="badge" style="color:var(--accent);background:#dbeafe">WITH YOUR TICKETING DATA</span>
   <h2>Now point it at your ticket sales.</h2>
-  <p class="lead">The same engine, joined to your ticketing data, turns a delay into a save: spot the journeys you've already sold that are about to be disrupted, and act before departure.</p>
+  <p class="lead">The same engine, joined to your ticketing data, turns a delay into a save — spotting the journeys you've already sold that are about to be disrupted, and acting before the passenger is.</p>
   <div class="vis-grid">
-    <div class="vcard"><div class="n" data-fill="projected.disrupted_tickets_pct" data-suffix="%">—</div><div class="l">of tickets sold today are on routes we predict will be disrupted — notify &amp; rebook first</div></div>
-    <div class="vcard"><div class="n" data-fill="projected.recoverable_revenue">—</div><div class="l">recoverable revenue/yr via automated Delay Repay &amp; proactive rebooking</div></div>
-    <div class="vcard"><div class="n" data-fill="projected.churn_reduction_pct" data-suffix="%">—</div><div class="l">fewer disruption-driven churned customers</div></div>
+    <div class="vcard"><h3 class="vh">Get ahead of disruption</h3><p>Flag tickets already sold on services we predict will run late, and notify or rebook the passenger before they're stranded.</p></div>
+    <div class="vcard"><h3 class="vh">Reliability at the point of sale</h3><p>Surface how likely each option is to run on time as the customer books, so they choose with confidence — and you carry fewer complaints.</p></div>
+    <div class="vcard"><h3 class="vh">Delay Repay, automatically</h3><p>Predicted-versus-actual is already measured for every journey — trigger eligible compensation without the manual claim.</p></div>
   </div>
-  <p class="note" data-fill="projected.note">—</p>
-</div></section>
-
-<section id="beat-own" class="reveal"><div class="wrap">
-  <span class="badge" style="color:var(--accent);background:#dbeafe">THE PRODUCT</span>
-  <h2>Own it, run it, grow it.</h2>
-  <ul class="own-list">
-    <li>Ships as a Docker appliance — <code>docker compose up</code> and it runs.</li>
-    <li>Ingests Darwin + your ticketing + GBR data out of the box.</li>
-    <li>Models retrain on your data, so accuracy compounds with your scale.</li>
-  </ul>
-  <p class="lead" style="margin-top:18px">Buy the IP, and I build it out with you.</p>
-  <a class="cta" href="mailto:mikolaj.mikuliszyn@gmail.com">Let's talk →</a>
 </div></section>
 
 <footer>Generated <span data-fill="generated_at">—</span> · RailPredict · Proprietary &amp; confidential</footer>
