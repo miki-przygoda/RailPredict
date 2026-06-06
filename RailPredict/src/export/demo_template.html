@@ -32,6 +32,9 @@
   .b-proj{color:var(--proj);background:var(--proj-bg)}
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:28px}
   @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  .kpis3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+  @media(max-width:760px){.kpis3{grid-template-columns:1fr}}
+  .strip-label{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-top:30px}
   .kpi{background:var(--soft);border:1px solid var(--line);border-radius:var(--r);padding:20px}
   .kpi .n{font:800 30px var(--sans);letter-spacing:-.02em;color:var(--accent-ink)}
   .kpi .l{font-size:13px;color:var(--muted);margin-top:4px}
@@ -114,9 +117,15 @@
   <p class="lead">Live numbers from the running system on the national Darwin feed — not a slide.</p>
   <div class="kpis">
     <div class="kpi"><div class="n" data-fill="hero_number">—</div><div class="l">Departures analysed</div></div>
-    <div class="kpi"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">On time (≤5 min)</div></div>
+    <div class="kpi"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">On-time departures (≤5 min)</div></div>
     <div class="kpi"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">Mean prediction error</div></div>
     <div class="kpi"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">Predictions within 5 min</div></div>
+  </div>
+  <div class="strip-label">Journey reliability — measured at the destination</div>
+  <div class="kpis3">
+    <div class="kpi"><div class="n" data-fill="services_label">—</div><div class="l">Distinct services tracked</div></div>
+    <div class="kpi"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">Arrive within 5 min</div></div>
+    <div class="kpi"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">Recover delay en route</div></div>
   </div>
   <div class="ops" id="op-list"></div>
 </div></section>
