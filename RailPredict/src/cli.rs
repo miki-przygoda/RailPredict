@@ -70,6 +70,17 @@ pub enum Commands {
         #[arg(long, default_value = "7")]
         days: u32,
     },
+
+    /// Export the self-contained offline "RailPredict OS" desktop (map flagship).
+    ExportOs {
+        /// Output file path.
+        #[arg(long, default_value = "docs/os.html")]
+        output: PathBuf,
+
+        /// How many days of history to include.
+        #[arg(long, default_value = "7")]
+        days: u32,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]

@@ -213,6 +213,9 @@ async fn main() -> anyhow::Result<()> {
             Commands::ExportMap { output, days } => {
                 export::map::export_map(&db_pool, &output, days).await?;
             }
+            Commands::ExportOs { output, days } => {
+                export::os::export_os(&db_pool, &output, days).await?;
+            }
         }
         return Ok(());
     }

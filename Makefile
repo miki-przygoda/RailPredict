@@ -1,4 +1,4 @@
-.PHONY: up down build rebuild logs db ingest export demo map train seed-stations seed-history
+.PHONY: up down build rebuild logs db ingest export demo map os train seed-stations seed-history
 
 # Start all services, rebuilding the app image from current source.
 up:
@@ -44,6 +44,11 @@ demo:
 # Output: docs/map.html (open in any browser — fully offline). Needs a running DB.
 map:
 	cd RailPredict && cargo run --release -- export-map --output ../docs/map.html --days $(DAYS)
+
+# Export the self-contained offline "RailPredict OS" desktop. Output: docs/os.html
+# (open in any browser — fully offline). Needs a running DB.
+os:
+	cd RailPredict && cargo run --release -- export-os --output ../docs/os.html --days $(DAYS)
 
 # Backfill delay_history with 90 days of synthetic historical data.
 # Uses the top TIPLOCs already seen in the live Darwin feed, so the training
