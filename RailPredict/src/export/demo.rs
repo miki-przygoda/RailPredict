@@ -141,9 +141,15 @@ pub struct DemoData {
     pub hero_number: String,
     pub hero_observations: i64,
     pub services_count: i64,
+    /// `services_count` formatted compactly for display (e.g. "51K+").
+    pub services_label: String,
     pub on_time_pct: Option<f64>,
     pub mae_mins: Option<f64>,
     pub within_5_pct: Option<f64>,
+    /// Destination arrival reliability (journeys arriving within 5 min), from `journeys`.
+    pub arrival_on_time_pct: Option<f64>,
+    /// Share of journeys that shed ≥2 min of delay en route, from `journeys`.
+    pub recovered_pct: Option<f64>,
     pub operators: Vec<OperatorHighlight>,
     pub frames: Vec<Frame>,
     pub projected: ProjectedFigures,
@@ -326,6 +332,10 @@ pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
         query_replay_trains(db, 40),
     )?;
 
+    // Destination arrival + recovery reliability from the journeys table
+    // (journey_metrics takes hours, the demo window is days).
+    let journey = crate::db::overview::journey_metrics(db, days_i * 24).await?;
+
     let frames = build_frames(&replay_trains, 6, 4);
 
     Ok(DemoData {
@@ -333,9 +343,12 @@ pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
         hero_number: human_count(kpis.total_observations),
         hero_observations: kpis.total_observations,
         services_count: kpis.total_services,
+        services_label: human_count(kpis.total_services),
         on_time_pct: kpis.on_time_pct,
         mae_mins: kpis.mae_mins,
         within_5_pct: kpis.within_5_pct,
+        arrival_on_time_pct: journey.arrival_on_time_pct,
+        recovered_pct: journey.recovered_pct,
         operators,
         frames,
         projected: ProjectedFigures::default(),
@@ -434,9 +447,12 @@ mod tests {
             hero_number: "2.5M+".into(),
             hero_observations: 2_546_226,
             services_count: 74_000,
+            services_label: "74K+".into(),
             on_time_pct: Some(91.4),
             mae_mins: Some(3.2),
             within_5_pct: Some(78.0),
+            arrival_on_time_pct: Some(88.0),
+            recovered_pct: Some(41.0),
             operators: vec![],
             frames: build_frames(&sample(2), 2, 2),
             projected: ProjectedFigures::default(),
