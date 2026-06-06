@@ -14,11 +14,14 @@ window.RailPredictMap = { init: function () {
     e.textContent = fmt(get(M, e.getAttribute("data-fill")), e.getAttribute("data-suffix"));
   });
 
+  // Cancel any prior animation loop UNCONDITIONALLY — even if we early-return
+  // below, a stale loop must not keep mutating a now-detached SVG (the live
+  // /map page re-inits on every poll).
+  if (window.RailPredictMap._raf) cancelAnimationFrame(window.RailPredictMap._raf);
+
   if (!svg || !window.d3 || !outline) return;
 
-  // Idempotent: cancel any prior animation loop and clear the SVG so this can be
-  // re-called (the live /map page re-inits on each poll).
-  if (window.RailPredictMap._raf) cancelAnimationFrame(window.RailPredictMap._raf);
+  // Idempotent: clear the SVG so this can be safely re-called.
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 
   var rect = svg.parentNode.getBoundingClientRect();
