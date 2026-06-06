@@ -102,6 +102,71 @@ pub fn build_frames(
     frames
 }
 
+const DEMO_TEMPLATE: &str = include_str!("demo_template.html");
+
+#[derive(Serialize, Clone, Debug)]
+pub struct OperatorHighlight {
+    pub name: String,
+    pub brand: String,
+    pub on_time_pct: f64,
+    pub journeys: i64,
+}
+
+/// Clearly-labelled illustrative figures for the "with your ticketing data" beat.
+/// These are NOT measured — the template badges them PROJECTED and prints `note`.
+#[derive(Serialize, Clone, Debug)]
+pub struct ProjectedFigures {
+    pub disrupted_tickets_pct: f64,
+    pub recoverable_revenue: String,
+    pub churn_reduction_pct: f64,
+    pub note: String,
+}
+
+impl Default for ProjectedFigures {
+    fn default() -> Self {
+        ProjectedFigures {
+            disrupted_tickets_pct: 6.0,
+            recoverable_revenue: "[redacted]".into(),
+            churn_reduction_pct: 22.0,
+            note: "Illustrative — modelled on representative ticketing volumes, not measured."
+                .into(),
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct DemoData {
+    pub generated_at: String,
+    pub hero_number: String,
+    pub hero_observations: i64,
+    pub services_count: i64,
+    pub on_time_pct: Option<f64>,
+    pub mae_mins: Option<f64>,
+    pub within_5_pct: Option<f64>,
+    pub operators: Vec<OperatorHighlight>,
+    pub frames: Vec<Frame>,
+    pub projected: ProjectedFigures,
+}
+
+/// Format a count as a compact headline string: 2_546_226 -> "2.5M+".
+pub fn human_count(n: i64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M+", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.0}K+", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Inject the data as a JSON literal into the template. Pure — no DB.
+/// Escapes `</` so a stray `</script>` in a string field can't break out of the
+/// host <script> (mirrors `export::render_html`).
+pub fn render_demo_html(data: &DemoData) -> anyhow::Result<String> {
+    let json = serde_json::to_string(data)?.replace("</", "<\\/");
+    Ok(DEMO_TEMPLATE.replace("__DEMO_DATA__", &json))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +230,35 @@ mod tests {
     #[test]
     fn empty_input_yields_no_frames() {
         assert!(build_frames(&[], 4, 4).is_empty());
+    }
+
+    fn demo_fixture() -> DemoData {
+        DemoData {
+            generated_at: "06 Jun 2026 10:00 UTC".into(),
+            hero_number: "2.5M+".into(),
+            hero_observations: 2_546_226,
+            services_count: 74_000,
+            on_time_pct: Some(91.4),
+            mae_mins: Some(3.2),
+            within_5_pct: Some(78.0),
+            operators: vec![],
+            frames: build_frames(&sample(2), 2, 2),
+            projected: ProjectedFigures::default(),
+        }
+    }
+
+    #[test]
+    fn render_replaces_placeholder_and_keeps_anchors() {
+        let html = render_demo_html(&demo_fixture()).unwrap();
+        assert!(!html.contains("__DEMO_DATA__"), "placeholder must be replaced");
+        assert!(html.contains(r#"id="beat-replay""#));
+        assert!(html.contains("2.5M+") || html.contains("2546226"));
+    }
+
+    #[test]
+    fn human_count_formats_compactly() {
+        assert_eq!(human_count(2_546_226), "2.5M+");
+        assert_eq!(human_count(74_000), "74K+");
+        assert_eq!(human_count(512), "512");
     }
 }
