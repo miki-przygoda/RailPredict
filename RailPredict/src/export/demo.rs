@@ -167,6 +167,164 @@ pub fn render_demo_html(data: &DemoData) -> anyhow::Result<String> {
     Ok(DEMO_TEMPLATE.replace("__DEMO_DATA__", &json))
 }
 
+use sqlx::FromRow;
+
+#[derive(FromRow)]
+struct KpiRow {
+    total_observations: i64,
+    total_services: i64,
+    on_time_pct: Option<f64>,
+    mae_mins: Option<f64>,
+    within_5_pct: Option<f64>,
+}
+
+#[derive(FromRow)]
+struct OperatorRow {
+    name: Option<String>,
+    brand_color: Option<String>,
+    on_time_pct: Option<f64>,
+    journeys: i64,
+}
+
+#[derive(FromRow)]
+struct ReplayRow {
+    rid: String,
+    uid: String,
+    operator: Option<String>,
+    brand_color: Option<String>,
+    origin_crs: String,
+    destination_crs: Option<String>,
+    scheduled_departure: chrono::DateTime<Utc>,
+    predicted_delay_mins: i32,
+    final_delay_mins: i32,
+}
+
+async fn query_kpis(db: &Db, days: i32) -> anyhow::Result<KpiRow> {
+    let row = sqlx::query_as::<_, KpiRow>(
+        r#"
+        SELECT
+            COUNT(*)                                                        AS total_observations,
+            COUNT(DISTINCT uid || '|' || origin_crs)                        AS total_services,
+            (AVG(CASE WHEN delay_mins <= 5 THEN 1.0 ELSE 0.0 END) * 100)::float8
+                                                                            AS on_time_pct,
+            AVG(ABS(delay_mins - predicted_delay_mins)::float8)
+                FILTER (WHERE predicted_delay_mins IS NOT NULL)             AS mae_mins,
+            (AVG(CASE WHEN predicted_delay_mins IS NOT NULL
+                      AND ABS(delay_mins - predicted_delay_mins) <= 5
+                 THEN 1.0 ELSE 0.0 END)
+             FILTER (WHERE predicted_delay_mins IS NOT NULL) * 100)::float8 AS within_5_pct
+        FROM delay_history
+        WHERE recorded_at > NOW() - $1::INT * INTERVAL '1 day'
+          AND delay_mins BETWEEN -120 AND 600
+        "#,
+    )
+    .bind(days)
+    .fetch_one(db)
+    .await?;
+    Ok(row)
+}
+
+async fn query_operator_highlights(db: &Db, days: i32) -> anyhow::Result<Vec<OperatorHighlight>> {
+    let rows = sqlx::query_as::<_, OperatorRow>(
+        r#"
+        SELECT
+            COALESCE(op.name, j.toc)                                          AS name,
+            op.brand_color                                                    AS brand_color,
+            (AVG(CASE WHEN COALESCE(j.arrival_delay_mins, j.origin_delay_mins) <= 5
+                 THEN 1.0 ELSE 0.0 END) * 100)::float8                        AS on_time_pct,
+            COUNT(*)                                                          AS journeys
+        FROM journeys j
+        LEFT JOIN operators op ON op.toc = j.toc
+        WHERE j.scheduled_departure > NOW() - $1::INT * INTERVAL '1 day'
+          AND j.toc IS NOT NULL AND j.toc <> ''
+        GROUP BY j.toc, op.name, op.brand_color
+        HAVING COUNT(*) >= 20
+        ORDER BY on_time_pct DESC NULLS LAST
+        LIMIT 6
+        "#,
+    )
+    .bind(days)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| OperatorHighlight {
+            name: r.name.unwrap_or_else(|| "—".into()),
+            brand: r.brand_color.unwrap_or_else(|| "#64748b".into()),
+            on_time_pct: r.on_time_pct.unwrap_or(0.0),
+            journeys: r.journeys,
+        })
+        .collect())
+}
+
+async fn query_replay_trains(db: &Db, limit: i64) -> anyhow::Result<Vec<ReplayTrain>> {
+    let rows = sqlx::query_as::<_, ReplayRow>(
+        r#"
+        SELECT
+            o.rid, o.uid,
+            op.name                AS operator,
+            op.brand_color         AS brand_color,
+            o.origin_crs,
+            o.destination_crs,
+            o.scheduled_departure,
+            o.predicted_delay_mins,
+            o.final_delay_mins
+        FROM prediction_outcomes o
+        LEFT JOIN services  s  ON s.uid = o.uid
+        LEFT JOIN operators op ON op.toc = s.toc
+        WHERE o.finalised_at IS NOT NULL
+          AND o.final_delay_mins IS NOT NULL
+          AND o.final_delay_mins BETWEEN -120 AND 600
+        ORDER BY o.scheduled_departure DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ReplayTrain {
+            rid: r.rid,
+            operator: r.operator.unwrap_or_else(|| "—".into()),
+            brand: r.brand_color.unwrap_or_else(|| "#64748b".into()),
+            label: r.uid,
+            origin: r.origin_crs,
+            dest: r.destination_crs.unwrap_or_else(|| "—".into()),
+            scheduled: r.scheduled_departure.format("%H:%M").to_string(),
+            predicted: r.predicted_delay_mins,
+            actual: r.final_delay_mins,
+        })
+        .collect())
+}
+
+/// Assemble the full DemoData from the live DB.
+pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
+    let days_i = days as i32;
+    let generated_at = Utc::now().format("%d %b %Y %H:%M UTC").to_string();
+
+    let (kpis, operators, replay_trains) = tokio::try_join!(
+        query_kpis(db, days_i),
+        query_operator_highlights(db, days_i),
+        query_replay_trains(db, 40),
+    )?;
+
+    let frames = build_frames(&replay_trains, 6, 4);
+
+    Ok(DemoData {
+        generated_at,
+        hero_number: human_count(kpis.total_observations),
+        hero_observations: kpis.total_observations,
+        services_count: kpis.total_services,
+        on_time_pct: kpis.on_time_pct,
+        mae_mins: kpis.mae_mins,
+        within_5_pct: kpis.within_5_pct,
+        operators,
+        frames,
+        projected: ProjectedFigures::default(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
