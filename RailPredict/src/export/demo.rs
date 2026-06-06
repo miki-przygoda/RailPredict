@@ -113,28 +113,6 @@ pub struct OperatorHighlight {
     pub journeys: i64,
 }
 
-/// Clearly-labelled illustrative figures for the "with your ticketing data" beat.
-/// These are NOT measured — the template badges them PROJECTED and prints `note`.
-#[derive(Serialize, Clone, Debug)]
-pub struct ProjectedFigures {
-    pub disrupted_tickets_pct: f64,
-    pub recoverable_revenue: String,
-    pub churn_reduction_pct: f64,
-    pub note: String,
-}
-
-impl Default for ProjectedFigures {
-    fn default() -> Self {
-        ProjectedFigures {
-            disrupted_tickets_pct: 6.0,
-            recoverable_revenue: "[redacted]".into(),
-            churn_reduction_pct: 22.0,
-            note: "Illustrative — modelled on representative ticketing volumes, not measured."
-                .into(),
-        }
-    }
-}
-
 #[derive(Serialize, Clone, Debug)]
 pub struct DemoData {
     pub generated_at: String,
@@ -152,7 +130,6 @@ pub struct DemoData {
     pub recovered_pct: Option<f64>,
     pub operators: Vec<OperatorHighlight>,
     pub frames: Vec<Frame>,
-    pub projected: ProjectedFigures,
 }
 
 /// Format a count as a compact headline string: 2_546_226 -> "2.5M+".
@@ -351,7 +328,6 @@ pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
         recovered_pct: journey.recovered_pct,
         operators,
         frames,
-        projected: ProjectedFigures::default(),
     })
 }
 
@@ -455,7 +431,6 @@ mod tests {
             recovered_pct: Some(41.0),
             operators: vec![],
             frames: build_frames(&sample(2), 2, 2),
-            projected: ProjectedFigures::default(),
         }
     }
 
