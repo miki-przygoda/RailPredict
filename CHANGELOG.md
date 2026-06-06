@@ -2,9 +2,19 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.17.1" -- 06/06/2026**
+**version = "1.17.2" -- 06/06/2026**
 
 ---
+
+## v1.17.2 — 06/06/2026
+
+Demo polish (CEO feedback):
+- **Vision beat** no longer guesses savings — dropped the projected £/% figures
+  (and `ProjectedFigures`); it now states the ticketing-data value qualitatively.
+- **Dropped the "The product" beat** (Docker / own-it / CTA).
+- **Replay redesign**: full-width banner cards (bigger), a bigger bordered board
+  with two clearly-separated zones, and explicit "Predicted / Actual" labels plus
+  a plain-language accuracy chip ("spot on" / "off by Nm").
 
 ## v1.17.1 — 06/06/2026
 
