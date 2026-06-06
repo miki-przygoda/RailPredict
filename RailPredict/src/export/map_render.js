@@ -1,4 +1,6 @@
-(function () {
+// Exposed as RailPredictMap.init() so the standalone map page can call it on
+// load and the OS shell can call it when the Map window opens.
+window.RailPredictMap = { init: function () {
   "use strict";
   var M = window.MAP || {};
   var outline = window.GB_OUTLINE, rail = window.GB_RAIL;
@@ -73,4 +75,4 @@
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-})();
+} };
