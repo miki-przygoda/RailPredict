@@ -28,9 +28,13 @@ window.RailPredictMap = { init: function () {
   var W = Math.max(Math.round(rect.width), 240), H = Math.max(Math.round(rect.height), 360);
   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
 
-  // Mercator gives a clean, recognisable GB silhouette at this scale; fitSize
-  // auto-centres + scales the outline to the SVG (padded a touch).
-  var projection = d3.geoMercator().fitExtent([[8, 8], [W - 8, H - 8]], outline);
+  // Frame the camera on the GB mainland, NOT the full outline: fitting to the
+  // whole dataset would zoom out to include far-flung outliers (Shetland ~60.8°N,
+  // St Kilda ~-8.6°) and leave the mainland small and distant. We fit to a fixed
+  // mainland box; all land is still drawn, but anything outside the frame falls
+  // outside the SVG viewport and clips away.
+  var GB_FRAME = { type: "Polygon", coordinates: [[[-6.4, 49.9], [1.9, 49.9], [1.9, 58.75], [-6.4, 58.75], [-6.4, 49.9]]] };
+  var projection = d3.geoMercator().fitExtent([[10, 10], [W - 10, H - 10]], GB_FRAME);
   var path = d3.geoPath(projection);
 
   function el(tag, attrs) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); return e; }
@@ -54,8 +58,8 @@ window.RailPredictMap = { init: function () {
   function settledCard(t) { return '<div class="mini" style="--c:' + esc(t.brand) + '"><span class="hc">' + esc(t.label) + '</span><span class="rt">' + esc(t.origin) + ' → ' + esc(t.dest) + '</span><span class="pa">' + delayVal(t.predicted) + '→' + delayVal(t.actual) + '<small>' + accTxt(t.delta) + '</small></span></div>'; }
 
   var trains = (M.trains || []).map(function (t, i) {
-    var dot = el("circle", { r: "2.2", fill: colorFor(t.predicted), "fill-opacity": "0.95" });
-    dot.style.filter = "drop-shadow(0 0 2px " + colorFor(t.predicted) + ")";
+    var dot = el("circle", { r: "3.4", fill: colorFor(t.predicted), "fill-opacity": "0.95" });
+    dot.style.filter = "drop-shadow(0 0 4px " + colorFor(t.predicted) + ")";
     gDots.appendChild(dot);
     return { t: t, dot: dot, interp: d3.geoInterpolate(t.o, t.d), dur: 9000 + (i % 7) * 900, phase: (i * 1373) % 11000 };
   });
@@ -74,7 +78,7 @@ window.RailPredictMap = { init: function () {
       else { a.dot.setAttribute("display", "none"); }
       var arriving = p > 0.88;
       a.dot.setAttribute("fill", colorFor(arriving ? a.t.actual : a.t.predicted));
-      a.dot.setAttribute("r", arriving ? "3.1" : "2.2");
+      a.dot.setAttribute("r", arriving ? "4.8" : "3.4");
       if (arriving) settledList.push(a.t); else if (p > 0.4) trackList.push(a.t);
     }
     if (now - lastBanner > 350) {
