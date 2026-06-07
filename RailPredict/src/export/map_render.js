@@ -30,7 +30,7 @@ window.RailPredictMap = { init: function () {
 
   // Mercator gives a clean, recognisable GB silhouette at this scale; fitSize
   // auto-centres + scales the outline to the SVG (padded a touch).
-  var projection = d3.geoMercator().fitExtent([[14, 14], [W - 14, H - 14]], outline);
+  var projection = d3.geoMercator().fitExtent([[8, 8], [W - 8, H - 8]], outline);
   var path = d3.geoPath(projection);
 
   function el(tag, attrs) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); return e; }
@@ -54,8 +54,8 @@ window.RailPredictMap = { init: function () {
   function settledCard(t) { return '<div class="mini" style="--c:' + esc(t.brand) + '"><span class="hc">' + esc(t.label) + '</span><span class="rt">' + esc(t.origin) + ' → ' + esc(t.dest) + '</span><span class="pa">' + delayVal(t.predicted) + '→' + delayVal(t.actual) + '<small>' + accTxt(t.delta) + '</small></span></div>'; }
 
   var trains = (M.trains || []).map(function (t, i) {
-    var dot = el("circle", { r: "3.4", fill: colorFor(t.predicted), "fill-opacity": "0.95" });
-    dot.style.filter = "drop-shadow(0 0 4px " + colorFor(t.predicted) + ")";
+    var dot = el("circle", { r: "2.2", fill: colorFor(t.predicted), "fill-opacity": "0.95" });
+    dot.style.filter = "drop-shadow(0 0 2px " + colorFor(t.predicted) + ")";
     gDots.appendChild(dot);
     return { t: t, dot: dot, interp: d3.geoInterpolate(t.o, t.d), dur: 9000 + (i % 7) * 900, phase: (i * 1373) % 11000 };
   });
@@ -74,7 +74,7 @@ window.RailPredictMap = { init: function () {
       else { a.dot.setAttribute("display", "none"); }
       var arriving = p > 0.88;
       a.dot.setAttribute("fill", colorFor(arriving ? a.t.actual : a.t.predicted));
-      a.dot.setAttribute("r", arriving ? "4.8" : "3.4");
+      a.dot.setAttribute("r", arriving ? "3.1" : "2.2");
       if (arriving) settledList.push(a.t); else if (p > 0.4) trackList.push(a.t);
     }
     if (now - lastBanner > 350) {

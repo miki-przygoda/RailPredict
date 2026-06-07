@@ -453,7 +453,8 @@
   }
   .win-body .cc-body {
     display: grid;
-    grid-template-columns: 230px 1fr 220px;
+    grid-template-columns: 230px minmax(320px, 560px) 220px;
+    justify-content: center;
     height: 100%;
     overflow: hidden;
   }
