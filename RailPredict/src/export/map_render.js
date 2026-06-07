@@ -2,12 +2,12 @@
 // load and the OS shell can call it when the Map window opens.
 //
 // Basemap is a real OSM/CARTO snapshot (raster baked in) with known Web-Mercator
-// bounds. On top: the rail network drawn as faint grey lines (brighter where more
-// trains run it), and real multi-stop journeys playing out — each runs its full
-// route as a bright streak stretched along the line (a light pulse inside it),
-// coloured by delay, appearing in "Tracking" while running and "Just settled" on
-// arrival. lat/lon -> pixel uses the snapshot's slippy-tile maths so it all lines
-// up. Scroll to zoom, drag to pan, ⛶ for fullscreen.
+// bounds. On top: the rail network drawn as light grey lines (brighter where more
+// trains run it, each link drawn once so nothing overlaps), and real multi-stop
+// journeys playing out — each is a single node travelling its route, coloured by
+// delay, appearing in "Tracking" while running and "Just settled" on arrival.
+// lat/lon -> pixel uses the snapshot's slippy-tile maths so it all lines up.
+// Scroll to zoom, drag to pan, ⛶ for fullscreen.
 window.RailPredictMap = { init: function () {
   "use strict";
   var M = window.MAP || {};
@@ -21,8 +21,7 @@ window.RailPredictMap = { init: function () {
   var XLINK = "http://www.w3.org/1999/xlink";
   var RP = window.RailPredictMap;
   var COL = ["#34d399", "#f2c14e", "#f04545"];   // delay band: on-time / slight / late
-  var BRIGHT = ["#7dffcb", "#ffdd86", "#ff9a9a"]; // lighter cores for the streaks
-  var DASH = 30; // streak length (viewBox px)
+  var BRIGHT = ["#7dffcb", "#ffdd86", "#ff9a9a"]; // bright node cores per delay band
 
   // --- fill [data-fill] KPI hooks ---
   function get(o, p) { return p.split(".").reduce(function (a, k) { return a == null ? null : a[k]; }, o); }
@@ -54,9 +53,9 @@ window.RailPredictMap = { init: function () {
   function lon2px(lon) { return (lon + 180) / 360 * N - B.ox; }
   function lat2px(lat) { var r = lat * Math.PI / 180; return (1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * N - B.oy; }
 
-  // --- Base network: faint grey lines, brighter where more trains run ---
-  // tier by traffic count: 0 quiet, 1 busy, 2 main line.
-  var GREY = [{ c: "#444e60", o: "0.16", w: "1" }, { c: "#5a667d", o: "0.26", w: "1.1" }, { c: "#74879f", o: "0.42", w: "1.3" }];
+  // --- Base network: light grey lines, brighter where more trains run.
+  // Each link is drawn once (deduped by station pair), so they don't stack. ---
+  var GREY = [{ c: "#5b657c", o: "0.32", w: "1" }, { c: "#7886a0", o: "0.48", w: "1.15" }, { c: "#9cb1d0", o: "0.66", w: "1.35" }];
   var gp = ["", "", ""];
   for (var ei = 0; ei < edges.length; ei++) {
     var e = edges[ei], s1 = stations[e[0]], s2 = stations[e[1]];
@@ -66,23 +65,20 @@ window.RailPredictMap = { init: function () {
   }
   [0, 1, 2].forEach(function (t) { gZoom.appendChild(el("path", { d: gp[t], stroke: GREY[t].c, "stroke-width": GREY[t].w, "stroke-opacity": GREY[t].o, fill: "none", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" })); });
 
-  // --- Journeys: faint guide line + a bright streak stretched along it ---
+  // --- Journeys: a single node travelling along each service's route. The route
+  // itself isn't drawn (it lies on the grey network), so nothing overlaps. ---
   var jobjs = [];
   for (var ji = 0; ji < journeys.length; ji++) {
     var j = journeys[ji], pts = [];
     for (var pk = 0; pk < j.p.length; pk++) { var s = stations[j.p[pk]]; if (s) pts.push([lon2px(s[0]), lat2px(s[1])]); }
     if (pts.length < 2) continue;
-    var d = "M" + pts.map(function (p) { return p[0].toFixed(1) + " " + p[1].toFixed(1); }).join("L");
-    var guide = el("path", { d: d, stroke: COL[j.b], "stroke-width": "1.4", "stroke-opacity": "0", fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" });
-    var glow = el("path", { d: d, stroke: COL[j.b], "stroke-width": "5", "stroke-opacity": "0", fill: "none", "stroke-linecap": "round" });
-    var core = el("path", { d: d, stroke: BRIGHT[j.b], "stroke-width": "2.4", "stroke-opacity": "0", fill: "none", "stroke-linecap": "round" });
-    var arr = el("circle", { fill: BRIGHT[j.b], "fill-opacity": "0", display: "none" });
-    gZoom.appendChild(guide); gZoom.appendChild(glow); gZoom.appendChild(core); gZoom.appendChild(arr);
-    var len = guide.getTotalLength ? guide.getTotalLength() : 0;
-    glow.setAttribute("stroke-dasharray", DASH + " " + (len + DASH));
-    core.setAttribute("stroke-dasharray", DASH + " " + (len + DASH));
+    var cum = [0];
+    for (var ck = 1; ck < pts.length; ck++) cum[ck] = cum[ck - 1] + Math.hypot(pts[ck][0] - pts[ck - 1][0], pts[ck][1] - pts[ck - 1][1]);
+    var halo = el("circle", { fill: COL[j.b], "fill-opacity": "0", display: "none" });
+    var core = el("circle", { fill: BRIGHT[j.b], "fill-opacity": "0", display: "none" });
+    gZoom.appendChild(halo); gZoom.appendChild(core);
     var last = pts[pts.length - 1];
-    jobjs.push({ j: j, guide: guide, glow: glow, core: core, arr: arr, len: len, lx: last[0], ly: last[1], depMin: j.dep, durMin: j.dur });
+    jobjs.push({ j: j, pts: pts, cum: cum, total: cum[cum.length - 1], halo: halo, core: core, lx: last[0], ly: last[1], depMin: j.dep, durMin: j.dur });
   }
 
   // --- Pan / zoom (persisted across re-inits) ---
@@ -115,30 +111,31 @@ window.RailPredictMap = { init: function () {
   var RT = 210000;     // ms to replay the full day
   var SETTLE_MIN = 9;  // replay-minutes a service lingers in "Just settled"
   function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function place(o, x, y, r, alpha) {
+    o.core.setAttribute("cx", x.toFixed(1)); o.core.setAttribute("cy", y.toFixed(1)); o.core.setAttribute("r", r.toFixed(2)); o.core.setAttribute("fill-opacity", (0.98 * alpha).toFixed(2)); o.core.setAttribute("display", "");
+    o.halo.setAttribute("cx", x.toFixed(1)); o.halo.setAttribute("cy", y.toFixed(1)); o.halo.setAttribute("r", (r * 2.3).toFixed(2)); o.halo.setAttribute("fill-opacity", (0.32 * alpha).toFixed(2)); o.halo.setAttribute("display", "");
+  }
 
   function frame(now) {
     if (RP._t0 == null) RP._t0 = now;
     var clock = (((now - RP._t0) % RT) / RT) * 1440; // minutes since midnight (replay)
-    var rb = 3.6 / view.k, track = [], settled = [];
+    var rb = 3.4 / view.k, track = [], settled = [];
     for (var i = 0; i < jobjs.length; i++) {
       var o = jobjs[i], end = o.depMin + o.durMin;
       if (clock >= o.depMin && clock < end) {
-        var tp = (clock - o.depMin) / o.durMin, fade = Math.min(1, tp / 0.05) * Math.min(1, (1 - tp) / 0.05 + 0.6);
-        var off = (-tp * o.len).toFixed(1);
-        o.guide.setAttribute("stroke-opacity", (0.3 * Math.min(1, tp / 0.05)).toFixed(2));
-        o.glow.setAttribute("stroke-dashoffset", off); o.glow.setAttribute("stroke-opacity", (0.32 * fade).toFixed(2));
-        o.core.setAttribute("stroke-dashoffset", off); o.core.setAttribute("stroke-opacity", (0.96 * fade).toFixed(2));
-        o.arr.setAttribute("display", "none");
+        // node position by arc length along the route (constant speed)
+        var tp = (clock - o.depMin) / o.durMin, d = tp * o.total, si = 0;
+        while (si < o.pts.length - 2 && o.cum[si + 1] < d) si++;
+        var segLen = o.cum[si + 1] - o.cum[si], f = segLen > 0 ? (d - o.cum[si]) / segLen : 0;
+        var a = o.pts[si], b = o.pts[si + 1];
+        place(o, a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, rb, 1);
         track.push(o.j);
       } else if (clock >= end && clock < end + SETTLE_MIN) {
         var sf = (clock - end) / SETTLE_MIN;
-        o.guide.setAttribute("stroke-opacity", (0.3 * (1 - sf)).toFixed(2));
-        o.glow.setAttribute("stroke-opacity", "0"); o.core.setAttribute("stroke-opacity", "0");
-        o.arr.setAttribute("cx", o.lx.toFixed(1)); o.arr.setAttribute("cy", o.ly.toFixed(1));
-        o.arr.setAttribute("r", (rb * (1 + 0.9 * (1 - sf))).toFixed(2)); o.arr.setAttribute("fill-opacity", (0.95 * (1 - sf)).toFixed(2)); o.arr.setAttribute("display", "");
+        place(o, o.lx, o.ly, rb * (1 + 0.8 * (1 - sf)), 1 - sf); // small pop on arrival
         settled.push(o.j);
       } else {
-        o.guide.setAttribute("stroke-opacity", "0"); o.glow.setAttribute("stroke-opacity", "0"); o.core.setAttribute("stroke-opacity", "0"); o.arr.setAttribute("display", "none");
+        o.core.setAttribute("display", "none"); o.halo.setAttribute("display", "none");
       }
     }
     if (clockEl) clockEl.textContent = pad(Math.floor(clock / 60)) + ":" + pad(Math.floor(clock % 60));
