@@ -18,6 +18,7 @@ use crate::export::demo::human_count;
 const TEMPLATE: &str = include_str!("map_template.html");
 const MAP_B64: &str = include_str!("assets/gb_map.b64");
 const MAP_BOUNDS: &str = include_str!("assets/gb_map_bounds.json");
+const STATIONS: &str = include_str!("assets/stations.json");
 const MAP_JS: &str = include_str!("map_render.js");
 
 /// One train placed on the map. `o`/`d` are `[lon, lat]` (GeoJSON/d3 order).
@@ -193,6 +194,7 @@ pub fn render_map_html(data: &MapData) -> anyhow::Result<String> {
     let html = TEMPLATE
         .replace("__MAP_B64__", MAP_B64.trim())
         .replace("__MAP_BOUNDS__", MAP_BOUNDS.trim())
+        .replace("__STATIONS__", STATIONS.trim())
         .replace("__MAP_DATA__", &json)
         .replace("/* __MAP_JS__ */", MAP_JS);
     Ok(html)
@@ -258,7 +260,7 @@ mod tests {
             trains: vec![to_map_train(&raw("WATRLMN", Some("GLGC"))).unwrap()],
         };
         let html = render_map_html(&data).unwrap();
-        for tok in ["__MAP_B64__", "__MAP_BOUNDS__", "__MAP_DATA__", "/* __MAP_JS__ */"] {
+        for tok in ["__MAP_B64__", "__MAP_BOUNDS__", "__STATIONS__", "__MAP_DATA__", "/* __MAP_JS__ */"] {
             assert!(!html.contains(tok), "placeholder {tok} not replaced");
         }
         assert!(html.contains("data:image/png;base64,")); // basemap snapshot inlined

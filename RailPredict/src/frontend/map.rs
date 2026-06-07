@@ -29,6 +29,7 @@ use crate::frontend::layout::{base, NavPage};
 
 const MAP_B64: &str = include_str!("../export/assets/gb_map.b64");
 const MAP_BOUNDS: &str = include_str!("../export/assets/gb_map_bounds.json");
+const STATIONS: &str = include_str!("../export/assets/stations.json");
 const MAP_JS: &str = include_str!("../export/map_render.js");
 
 // ---------------------------------------------------------------------------
@@ -267,9 +268,10 @@ r#"
         // 1. Seed the basemap snapshot + its bounds before the renderer runs.
         script {
             (PreEscaped(format!(
-                "window.MAP_IMG=\"data:image/png;base64,{b64}\";window.MAP_BOUNDS={bounds};window.MAP={{trains:[]}};",
+                "window.MAP_IMG=\"data:image/png;base64,{b64}\";window.MAP_BOUNDS={bounds};window.MAP_STATIONS={stations};window.MAP={{trains:[]}};",
                 b64 = MAP_B64.trim(),
                 bounds = MAP_BOUNDS.trim(),
+                stations = STATIONS.trim(),
             )))
         }
         // 2. Renderer — exposes RailPredictMap.init().
