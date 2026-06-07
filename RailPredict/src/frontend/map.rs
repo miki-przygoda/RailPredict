@@ -261,7 +261,7 @@ r#"
                     div .map-info {
                         b { "What you're seeing: " }
                         "a replay of yesterday's full day on the GB network (clock = time of day). "
-                        "Faint grey shows the lines, brighter where busier; each bright streak is a "
+                        "Grey shows the network, brighter where busier; each bright node is a "
                         "real service running its route, coloured by delay (green/amber/red). Watch "
                         "the morning peak build and the network quieten overnight. Scroll to zoom; ⛶ fullscreen."
                     }
