@@ -120,6 +120,7 @@
     var w = windows[id];
     if (!w) return;
     if (w.dragAbort) w.dragAbort.abort(); // remove this window's document drag listeners
+    if (w.resizeAbort) w.resizeAbort.abort(); // ...and its resize listeners
     if (w.body && w.body._replayTimer) clearInterval(w.body._replayTimer); // stop replay cycling
     w.el.parentNode && w.el.parentNode.removeChild(w.el);
     delete windows[id];
@@ -133,8 +134,6 @@
     // removed when the window closes (no global-listener leak).
     var ac = new AbortController();
     var sig = ac.signal;
-    var wid = getId();
-    if (windows[wid]) windows[wid].dragAbort = ac;
 
     bar.addEventListener("mousedown", function (e) {
       // Don't drag if clicking traffic-light buttons
@@ -168,6 +167,41 @@
     document.addEventListener("mouseup", function () {
       dragging = false;
     }, { signal: sig });
+
+    return ac;
+  }
+
+  /* ── Resize logic (drag the bottom-right grip) ────────────────── */
+  function makeResizable(handle, el, getId) {
+    var startX, startY, origW, origH, resizing = false;
+    var ac = new AbortController();
+    var sig = ac.signal;
+
+    handle.addEventListener("mousedown", function (e) {
+      var w = windows[getId()];
+      if (w && w.isMax) return; // can't resize a maximised window
+      resizing = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      var r = captureRect(el);
+      origW = r.w;
+      origH = r.h;
+      focusWin(getId());
+      e.preventDefault();
+      e.stopPropagation(); // don't also start a drag
+    }, { signal: sig });
+
+    document.addEventListener("mousemove", function (e) {
+      if (!resizing) return;
+      el.style.width  = Math.max(360, origW + (e.clientX - startX)) + "px";
+      el.style.height = Math.max(240, origH + (e.clientY - startY)) + "px";
+    }, { signal: sig });
+
+    document.addEventListener("mouseup", function () {
+      resizing = false;
+    }, { signal: sig });
+
+    return ac;
   }
 
   /* ── Create a window ──────────────────────────────────────────── */
@@ -224,8 +258,15 @@
     // Focus on click anywhere in window
     win.addEventListener("mousedown", function () { focusWin(id); });
 
-    // Drag
-    makeDraggable(bar, win, function () { return id; });
+    // Resize grip (bottom-right corner)
+    var grip = document.createElement("div");
+    grip.className = "win-resize";
+    grip.setAttribute("aria-label", "Resize");
+    win.appendChild(grip);
+
+    // Drag + resize — keep the AbortControllers so closeWin() can detach listeners
+    var dragAbort = makeDraggable(bar, win, function () { return id; });
+    var resizeAbort = makeResizable(grip, win, function () { return id; });
 
     // Double-click title bar to toggle max
     bar.addEventListener("dblclick", function (e) {
@@ -242,7 +283,8 @@
 
     windows[id] = {
       el: win, bar: bar, body: body,
-      isMin: false, isMax: false, prevRect: r
+      isMin: false, isMax: false, prevRect: r,
+      dragAbort: dragAbort, resizeAbort: resizeAbort
     };
 
     updateDockDot(id);

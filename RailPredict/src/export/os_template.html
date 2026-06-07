@@ -192,6 +192,20 @@
     position: relative;
     background: #f7f8fa;
   }
+  /* Drag-to-resize grip, bottom-right corner */
+  .win-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    z-index: 6;
+    background:
+      linear-gradient(135deg, transparent 0 50%, rgba(120,140,170,.55) 50% 60%, transparent 60% 72%, rgba(120,140,170,.55) 72% 82%, transparent 82%);
+    border-bottom-right-radius: var(--win-radius);
+  }
+  .win.max .win-resize { display: none; }
 
   /* ── Dock ─────────────────────────────────────────────────────── */
   #dock {
