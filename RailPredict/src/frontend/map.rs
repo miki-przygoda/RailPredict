@@ -190,7 +190,11 @@ r#"
 .cc-rail-head.track::before { background:var(--accent); }
 .cc-rail-head.settled::before { background:var(--ok); }
 .cc-map { position:relative; background:#1b1d22; min-height:560px; }
-#map-svg { position:absolute; inset:0; width:100%; height:100%; }
+#map-svg { position:absolute; inset:0; width:100%; height:100%; cursor:grab; }
+#map-svg:active { cursor:grabbing; }
+.map-fs { position:absolute; top:12px; right:12px; z-index:6; width:30px; height:30px; display:flex; align-items:center; justify-content:center; background:rgba(8,20,36,.72); border:1px solid rgba(127,178,232,.32); border-radius:7px; color:#9ec3ef; font-size:15px; cursor:pointer; backdrop-filter:blur(6px); }
+.map-fs:hover { background:rgba(20,40,68,.9); color:#fff; }
+.map-hint { position:absolute; left:12px; bottom:10px; z-index:6; font:600 9px var(--font-mono); color:#7f93ad; letter-spacing:.04em; text-transform:uppercase; pointer-events:none; text-shadow:0 1px 3px #000; }
 .kcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:11px 13px; margin-bottom:8px; }
 .kcard .kn { font:800 22px var(--font-sans); color:var(--accent); }
 .kcard .kl { font:600 9px var(--font-mono); color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
@@ -228,9 +232,11 @@ r#"
                     div # "rail-settled" { p .map-empty { "—" } }
                 }
 
-                // Centre — map canvas
+                // Centre — map canvas + controls
                 main .cc-map {
                     svg # "map-svg" {}
+                    button # "map-fs" .map-fs title="Fullscreen" aria-label="Fullscreen" { "⛶" }
+                    span .map-hint { "scroll to zoom · drag to pan" }
                 }
 
                 // Right rail — server-rendered KPIs + info
@@ -246,10 +252,10 @@ r#"
                     }
                     div .map-info {
                         b { "What you're seeing: " }
-                        "the GB rail network — a node at every station, lines for the "
-                        "connections we've observed in service. Each large dot is a live "
-                        "train at its origin, coloured green (on time), amber (slight "
-                        "delay), or red (late). The left panel shows predicted → actual."
+                        "the GB rail network lit by delay — every line coloured by how late "
+                        "trains actually run on it (green on time, amber slight, red chronic). "
+                        "White pulses flow along the busiest corridors. Scroll to zoom into "
+                        "any region; the left panel shows live predicted → actual outcomes."
                     }
                     div .map-info style="margin-top:16px;font-size:10.5px;" {
                         "Map © OpenStreetMap contributors © CARTO"

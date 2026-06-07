@@ -34,7 +34,11 @@
   .mini .pa small{display:block;font:700 6.5px var(--mono);color:var(--dim);text-transform:uppercase}
   .empty{color:var(--dim);font:600 11px var(--mono);padding:8px 0}
   .cc-map{position:relative;background:#1b1d22}
-  #map-svg{position:absolute;inset:0;width:100%;height:100%}
+  #map-svg{position:absolute;inset:0;width:100%;height:100%;cursor:grab}
+  #map-svg:active{cursor:grabbing}
+  .map-fs{position:absolute;top:12px;right:12px;z-index:6;width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(8,20,36,.72);border:1px solid rgba(127,178,232,.32);border-radius:7px;color:#9ec3ef;font-size:15px;cursor:pointer;backdrop-filter:blur(6px)}
+  .map-fs:hover{background:rgba(20,40,68,.9);color:#fff}
+  .map-hint{position:absolute;left:12px;bottom:10px;z-index:6;font:600 9px var(--mono);color:#7f93ad;letter-spacing:.04em;text-transform:uppercase;pointer-events:none;text-shadow:0 1px 3px #000}
   .kcard{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px}
   .kcard .n{font:800 20px var(--sans);color:var(--accent-ink)} .kcard .l{font:600 9px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
   .info{font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px} .info b{color:var(--ink)}
@@ -60,7 +64,10 @@
       <div class="rail-h s">Just settled</div>
       <div id="rail-settled"><p class="empty">…</p></div>
     </aside>
-    <main class="cc-map"><svg id="map-svg"></svg></main>
+    <main class="cc-map"><svg id="map-svg"></svg>
+      <button id="map-fs" class="map-fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+      <span class="map-hint">scroll to zoom · drag to pan</span>
+    </main>
     <aside class="rail r">
       <div class="rail-h">The numbers</div>
       <div class="kcard"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean prediction error</div></div>
@@ -68,7 +75,7 @@
       <div class="kcard"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
       <div class="kcard"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
       <div class="kcard"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
-      <div class="info"><b>What you're seeing:</b> the GB rail network — a node at every station, lines for the connections we've observed in service. Each large dot is a live train at its origin, coloured by predicted delay. The left rail shows predicted→actual outcomes.</div>
+      <div class="info"><b>What you're seeing:</b> the GB rail network lit by delay — every line coloured by how late trains actually run on it (green on time, amber slight, red chronic). White pulses flow along the busiest corridors. Scroll to zoom; the left rail shows live predicted→actual outcomes.</div>
     </aside>
   </div>
   <div class="cc-foot">
