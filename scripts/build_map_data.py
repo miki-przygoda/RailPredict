@@ -252,7 +252,7 @@ def main():
     ap.add_argument("--from", dest="dfrom", help="range start YYYY-MM-DD")
     ap.add_argument("--to", dest="dto", help="range end YYYY-MM-DD")
     ap.add_argument("--db", default=os.environ.get("DATABASE_URL"), help="DB URL (default $DATABASE_URL)")
-    ap.add_argument("--max-journeys", type=int, default=1000)
+    ap.add_argument("--max-journeys", type=int, default=1500)
     ap.add_argument("--max-replay", type=int, default=1800)
     a = ap.parse_args()
     if not a.db:
