@@ -192,7 +192,7 @@ r#"
 .cc-rail-head::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--text-dim); }
 .cc-rail-head.track::before { background:var(--accent); }
 .cc-rail-head.settled::before { background:var(--ok); }
-.cc-map { position:relative; background:radial-gradient(120% 70% at 50% -5%, #13233b, #0a0e12); min-height:560px; }
+.cc-map { position:relative; background:linear-gradient(180deg, #0d1f38 0%, #091627 100%); min-height:560px; }
 #map-svg { position:absolute; inset:0; width:100%; height:100%; }
 .kcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:11px 13px; margin-bottom:8px; }
 .kcard .kn { font:800 22px var(--font-sans); color:var(--accent); }
