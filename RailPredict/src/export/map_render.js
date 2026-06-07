@@ -81,10 +81,8 @@ window.RailPredictMap = { init: function () {
     var len = guide.getTotalLength ? guide.getTotalLength() : 0;
     glow.setAttribute("stroke-dasharray", DASH + " " + (len + DASH));
     core.setAttribute("stroke-dasharray", DASH + " " + (len + DASH));
-    var travelDur = Math.max(11000, Math.min(32000, len * 28));
-    var settleDur = 3600, gapDur = 2600 + (ji % 6) * 850, T = travelDur + settleDur + gapDur;
     var last = pts[pts.length - 1];
-    jobjs.push({ j: j, guide: guide, glow: glow, core: core, arr: arr, len: len, lx: last[0], ly: last[1], travelDur: travelDur, settleDur: settleDur, T: T, offset: (ji * 3203) % T });
+    jobjs.push({ j: j, guide: guide, glow: glow, core: core, arr: arr, len: len, lx: last[0], ly: last[1], depMin: j.dep, durMin: j.dur });
   }
 
   // --- Pan / zoom (persisted across re-inits) ---
@@ -113,24 +111,27 @@ window.RailPredictMap = { init: function () {
     var right = settled ? delayVal(j.dly) : "en route", sub = settled ? (j.b === 0 ? "on time" : j.b === 1 ? "slight" : "late") : "live";
     return '<div class="mini" style="--c:' + COL[j.b] + '"><span class="hc">' + esc(j.lbl) + '</span><span class="rt">' + esc(j.o) + ' → ' + esc(j.d) + '</span><span class="pa">' + right + '<small>' + sub + '</small></span></div>';
   }
-  var trackBox = document.getElementById("rail-track"), settleBox = document.getElementById("rail-settled"), lastBanner = 0;
+  var trackBox = document.getElementById("rail-track"), settleBox = document.getElementById("rail-settled"), clockEl = document.getElementById("map-clock"), lastBanner = 0;
+  var RT = 210000;     // ms to replay the full day
+  var SETTLE_MIN = 9;  // replay-minutes a service lingers in "Just settled"
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
 
   function frame(now) {
     if (RP._t0 == null) RP._t0 = now;
-    var elapsed = now - RP._t0, rb = 3.6 / view.k, track = [], settled = [];
+    var clock = (((now - RP._t0) % RT) / RT) * 1440; // minutes since midnight (replay)
+    var rb = 3.6 / view.k, track = [], settled = [];
     for (var i = 0; i < jobjs.length; i++) {
-      var o = jobjs[i], local = (elapsed + o.offset) % o.T;
-      if (local < o.travelDur) {
-        // streak stretched along the line, sliding from start to end
-        var tp = local / o.travelDur, fade = Math.min(1, tp / 0.05) * Math.min(1, (1 - tp) / 0.05 + 0.6);
+      var o = jobjs[i], end = o.depMin + o.durMin;
+      if (clock >= o.depMin && clock < end) {
+        var tp = (clock - o.depMin) / o.durMin, fade = Math.min(1, tp / 0.05) * Math.min(1, (1 - tp) / 0.05 + 0.6);
         var off = (-tp * o.len).toFixed(1);
         o.guide.setAttribute("stroke-opacity", (0.3 * Math.min(1, tp / 0.05)).toFixed(2));
         o.glow.setAttribute("stroke-dashoffset", off); o.glow.setAttribute("stroke-opacity", (0.32 * fade).toFixed(2));
         o.core.setAttribute("stroke-dashoffset", off); o.core.setAttribute("stroke-opacity", (0.96 * fade).toFixed(2));
         o.arr.setAttribute("display", "none");
         track.push(o.j);
-      } else if (local < o.travelDur + o.settleDur) {
-        var sf = (local - o.travelDur) / o.settleDur;
+      } else if (clock >= end && clock < end + SETTLE_MIN) {
+        var sf = (clock - end) / SETTLE_MIN;
         o.guide.setAttribute("stroke-opacity", (0.3 * (1 - sf)).toFixed(2));
         o.glow.setAttribute("stroke-opacity", "0"); o.core.setAttribute("stroke-opacity", "0");
         o.arr.setAttribute("cx", o.lx.toFixed(1)); o.arr.setAttribute("cy", o.ly.toFixed(1));
@@ -140,10 +141,11 @@ window.RailPredictMap = { init: function () {
         o.guide.setAttribute("stroke-opacity", "0"); o.glow.setAttribute("stroke-opacity", "0"); o.core.setAttribute("stroke-opacity", "0"); o.arr.setAttribute("display", "none");
       }
     }
+    if (clockEl) clockEl.textContent = pad(Math.floor(clock / 60)) + ":" + pad(Math.floor(clock % 60));
     if (now - lastBanner > 250) {
       lastBanner = now;
-      if (trackBox) trackBox.innerHTML = track.slice(0, 7).map(function (j) { return jcard(j, false); }).join("") || '<p class="empty">—</p>';
-      if (settleBox) settleBox.innerHTML = settled.slice(0, 5).map(function (j) { return jcard(j, true); }).join("") || '<p class="empty">—</p>';
+      if (trackBox) trackBox.innerHTML = track.slice(0, 8).map(function (j) { return jcard(j, false); }).join("") || '<p class="empty">—</p>';
+      if (settleBox) settleBox.innerHTML = settled.slice(0, 6).map(function (j) { return jcard(j, true); }).join("") || '<p class="empty">—</p>';
     }
     RP._raf = requestAnimationFrame(frame);
   }

@@ -39,6 +39,9 @@
   .map-fs{position:absolute;top:12px;right:12px;z-index:6;width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(8,20,36,.72);border:1px solid rgba(127,178,232,.32);border-radius:7px;color:#9ec3ef;font-size:15px;cursor:pointer;backdrop-filter:blur(6px)}
   .map-fs:hover{background:rgba(20,40,68,.9);color:#fff}
   .map-hint{position:absolute;left:12px;bottom:10px;z-index:6;font:600 9px var(--mono);color:#7f93ad;letter-spacing:.04em;text-transform:uppercase;pointer-events:none;text-shadow:0 1px 3px #000}
+  .map-clock-wrap{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;display:flex;flex-direction:column;align-items:center;gap:1px;background:rgba(8,20,36,.74);border:1px solid rgba(127,178,232,.32);border-radius:9px;padding:5px 16px;backdrop-filter:blur(6px)}
+  .map-clock-wrap .lbl{font:700 7.5px var(--mono);color:#7f93ad;letter-spacing:.1em;text-transform:uppercase}
+  #map-clock{font:800 18px var(--mono);color:#cfe6ff;letter-spacing:.03em;line-height:1.1}
   .kcard{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px}
   .kcard .n{font:800 20px var(--sans);color:var(--accent-ink)} .kcard .l{font:600 9px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
   .info{font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px} .info b{color:var(--ink)}
@@ -65,6 +68,7 @@
       <div id="rail-settled"><p class="empty">…</p></div>
     </aside>
     <main class="cc-map"><svg id="map-svg"></svg>
+      <div class="map-clock-wrap"><span class="lbl">Replaying yesterday</span><b id="map-clock">--:--</b></div>
       <button id="map-fs" class="map-fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
       <span class="map-hint">scroll to zoom · drag to pan</span>
     </main>
@@ -75,7 +79,7 @@
       <div class="kcard"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
       <div class="kcard"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
       <div class="kcard"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
-      <div class="info"><b>What you're seeing:</b> the GB rail network in faint grey (brighter where more trains run). Real multi-stop journeys run their full routes as bright streaks coloured by delay (green on time, amber slight, red late) — each shows in Tracking while running, Just settled on arrival. Scroll to zoom; ⛶ fullscreen.</div>
+      <div class="info"><b>What you're seeing:</b> a replay of yesterday's full day on the GB network (clock = time of day). Faint grey shows the lines, brighter where busier; each bright streak is a real service running its route, coloured by delay (green/amber/red). Watch the morning peak build and the network quieten overnight. Scroll to zoom; ⛶ fullscreen.</div>
     </aside>
   </div>
   <div class="cc-foot">
