@@ -1,9 +1,9 @@
 //! `/map` live dashboard page + `/ui/map/snapshot` feed.
 //!
 //! Reuses the offline map renderer (`export::map`) driven by the live tracking
-//! registry and recently-settled trains — the same GeoJSON, D3, and JS renderer
-//! that power the offline export, inlined via `include_str!` so there is a single
-//! source of truth with no static duplication.
+//! registry and recently-settled trains — the same baked basemap snapshot and JS
+//! renderer that power the offline export, inlined via `include_str!` so there is
+//! a single source of truth with no static duplication.
 //!
 //! ## Endpoints
 //! - `GET /map` — server-rendered command-centre shell (maud); KPIs are
@@ -27,9 +27,8 @@ use crate::frontend::layout::{base, NavPage};
 // Assets inlined once at compile time — shared with `export::map`, no duplication
 // ---------------------------------------------------------------------------
 
-const D3: &str = include_str!("../export/assets/d3.v7.min.js");
-const GB_OUTLINE: &str = include_str!("../export/assets/gb_outline.geojson");
-const GB_RAIL: &str = include_str!("../export/assets/gb_rail.geojson");
+const MAP_B64: &str = include_str!("../export/assets/gb_map.b64");
+const MAP_BOUNDS: &str = include_str!("../export/assets/gb_map_bounds.json");
 const MAP_JS: &str = include_str!("../export/map_render.js");
 
 // ---------------------------------------------------------------------------
@@ -171,10 +170,6 @@ pub async fn map_page(State(state): State<AppState>) -> Markup {
     let pct =
         |v: Option<f64>| v.map(|x| format!("{x:.0}%")).unwrap_or_else(|| "—".to_string());
 
-    // Escape `</` in the GeoJSON blobs so they can't break out of a <script> tag.
-    let outline_safe = GB_OUTLINE.replace("</", "<\\/");
-    let rail_safe = GB_RAIL.replace("</", "<\\/");
-
     let body = html! {
         style {
 r#"
@@ -192,7 +187,7 @@ r#"
 .cc-rail-head::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--text-dim); }
 .cc-rail-head.track::before { background:var(--accent); }
 .cc-rail-head.settled::before { background:var(--ok); }
-.cc-map { position:relative; background:linear-gradient(180deg, #0d1f38 0%, #091627 100%); min-height:560px; }
+.cc-map { position:relative; background:#1b1d22; min-height:560px; }
 #map-svg { position:absolute; inset:0; width:100%; height:100%; }
 .kcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:11px 13px; margin-bottom:8px; }
 .kcard .kn { font:800 22px var(--font-sans); color:var(--accent); }
@@ -255,7 +250,7 @@ r#"
                         "The left panel mirrors predicted → actual outcomes."
                     }
                     div .map-info style="margin-top:16px;font-size:10.5px;" {
-                        "Map © Crown copyright/ONS (OGL) · rail © OpenStreetMap (ODbL) · D3 (ISC)"
+                        "Map © OpenStreetMap contributors © CARTO"
                     }
                 }
             }
@@ -269,19 +264,17 @@ r#"
         }
 
         // ── Inline assets (compile-time, single source of truth) ─────────
-        // 1. Seed the global window vars before the renderer runs.
+        // 1. Seed the basemap snapshot + its bounds before the renderer runs.
         script {
             (PreEscaped(format!(
-                "window.GB_OUTLINE={outline};window.GB_RAIL={rail};window.MAP={{trains:[]}};",
-                outline = outline_safe,
-                rail = rail_safe,
+                "window.MAP_IMG=\"data:image/png;base64,{b64}\";window.MAP_BOUNDS={bounds};window.MAP={{trains:[]}};",
+                b64 = MAP_B64.trim(),
+                bounds = MAP_BOUNDS.trim(),
             )))
         }
-        // 2. D3 v7 — required by map_render.js.
-        script { (PreEscaped(D3)) }
-        // 3. Renderer — exposes RailPredictMap.init().
+        // 2. Renderer — exposes RailPredictMap.init().
         script { (PreEscaped(MAP_JS)) }
-        // 4. Polling driver — fetch snapshot every 20 s and re-init the renderer.
+        // 3. Polling driver — fetch snapshot every 20 s and re-init the renderer.
         script {
             (PreEscaped(r#"
 (function(){

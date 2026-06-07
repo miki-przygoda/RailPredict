@@ -12,9 +12,8 @@ use serde::Serialize;
 use crate::db::Db;
 
 const TEMPLATE: &str = include_str!("os_template.html");
-const D3: &str = include_str!("assets/d3.v7.min.js");
-const GB_OUTLINE: &str = include_str!("assets/gb_outline.geojson");
-const GB_RAIL: &str = include_str!("assets/gb_rail.geojson");
+const MAP_B64: &str = include_str!("assets/gb_map.b64");
+const MAP_BOUNDS: &str = include_str!("assets/gb_map_bounds.json");
 const MAP_JS: &str = include_str!("map_render.js");
 const OS_JS: &str = include_str!("os_shell.js");
 const APPS_JS: &str = include_str!("os_apps.js");
@@ -57,16 +56,14 @@ pub async fn gather_os(db: &Db, days: u32) -> anyhow::Result<OsData> {
     })
 }
 
-/// Inline D3, both GeoJSON layers, the map renderer, the app renderers, the OS
-/// shell, and the data into the desktop template. Escapes `</` in JSON literals.
+/// Inline the basemap snapshot (base64), its bounds, the map renderer, the app
+/// renderers, the OS shell, and the data into the desktop template. Escapes `</`
+/// in JSON literals.
 pub fn render_os_html(data: &OsData) -> anyhow::Result<String> {
     let json = serde_json::to_string(data)?.replace("</", "<\\/");
-    let outline = GB_OUTLINE.replace("</", "<\\/");
-    let railjson = GB_RAIL.replace("</", "<\\/");
     let html = TEMPLATE
-        .replace("__D3__", D3)
-        .replace("__GB_OUTLINE__", &outline)
-        .replace("__GB_RAIL__", &railjson)
+        .replace("__MAP_B64__", MAP_B64.trim())
+        .replace("__MAP_BOUNDS__", MAP_BOUNDS.trim())
         .replace("__MAP_DATA__", &json)
         .replace("/* __MAP_JS__ */", MAP_JS)
         .replace("/* __APPS_JS__ */", APPS_JS)
@@ -110,10 +107,10 @@ mod tests {
     #[test]
     fn render_replaces_all_placeholders_and_inlines_apps() {
         let html = render_os_html(&fixture()).unwrap();
-        for tok in ["__D3__", "__GB_OUTLINE__", "__GB_RAIL__", "__MAP_DATA__", "/* __MAP_JS__ */", "/* __APPS_JS__ */", "/* __OS_JS__ */"] {
+        for tok in ["__MAP_B64__", "__MAP_BOUNDS__", "__MAP_DATA__", "/* __MAP_JS__ */", "/* __APPS_JS__ */", "/* __OS_JS__ */"] {
             assert!(!html.contains(tok), "placeholder {tok} not replaced");
         }
-        assert!(html.contains("geoConicConformal"), "d3 inlined");
+        assert!(html.contains("data:image/png;base64,"), "basemap snapshot inlined");
         assert!(html.contains("RailPredictMap"), "map renderer inlined");
         assert!(html.contains("window.OsApps"), "app renderers inlined");
         assert!(html.contains("openApp"), "os shell inlined");

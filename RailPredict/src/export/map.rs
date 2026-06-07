@@ -1,9 +1,9 @@
 //! Self-contained offline "command-centre" map (`export-map` CLI subcommand).
 //!
-//! Bakes a tall GB map of delay-coloured train dots (D3 + TopoJSON-free GeoJSON,
-//! all inlined) plus live predicted→actual banners and KPIs into one offline file.
-//! Train positions come from `cache::location_coords`; unresolved TIPLOCs are
-//! omitted (never faked). Mirrors `export::demo`.
+//! Bakes a real OSM/CARTO GB map snapshot (raster, base64-inlined) with
+//! delay-coloured train dots placed by lat/lon, plus predicted→actual banners and
+//! KPIs, into one offline file. Train positions come from `cache::location_coords`;
+//! unresolved TIPLOCs are omitted (never faked). Mirrors `export::demo`.
 
 use std::path::Path;
 
@@ -16,9 +16,8 @@ use crate::db::Db;
 use crate::export::demo::human_count;
 
 const TEMPLATE: &str = include_str!("map_template.html");
-const D3: &str = include_str!("assets/d3.v7.min.js");
-const GB_OUTLINE: &str = include_str!("assets/gb_outline.geojson");
-const GB_RAIL: &str = include_str!("assets/gb_rail.geojson");
+const MAP_B64: &str = include_str!("assets/gb_map.b64");
+const MAP_BOUNDS: &str = include_str!("assets/gb_map_bounds.json");
 const MAP_JS: &str = include_str!("map_render.js");
 
 /// One train placed on the map. `o`/`d` are `[lon, lat]` (GeoJSON/d3 order).
@@ -186,16 +185,14 @@ pub async fn gather_map(db: &Db, days: u32) -> anyhow::Result<MapData> {
     })
 }
 
-/// Inline D3, both GeoJSON layers, the renderer JS, and the data into the template.
-/// Escapes `</` in JSON literals so a stray `</script>` can't break out.
+/// Inline the basemap snapshot (base64), its Web-Mercator bounds, the renderer JS,
+/// and the data into the template. Escapes `</` in JSON literals so a stray
+/// `</script>` can't break out.
 pub fn render_map_html(data: &MapData) -> anyhow::Result<String> {
     let json = serde_json::to_string(data)?.replace("</", "<\\/");
-    let outline = GB_OUTLINE.replace("</", "<\\/");
-    let railjson = GB_RAIL.replace("</", "<\\/");
     let html = TEMPLATE
-        .replace("__D3__", D3)
-        .replace("__GB_OUTLINE__", &outline)
-        .replace("__GB_RAIL__", &railjson)
+        .replace("__MAP_B64__", MAP_B64.trim())
+        .replace("__MAP_BOUNDS__", MAP_BOUNDS.trim())
         .replace("__MAP_DATA__", &json)
         .replace("/* __MAP_JS__ */", MAP_JS);
     Ok(html)
@@ -261,10 +258,10 @@ mod tests {
             trains: vec![to_map_train(&raw("WATRLMN", Some("GLGC"))).unwrap()],
         };
         let html = render_map_html(&data).unwrap();
-        for tok in ["__D3__", "__GB_OUTLINE__", "__GB_RAIL__", "__MAP_DATA__", "/* __MAP_JS__ */"] {
+        for tok in ["__MAP_B64__", "__MAP_BOUNDS__", "__MAP_DATA__", "/* __MAP_JS__ */"] {
             assert!(!html.contains(tok), "placeholder {tok} not replaced");
         }
-        assert!(html.contains("geoConicConformal")); // d3 inlined
-        assert!(html.contains("requestAnimationFrame")); // renderer inlined
+        assert!(html.contains("data:image/png;base64,")); // basemap snapshot inlined
+        assert!(html.contains("RailPredictMap")); // renderer inlined
     }
 }

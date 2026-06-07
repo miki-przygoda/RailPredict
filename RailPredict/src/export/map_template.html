@@ -33,7 +33,7 @@
   .mini .pa{grid-column:2;grid-row:1/3;align-self:center;font:700 11px var(--mono);text-align:right}
   .mini .pa small{display:block;font:700 6.5px var(--mono);color:var(--dim);text-transform:uppercase}
   .empty{color:var(--dim);font:600 11px var(--mono);padding:8px 0}
-  .cc-map{position:relative;background:linear-gradient(180deg,#0d1f38 0%,#091627 100%)}
+  .cc-map{position:relative;background:#1b1d22}
   #map-svg{position:absolute;inset:0;width:100%;height:100%}
   .kcard{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px}
   .kcard .n{font:800 20px var(--sans);color:var(--accent-ink)} .kcard .l{font:600 9px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
@@ -75,11 +75,10 @@
     <span class="lg"><b style="background:#34d399"></b>on time</span>
     <span class="lg"><b style="background:#f2c14e"></b>slight</span>
     <span class="lg"><b style="background:#f04545"></b>late</span>
-    <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · map © Crown copyright/ONS (OGL) · rail © OpenStreetMap (ODbL) · D3 (ISC) · fully offline</span>
+    <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · © OpenStreetMap contributors © CARTO · fully offline</span>
   </div>
 </div>
-<script>__D3__</script>
-<script>window.GB_OUTLINE=__GB_OUTLINE__;window.GB_RAIL=__GB_RAIL__;window.MAP=__MAP_DATA__;</script>
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP=__MAP_DATA__;</script>
 <script>/* __MAP_JS__ */</script>
 <script>RailPredictMap.init();</script>
 </body>
