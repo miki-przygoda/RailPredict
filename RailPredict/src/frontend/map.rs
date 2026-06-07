@@ -193,12 +193,7 @@ r#"
 .cc-rail-head.track::before { background:var(--accent); }
 .cc-rail-head.settled::before { background:var(--ok); }
 .cc-map { position:relative; background:linear-gradient(180deg, #0d1f38 0%, #091627 100%); min-height:560px; }
-#map-svg { position:absolute; inset:0; width:100%; height:100%; cursor:grab; }
-#map-svg:active { cursor:grabbing; }
-.map-zoom { position:absolute; left:50%; transform:translateX(-50%); bottom:14px; display:flex; align-items:center; gap:9px; background:rgba(8,20,36,.74); border:1px solid rgba(127,178,232,.32); border-radius:22px; padding:7px 14px; backdrop-filter:blur(6px); z-index:6; }
-.map-zoom input { width:170px; accent-color:#7fb2e8; cursor:pointer; }
-.map-zoom b { font:700 14px var(--font-mono); color:#9ecbf2; width:12px; text-align:center; user-select:none; }
-.map-zoom .lbl { font:600 9px var(--font-mono); color:#6f8fb4; text-transform:uppercase; letter-spacing:.06em; }
+#map-svg { position:absolute; inset:0; width:100%; height:100%; }
 .kcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:11px 13px; margin-bottom:8px; }
 .kcard .kn { font:800 22px var(--font-sans); color:var(--accent); }
 .kcard .kl { font:600 9px var(--font-mono); color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
@@ -236,15 +231,9 @@ r#"
                     div # "rail-settled" { p .map-empty { "—" } }
                 }
 
-                // Centre — map canvas + zoom slider
+                // Centre — map canvas
                 main .cc-map {
                     svg # "map-svg" {}
-                    div .map-zoom {
-                        span .lbl { "zoom" }
-                        b { "−" }
-                        input # "map-zoom" type="range" min="1" max="50" step="0.5" value="10" {}
-                        b { "+" }
-                    }
                 }
 
                 // Right rail — server-rendered KPIs + info

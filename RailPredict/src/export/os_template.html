@@ -482,12 +482,7 @@
     background: linear-gradient(180deg, #0d1f38 0%, #091627 100%);
     overflow: hidden;
   }
-  .win-body #map-svg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
-  .win-body #map-svg:active { cursor: grabbing; }
-  .win-body .map-zoom { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; display: flex; align-items: center; gap: 9px; background: rgba(8,20,36,.74); border: 1px solid rgba(127,178,232,.32); border-radius: 22px; padding: 7px 14px; backdrop-filter: blur(6px); z-index: 6; }
-  .win-body .map-zoom input { width: 170px; accent-color: #7fb2e8; cursor: pointer; }
-  .win-body .map-zoom b { font: 700 14px var(--mono); color: #9ecbf2; width: 12px; text-align: center; user-select: none; }
-  .win-body .map-zoom .lbl { font: 600 9px var(--mono); color: #6f8fb4; text-transform: uppercase; letter-spacing: .06em; }
+  .win-body #map-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   .win-body .kcard {
     background: #fff; border: 1px solid var(--line); border-radius: 8px;
     padding: 10px 11px; margin-bottom: 8px;
@@ -559,9 +554,7 @@
         <div class="rail-h s">Just settled</div>
         <div id="rail-settled"><p class="empty">…</p></div>
       </aside>
-      <main class="cc-map"><svg id="map-svg"></svg>
-        <div class="map-zoom"><span class="lbl">zoom</span><b>−</b><input id="map-zoom" type="range" min="1" max="50" step="0.5" value="10"><b>+</b></div>
-      </main>
+      <main class="cc-map"><svg id="map-svg"></svg></main>
       <aside class="rail r">
         <div class="rail-h">The numbers</div>
         <div class="kcard"><div class="n" data-fill="hero_number">—</div><div class="l">departures analysed</div></div>
