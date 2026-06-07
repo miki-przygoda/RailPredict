@@ -201,6 +201,7 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/ui/live/snapshot", get(live::live_snapshot))
         .route("/map", get(map::map_page))
         .route("/ui/map/snapshot", get(map::map_snapshot))
+        .route("/demo", get(map::demo_page))
         .route("/predictions", get(predictions::predictions_page))
         .route("/stations", get(stations::stations_page))
         .route("/stations/:crs", get(stations::station_page))

@@ -218,6 +218,17 @@ fn render_cockpit(
             }
 
             section .dash-section {
+                p .dash-section-label { "Demo" }
+                div .dash-nav-grid {
+                    a .dash-nav-card href="/demo" target="_blank" rel="noopener" {
+                        span .dnc-icon { (ICON_DEMO) }
+                        h3 { "RailPredict OS ↗" }
+                        p { "Full desktop showcase — replay a day across the network, the operator league, predicted-vs-actual & station reliability. Opens in a new tab." }
+                    }
+                }
+            }
+
+            section .dash-section {
                 p .dash-section-label { "Explore" }
                 div .dash-nav-grid {
                     (nav_card("/search", ICON_BOARD, "Departure Board", "Live departures from any UK station."))
@@ -269,3 +280,4 @@ const ICON_BOARD: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" heigh
 const ICON_CHART: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 2 4-6"/></svg>"#);
 const ICON_TROPHY: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12v3a6 6 0 0 1-12 0V4z"/><path d="M6 6H4v1a3 3 0 0 0 3 3M18 6h2v1a3 3 0 0 1-3 3M9 17h6M10 21h4M12 13v4"/></svg>"#);
 const ICON_EXPLORE: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>"#);
+const ICON_DEMO: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M10 8l4 2.5L10 13z"/></svg>"#);

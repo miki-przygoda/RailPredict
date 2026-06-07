@@ -13,10 +13,11 @@
 //!   TIPLOCs without known coordinates are silently omitted.
 
 use axum::extract::State;
-use axum::response::Json;
+use axum::response::{Html, Json};
 use maud::{html, Markup, PreEscaped};
 use serde::Serialize;
 
+use crate::api::types::ApiError;
 use crate::api::AppState;
 use crate::cache::{location_coords, location_names};
 use crate::db::{overview, predictions};
@@ -313,6 +314,18 @@ r#"
     };
 
     base("Map", NavPage::Map, body)
+}
+
+/// `GET /demo` — the self-contained "RailPredict OS" desktop, rendered live from
+/// the same generator that produces the offline `docs/os.html`. A full-screen
+/// standalone page (its own chrome), so it isn't wrapped in the dashboard nav.
+pub async fn demo_page(State(state): State<AppState>) -> Result<Html<String>, ApiError> {
+    let data = crate::export::os::gather_os(&state.db, 7)
+        .await
+        .map_err(|e| ApiError::internal(format!("demo data gather failed: {e}")))?;
+    let html = crate::export::os::render_os_html(&data)
+        .map_err(|e| ApiError::internal(format!("demo render failed: {e}")))?;
+    Ok(Html(html))
 }
 
 // ---------------------------------------------------------------------------
