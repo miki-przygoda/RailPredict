@@ -72,7 +72,7 @@ window.RailPredictMap = { init: function () {
   var zk = 1;
   var slider = document.getElementById("map-zoom");
   var sel = d3.select(svg);
-  var zoom = d3.zoom().scaleExtent([0.8, 10]).on("zoom", function (ev) {
+  var zoom = d3.zoom().scaleExtent([1, 50]).on("zoom", function (ev) {
     gZoom.setAttribute("transform", ev.transform.toString());
     zk = ev.transform.k;
     window.RailPredictMap._zt = ev.transform;
@@ -83,7 +83,10 @@ window.RailPredictMap = { init: function () {
   if (window.RailPredictMap._zt) {
     sel.call(zoom.transform, window.RailPredictMap._zt);  // restore prior view across re-init
   } else {
-    sel.call(zoom.scaleTo, 1.6);                           // start a touch zoomed-in
+    // Start zoomed well in (10×), centred over the dense N-England core so trains
+    // are on screen immediately; pan/slider take it from here.
+    var k0 = 10, c0 = projection([-1.9, 53.5]);
+    sel.call(zoom.transform, d3.zoomIdentity.translate(W / 2 - k0 * c0[0], H / 2 - k0 * c0[1]).scale(k0));
   }
 
   var trackBox = document.getElementById("rail-track");

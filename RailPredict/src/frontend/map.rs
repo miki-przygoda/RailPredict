@@ -242,7 +242,7 @@ r#"
                     div .map-zoom {
                         span .lbl { "zoom" }
                         b { "−" }
-                        input # "map-zoom" type="range" min="0.8" max="10" step="0.1" value="1.6" {}
+                        input # "map-zoom" type="range" min="1" max="50" step="0.5" value="10" {}
                         b { "+" }
                     }
                 }
