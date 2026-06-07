@@ -253,10 +253,10 @@ r#"
                     }
                     div .map-info {
                         b { "What you're seeing: " }
-                        "the GB rail network lit by delay (green on time, amber slight, red "
-                        "chronic). Real multi-stop journeys run their full routes — each lights "
-                        "its line as it goes, shows in Tracking while running, then Just settled "
-                        "on arrival. Scroll to zoom into any region; ⛶ for fullscreen."
+                        "the GB rail network in faint grey (brighter where more trains run). "
+                        "Real multi-stop journeys run their full routes as bright streaks "
+                        "coloured by delay (green on time, amber slight, red late) — each shows "
+                        "in Tracking while running, Just settled on arrival. Scroll to zoom; ⛶ fullscreen."
                     }
                     div .map-info style="margin-top:16px;font-size:10.5px;" {
                         "Map © OpenStreetMap contributors © CARTO"
