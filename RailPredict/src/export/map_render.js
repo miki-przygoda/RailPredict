@@ -53,6 +53,18 @@ window.RailPredictMap = { init: function () {
   function trackCard(t) { return '<div class="mini" style="--c:' + esc(t.brand) + '"><span class="hc">' + esc(t.label) + '</span><span class="rt">' + esc(t.origin) + ' → ' + esc(t.dest) + '</span><span class="pa">' + delayVal(t.predicted) + '<small>pred</small></span></div>'; }
   function settledCard(t) { return '<div class="mini" style="--c:' + esc(t.brand) + '"><span class="hc">' + esc(t.label) + '</span><span class="rt">' + esc(t.origin) + ' → ' + esc(t.dest) + '</span><span class="pa">' + delayVal(t.predicted) + '→' + delayVal(t.actual) + '<small>' + accTxt(t.delta) + '</small></span></div>'; }
 
+  // Station network — a dim node at every known station, drawn under the trains.
+  var stations = window.MAP_STATIONS || [];
+  if (stations.length) {
+    var gSt = el("g", {});
+    for (var si = 0; si < stations.length; si++) {
+      var sx = lon2px(stations[si][0]), sy = lat2px(stations[si][1]);
+      if (sx < -10 || sx > B.w + 10 || sy < -10 || sy > B.h + 10) continue;
+      gSt.appendChild(el("circle", { cx: sx.toFixed(1), cy: sy.toFixed(1), r: "4", fill: "#7fa8d8", "fill-opacity": "0.5" }));
+    }
+    svg.appendChild(gSt);  // append once, after building, to avoid per-node reflow
+  }
+
   // Trains plotted at their ORIGIN station's real coordinates, coloured by
   // predicted delay. Static — no animation loop.
   var gDots = el("g", {}); svg.appendChild(gDots);
@@ -61,8 +73,8 @@ window.RailPredictMap = { init: function () {
     var x = lon2px(t.o[0]), y = lat2px(t.o[1]);
     if (x < -20 || x > B.w + 20 || y < -20 || y > B.h + 20) return;
     var c = colorFor(t.predicted);
-    var dot = el("circle", { cx: x, cy: y, r: "7", fill: c, "fill-opacity": "0.95", stroke: "#06101e", "stroke-width": "2" });
-    dot.style.filter = "drop-shadow(0 0 5px " + c + ")";
+    var dot = el("circle", { cx: x, cy: y, r: "12", fill: c, "fill-opacity": "0.95", stroke: "#06101e", "stroke-width": "3" });
+    dot.style.filter = "drop-shadow(0 0 8px " + c + ")";
     gDots.appendChild(dot);
   });
 
