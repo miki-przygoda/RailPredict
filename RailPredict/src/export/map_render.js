@@ -35,21 +35,24 @@ window.RailPredictMap = { init: function () {
   // outside the SVG viewport and clips away.
   var GB_FRAME = { type: "Polygon", coordinates: [[[-6.4, 49.9], [1.9, 49.9], [1.9, 58.75], [-6.4, 58.75], [-6.4, 49.9]]] };
   var projection = d3.geoMercator().fitExtent([[10, 10], [W - 10, H - 10]], GB_FRAME);
+  // Lock the view at ~25× (the slider mid-point) centred on the dense N-England
+  // core, baked straight into the projection. There is deliberately NO interactive
+  // zoom/transform layer: that layer scaled the dots' glow filters every animation
+  // frame, which slowed the browser. A static baked zoom renders cheaply.
+  projection.center([-1.9, 53.5]).translate([W / 2, H / 2]).scale(projection.scale() * 25);
   var path = d3.geoPath(projection);
 
   function el(tag, attrs) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); return e; }
 
-  // Everything that should pan/zoom together lives under gZoom.
-  var gZoom = el("g", {}); svg.appendChild(gZoom);
-  var gLand = el("g", {}); gZoom.appendChild(gLand);
-  var gRail = el("g", {}); gZoom.appendChild(gRail);
-  var gDots = el("g", {}); gZoom.appendChild(gDots);
+  var gLand = el("g", {}); svg.appendChild(gLand);
+  var gRail = el("g", {}); svg.appendChild(gRail);
+  var gDots = el("g", {}); svg.appendChild(gDots);
 
   (outline.features || [outline]).forEach(function (f) {
-    gLand.appendChild(el("path", { d: path(f) || "", fill: "#27466e", stroke: "#7fb2e8", "stroke-width": "1.5", "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+    gLand.appendChild(el("path", { d: path(f) || "", fill: "#27466e", stroke: "#7fb2e8", "stroke-width": "1.5", "stroke-linejoin": "round", "stroke-linecap": "round" }));
   });
   if (rail) (rail.features || [rail]).forEach(function (f) {
-    gRail.appendChild(el("path", { d: path(f) || "", fill: "none", stroke: "#9ecbf2", "stroke-width": "0.65", "stroke-opacity": "0.4", "vector-effect": "non-scaling-stroke" }));
+    gRail.appendChild(el("path", { d: path(f) || "", fill: "none", stroke: "#9ecbf2", "stroke-width": "0.65", "stroke-opacity": "0.4" }));
   });
 
   function colorFor(v) { return v <= 0 ? "#34d399" : v <= 5 ? "#f2c14e" : "#f04545"; }
@@ -66,29 +69,6 @@ window.RailPredictMap = { init: function () {
     return { t: t, dot: dot, interp: d3.geoInterpolate(t.o, t.d), dur: 9000 + (i % 7) * 900, phase: (i * 1373) % 11000 };
   });
 
-  // --- pan + zoom: drag to pan, scroll-wheel to zoom, and the #map-zoom slider.
-  // Persisted on RailPredictMap._zt so the live page's 20s refresh doesn't snap
-  // the view back. Dots are counter-scaled (r / zk) so they stay pin-sized. ---
-  var zk = 1;
-  var slider = document.getElementById("map-zoom");
-  var sel = d3.select(svg);
-  var zoom = d3.zoom().scaleExtent([1, 50]).on("zoom", function (ev) {
-    gZoom.setAttribute("transform", ev.transform.toString());
-    zk = ev.transform.k;
-    window.RailPredictMap._zt = ev.transform;
-    if (slider) slider.value = ev.transform.k;
-  });
-  sel.call(zoom);
-  if (slider) slider.oninput = function () { sel.call(zoom.scaleTo, +slider.value); };
-  if (window.RailPredictMap._zt) {
-    sel.call(zoom.transform, window.RailPredictMap._zt);  // restore prior view across re-init
-  } else {
-    // Start zoomed well in (10×), centred over the dense N-England core so trains
-    // are on screen immediately; pan/slider take it from here.
-    var k0 = 10, c0 = projection([-1.9, 53.5]);
-    sel.call(zoom.transform, d3.zoomIdentity.translate(W / 2 - k0 * c0[0], H / 2 - k0 * c0[1]).scale(k0));
-  }
-
   var trackBox = document.getElementById("rail-track");
   var settleBox = document.getElementById("rail-settled");
   var lastBanner = 0;
@@ -98,13 +78,21 @@ window.RailPredictMap = { init: function () {
     for (var i = 0; i < trains.length; i++) {
       var a = trains[i];
       var p = ((now + a.phase) % a.dur) / a.dur;
-      var ll = a.interp(p), xy = ll && projection(ll);
-      if (xy) { a.dot.setAttribute("cx", xy[0]); a.dot.setAttribute("cy", xy[1]); a.dot.setAttribute("display", ""); }
-      else { a.dot.setAttribute("display", "none"); }
       var arriving = p > 0.88;
-      a.dot.setAttribute("fill", colorFor(arriving ? a.t.actual : a.t.predicted));
-      a.dot.setAttribute("r", (arriving ? 4.8 : 3.4) / zk);
+      // Banners list all active trains regardless of where they sit on the map.
       if (arriving) settledList.push(a.t); else if (p > 0.4) trackList.push(a.t);
+      // Only render dots inside the viewport — at this zoom most trains are
+      // off-screen, and rendering their glow filters would burn frame time.
+      var ll = a.interp(p), xy = ll && projection(ll);
+      if (xy && xy[0] > -20 && xy[0] < W + 20 && xy[1] > -20 && xy[1] < H + 20) {
+        a.dot.setAttribute("cx", xy[0]);
+        a.dot.setAttribute("cy", xy[1]);
+        a.dot.setAttribute("fill", colorFor(arriving ? a.t.actual : a.t.predicted));
+        a.dot.setAttribute("r", arriving ? "4.8" : "3.4");
+        a.dot.setAttribute("display", "");
+      } else {
+        a.dot.setAttribute("display", "none");
+      }
     }
     if (now - lastBanner > 350) {
       lastBanner = now;
