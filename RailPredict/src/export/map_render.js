@@ -41,10 +41,11 @@ window.RailPredictMap = { init: function () {
   img.setAttribute("href", IMG);
   svg.appendChild(img);
 
-  // lon/lat -> snapshot pixel (Web-Mercator, identical maths to the tile stitch).
-  var N = Math.pow(2, B.z);
-  function lon2px(lon) { return ((lon + 180) / 360 * N - B.x0) * 256; }
-  function lat2px(lat) { var r = lat * Math.PI / 180; return ((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * N - B.y0) * 256; }
+  // lon/lat -> snapshot pixel (Web-Mercator world pixels minus the snapshot's
+  // cropped origin; identical maths to the tile stitch + crop).
+  var N = Math.pow(2, B.z) * 256;
+  function lon2px(lon) { return (lon + 180) / 360 * N - B.ox; }
+  function lat2px(lat) { var r = lat * Math.PI / 180; return (1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * N - B.oy; }
 
   function colorFor(v) { return v <= 0 ? "#34d399" : v <= 5 ? "#f2c14e" : "#f04545"; }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
@@ -53,14 +54,29 @@ window.RailPredictMap = { init: function () {
   function trackCard(t) { return '<div class="mini" style="--c:' + esc(t.brand) + '"><span class="hc">' + esc(t.label) + '</span><span class="rt">' + esc(t.origin) + ' → ' + esc(t.dest) + '</span><span class="pa">' + delayVal(t.predicted) + '<small>pred</small></span></div>'; }
   function settledCard(t) { return '<div class="mini" style="--c:' + esc(t.brand) + '"><span class="hc">' + esc(t.label) + '</span><span class="rt">' + esc(t.origin) + ' → ' + esc(t.dest) + '</span><span class="pa">' + delayVal(t.predicted) + '→' + delayVal(t.actual) + '<small>' + accTxt(t.delta) + '</small></span></div>'; }
 
-  // Station network — a dim node at every known station, drawn under the trains.
   var stations = window.MAP_STATIONS || [];
+
+  // Network edges — a line between every pair of stations observed adjacent in a
+  // journey's calling pattern. Drawn as ONE path (under nodes + trains) for speed.
+  var edges = window.MAP_EDGES || [];
+  if (edges.length && stations.length) {
+    var d = "";
+    for (var ei = 0; ei < edges.length; ei++) {
+      var s1 = stations[edges[ei][0]], s2 = stations[edges[ei][1]];
+      if (!s1 || !s2) continue;
+      d += "M" + lon2px(s1[0]).toFixed(1) + " " + lat2px(s1[1]).toFixed(1) +
+           "L" + lon2px(s2[0]).toFixed(1) + " " + lat2px(s2[1]).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, stroke: "#5f8bc4", "stroke-width": "1.3", "stroke-opacity": "0.5", fill: "none" }));
+  }
+
+  // A node at every known station, drawn over the edges and under the trains.
   if (stations.length) {
     var gSt = el("g", {});
     for (var si = 0; si < stations.length; si++) {
       var sx = lon2px(stations[si][0]), sy = lat2px(stations[si][1]);
       if (sx < -10 || sx > B.w + 10 || sy < -10 || sy > B.h + 10) continue;
-      gSt.appendChild(el("circle", { cx: sx.toFixed(1), cy: sy.toFixed(1), r: "4", fill: "#7fa8d8", "fill-opacity": "0.5" }));
+      gSt.appendChild(el("circle", { cx: sx.toFixed(1), cy: sy.toFixed(1), r: "3", fill: "#9ec3ef", "fill-opacity": "0.8" }));
     }
     svg.appendChild(gSt);  // append once, after building, to avoid per-node reflow
   }
@@ -73,8 +89,8 @@ window.RailPredictMap = { init: function () {
     var x = lon2px(t.o[0]), y = lat2px(t.o[1]);
     if (x < -20 || x > B.w + 20 || y < -20 || y > B.h + 20) return;
     var c = colorFor(t.predicted);
-    var dot = el("circle", { cx: x, cy: y, r: "12", fill: c, "fill-opacity": "0.95", stroke: "#06101e", "stroke-width": "3" });
-    dot.style.filter = "drop-shadow(0 0 8px " + c + ")";
+    var dot = el("circle", { cx: x, cy: y, r: "10", fill: c, "fill-opacity": "0.95", stroke: "#06101e", "stroke-width": "2.5" });
+    dot.style.filter = "drop-shadow(0 0 7px " + c + ")";
     gDots.appendChild(dot);
   });
 
