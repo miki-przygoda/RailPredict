@@ -456,6 +456,20 @@
     margin-top: 4px;
     line-height: 1.55;
   }
+  /* redesigned About: stat strip + pipeline + relationship list */
+  .win-body .about-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; margin-bottom: 6px; }
+  .win-body .about-stats .stat { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+  .win-body .about-stats .stat b { display: block; font: 800 19px var(--sans); color: var(--accent-ink); letter-spacing: -.02em; line-height: 1.15; }
+  .win-body .about-stats .stat span { font: 600 9px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .03em; }
+  .win-body .about-day { font: 600 10px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 16px; }
+  .win-body .about-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .win-body .about-flow span { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; font: 700 11px var(--sans); padding: 5px 11px; border-radius: 20px; }
+  .win-body .about-flow i { color: var(--dim); font-style: normal; font-weight: 800; }
+  .win-body .about-rel { list-style: none; margin: 8px 0 0; padding: 0; }
+  .win-body .about-rel li { font: 400 12px var(--sans); color: var(--muted); line-height: 1.5; padding: 7px 0 7px 16px; border-top: 1px solid var(--line); position: relative; }
+  .win-body .about-rel li:first-child { border-top: none; }
+  .win-body .about-rel li b { color: var(--ink); font-weight: 700; }
+  .win-body .about-rel li::before { content: ""; position: absolute; left: 2px; top: 13px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
   /* ── Map app body (reused from map_template.html) ─────────────── */
   /* Scoped to .win-body to avoid conflicts with desktop chrome */
@@ -670,48 +684,61 @@
 <template id="app-about">
   <div class="applet">
     <div class="applet-h">About RailPredict</div>
-    <div class="applet-sub">An intelligent buffer between passengers and the rail network — built to make delay information instant, accurate, and actionable.</div>
+    <div class="applet-sub">A prediction engine for UK rail delays — it turns the live Darwin firehose into accurate, measured delay intelligence, and surfaces it instantly.</div>
 
-    <div class="about-section">
-      <h3>Every delay is a customer moment</h3>
-      <p>UK rail carries hundreds of millions of passenger journeys each year. When a train runs late, the disruption cascades: missed connections, rebooking queues, and support calls that arrive long after the moment of impact has passed.</p>
-      <p>A ticket retailer learns about disruption the same way the passenger does — by watching it happen. RailPredict closes that gap by shadowing the live Darwin feed and predicting outcomes <em>before</em> the passenger reaches the platform.</p>
+    <div class="about-stats">
+      <div class="stat"><b id="ab-journeys">—</b><span>journeys shadowed</span></div>
+      <div class="stat"><b id="ab-calls">—</b><span>calling points</span></div>
+      <div class="stat"><b id="ab-preds">—</b><span>predictions scored</span></div>
+      <div class="stat"><b id="ab-mae">—</b><span>mean error</span></div>
+      <div class="stat"><b id="ab-within5">—</b><span>within 5 min</span></div>
+      <div class="stat"><b id="ab-ontime">—</b><span>on time</span></div>
+    </div>
+    <div class="about-day">Yesterday · <span id="ab-date">—</span> · accuracy measured, not claimed</div>
+
+    <div class="about-flow">
+      <span>Capture</span><i>→</i><span>Relate</span><i>→</i><span>Model</span><i>→</i><span>Predict</span><i>→</i><span>Surface</span>
     </div>
 
     <div class="about-section">
-      <h3>What the engine does</h3>
-      <p>RailPredict runs a three-tier data pipeline:</p>
-      <ul>
-        <li><b>Tier A — Static:</b> timetables, station names, and route geometry, loaded from GTFS/CIF weekly. Zero cost at query time.</li>
-        <li><b>Tier B — Predictive:</b> two LightGBM ONNX models (day-ahead and real-time) trained on historical Darwin delay records. Blended with weather-volatility signals and preceding-service correlation. Runs entirely on local compute.</li>
-        <li><b>Tier C — Transactional:</b> live GBR Darwin push-port stream for exact real-time positions and platform changes. Used only when Tier B confidence falls below threshold or the passenger is at the point of purchase.</li>
+      <h3>What we capture — and why</h3>
+      <p>RailPredict shadows National Rail's Darwin push-port: every movement message for every train, live. From those fragmentary messages it reconstructs each service's <b>full journey</b> — every calling point, scheduled vs actual time, platform, and cancellation — and enriches it with weather on the route. The timetable says what <em>should</em> happen; this records what actually <em>does</em>. That record is the corpus the model learns from.</p>
+    </div>
+
+    <div class="about-section">
+      <h3>The relationships it learns</h3>
+      <p>Delay isn't random — it's structured, and the engine models the structure:</p>
+      <ul class="about-rel">
+        <li><b>Service identity</b> — it tracks the <em>recurring</em> service (same working timetable, weekday, origin, hour), not the one-off daily train, so it learns each service's true character.</li>
+        <li><b>Knock-on</b> — a late preceding service on the same route shifts the next one's forecast, blended within a ±20-minute window.</li>
+        <li><b>Cascade</b> — delay propagates along shared track, tracked through a live location index.</li>
+        <li><b>Volatility</b> — high winds on a corridor raise the alert level for every service on it.</li>
       </ul>
-      <p>The result: most queries are served from local state in under a millisecond. A live GBR API call is the exception, not the rule.</p>
     </div>
 
     <div class="about-highlight">
-      <h3>With your ticketing data →</h3>
-      <p>Connect a ticket retailer's booking feed and the engine unlocks proactive, per-passenger intelligence:</p>
-      <ul>
-        <li><b>Proactive rebooking:</b> surface the next viable service the moment a delay makes the booked connection unreachable — before the customer opens the app.</li>
-        <li><b>Point-of-sale reliability:</b> show a live punctuality score for the specific service being purchased, grounded in recent actual outcomes rather than static timetable data.</li>
-        <li><b>Automated Delay Repay:</b> match finalised delay outcomes directly to affected bookings and trigger compensation claims without customer action.</li>
-      </ul>
+      <h3>The model — the core of the IP</h3>
+      <p>Two gradient-boosted models (LightGBM, compiled to ONNX): a <b>day-ahead</b> model for planning and a <b>real-time</b> model that folds in eight live signals as a service runs. Both are trained on the captured delay corpus and sample-weighted so the rare, costly severe delays aren't drowned out by the on-time majority. Inference is local and sub-millisecond — no per-query API cost.</p>
     </div>
 
     <div class="about-section">
-      <h3>Technical posture</h3>
-      <p>Written in Rust for predictable latency and low resource footprint. The full pipeline — Darwin STOMP ingestion, ONNX inference, PostgreSQL persistence, and this UI — ships as a single Docker appliance. Bring a Darwin licence, a PostgreSQL instance, and optionally a ticketing feed; the engine handles the rest.</p>
+      <h3>Predictions, scored against reality</h3>
+      <p>Every service gets a predicted delay and a confidence that decays as its data ages. Crucially, each prediction is <b>logged and later matched to the real outcome</b> — so accuracy is measured, not asserted. The numbers above are yesterday's, straight from that ledger.</p>
+    </div>
+
+    <div class="about-section">
+      <h3>The dashboard</h3>
+      <p>All of it surfaces instantly — the live map replaying a full day across the network, the operator league, the predicted-vs-actual replay, station reliability. That's the value: delay intelligence the moment it matters. Wire in a ticketing feed and the same engine drives proactive rebooking, point-of-sale reliability scores, and automated Delay Repay.</p>
     </div>
 
     <div class="about-footer">
-      Generated <span data-fill="generated_at">—</span> · RailPredict · Darwin data © Network Rail · fully offline snapshot
+      Generated <span data-fill="generated_at">—</span> · the model, the engine, and this dashboard — one Rust + Docker appliance · Darwin data © Network Rail
     </div>
   </div>
 </template>
 
 <!-- ── Script injection points (generator replaces these) ─────────── -->
-<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP=__MAP_DATA__;</script>
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP_ABOUT=__ABOUT__;window.MAP=__MAP_DATA__;</script>
 <script>/* __MAP_JS__ */</script>
 <script>/* __APPS_JS__ */</script>
 <script>/* __OS_JS__ */</script>

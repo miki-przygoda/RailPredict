@@ -245,6 +245,34 @@ def build(db, d_from, d_to, max_journeys, max_replay):
     kb = write(os.path.join(ASSETS, "replay_day.json"), replay)
     print(f"  replay_day.json {len(replay):>6} outcomes           ({kb} KB)")
 
+    # 8) about: headline engine stats for the About app (dynamic with the window)
+    a = psql(db, f"""SELECT
+        (SELECT count(*) FROM journeys j WHERE {where}),
+        (SELECT count(*) FROM journey_calls jc JOIN journeys j ON j.rid=jc.rid WHERE {where}),
+        (SELECT count(*) FROM prediction_outcomes o JOIN journeys j ON j.rid=o.rid
+           WHERE {where} AND o.finalised_at IS NOT NULL AND o.final_delay_mins IS NOT NULL),
+        (SELECT round(avg(abs(o.predicted_delay_mins-o.final_delay_mins))::numeric,1)
+           FROM prediction_outcomes o JOIN journeys j ON j.rid=o.rid WHERE {where} AND o.final_delay_mins IS NOT NULL),
+        (SELECT round(100.0*avg((abs(o.predicted_delay_mins-o.final_delay_mins)<=5)::int))
+           FROM prediction_outcomes o JOIN journeys j ON j.rid=o.rid WHERE {where} AND o.final_delay_mins IS NOT NULL),
+        (SELECT round(100.0*avg((j.arrival_delay_mins<=5)::int))
+           FROM journeys j WHERE {where} AND j.arrival_delay_mins IS NOT NULL),
+        (SELECT count(DISTINCT j.toc) FROM journeys j JOIN operators op ON op.toc=j.toc WHERE {where});""")
+    row = a[0] if a else ["0"] * 7
+
+    def n(x):
+        try:
+            return int(float(x))
+        except (ValueError, TypeError):
+            return 0
+
+    about = {"date": d_to, "journeys": n(row[0]), "calls": n(row[1]), "predictions": n(row[2]),
+             "mae": float(row[3]) if row[3] else 0.0, "within5": n(row[4]),
+             "ontime": n(row[5]), "operators": n(row[6]), "stations": len(coords)}
+    kb = write(os.path.join(ASSETS, "about.json"), about)
+    print(f"  about.json       headline stats          ({kb} KB)  "
+          f"{about['journeys']:,} journeys · {about['predictions']:,} preds · {about['mae']}m MAE")
+
 
 def main():
     ap = argparse.ArgumentParser(description="Rebuild the OS demo's day-specific map datasets.")

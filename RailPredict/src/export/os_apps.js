@@ -179,7 +179,23 @@
     /* ── About ──────────────────────────────────────────────────────── */
     about: function (root) {
       fill(root);
-      // Static narrative is fully in the template; fill() handles generated_at.
+      // Headline engine stats (yesterday) from window.MAP_ABOUT.
+      var A = window.MAP_ABOUT || {};
+      function setn(id, v) { var e = root.querySelector("#" + id); if (e) e.textContent = v; }
+      function kfmt(v) { return v >= 10000 ? (Math.round(v / 100) / 10) + "k" : Number(v).toLocaleString(); }
+      function fdate(s) {
+        var p = String(s || "").split("-");
+        if (p.length !== 3) return s || "—";
+        var mo = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return Number(p[2]) + " " + (mo[Number(p[1]) - 1] || "") + " " + p[0];
+      }
+      setn("ab-journeys", A.journeys ? Number(A.journeys).toLocaleString() : "—");
+      setn("ab-calls", A.calls ? kfmt(A.calls) : "—");
+      setn("ab-preds", A.predictions ? Number(A.predictions).toLocaleString() : "—");
+      setn("ab-mae", A.mae != null ? A.mae + " min" : "—");
+      setn("ab-within5", A.within5 != null ? A.within5 + "%" : "—");
+      setn("ab-ontime", A.ontime != null ? A.ontime + "%" : "—");
+      setn("ab-date", fdate(A.date));
     },
 
     /* ── Replay ─────────────────────────────────────────────────────── */
