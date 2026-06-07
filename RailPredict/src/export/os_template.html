@@ -479,7 +479,7 @@
   .win-body .empty { color: var(--dim); font: 600 11px var(--mono); padding: 8px 0; }
   .win-body .cc-map {
     position: relative;
-    background: linear-gradient(180deg, #0d1f38 0%, #091627 100%);
+    background: #1b1d22;
     overflow: hidden;
   }
   .win-body #map-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -571,7 +571,7 @@
       <span class="lg"><b style="background:#34d399"></b>on time</span>
       <span class="lg"><b style="background:#f2c14e"></b>slight</span>
       <span class="lg"><b style="background:#f04545"></b>late</span>
-      <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · map © Crown copyright/ONS (OGL) · rail © OpenStreetMap (ODbL) · D3 (ISC) · fully offline</span>
+      <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · © OpenStreetMap contributors © CARTO · fully offline</span>
     </div>
   </div>
 </template>
@@ -686,8 +686,7 @@
 </template>
 
 <!-- ── Script injection points (generator replaces these) ─────────── -->
-<script>__D3__</script>
-<script>window.GB_OUTLINE=__GB_OUTLINE__;window.GB_RAIL=__GB_RAIL__;window.MAP=__MAP_DATA__;</script>
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP=__MAP_DATA__;</script>
 <script>/* __MAP_JS__ */</script>
 <script>/* __APPS_JS__ */</script>
 <script>/* __OS_JS__ */</script>
