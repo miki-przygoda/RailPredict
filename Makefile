@@ -50,6 +50,21 @@ map:
 os:
 	cd RailPredict && cargo run --release -- export-os --output ../docs/os.html --days $(DAYS)
 
+# Rebuild the OS map's day-specific datasets (network, moving services, replay
+# predicted-vs-actual, operator league) straight from the DB. Uses the same
+# DATABASE_URL you run the app with. Defaults to the latest day present; override:
+#   DATABASE_URL=… make map-data DATE=2026-06-06
+#   DATABASE_URL=… make map-data FROM=2026-06-05 TO=2026-06-06
+map-data:
+	python3 scripts/build_map_data.py $(if $(DATE),--date $(DATE)) $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO))
+
+# One-shot: rebuild the datasets for DATE (or latest) and regenerate both pages.
+#   DATABASE_URL=… make map-day DATE=2026-06-06
+map-day:
+	$(MAKE) map-data $(if $(DATE),DATE=$(DATE)) $(if $(FROM),FROM=$(FROM)) $(if $(TO),TO=$(TO))
+	$(MAKE) os
+	$(MAKE) map
+
 # Backfill delay_history with 90 days of synthetic historical data.
 # Uses the top TIPLOCs already seen in the live Darwin feed, so the training
 # set covers exactly the routes the model will be asked to predict on.
