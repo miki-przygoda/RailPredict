@@ -196,6 +196,9 @@ r#"
 .map-fs { position:absolute; top:12px; right:12px; z-index:6; width:30px; height:30px; display:flex; align-items:center; justify-content:center; background:rgba(8,20,36,.72); border:1px solid rgba(127,178,232,.32); border-radius:7px; color:#9ec3ef; font-size:15px; cursor:pointer; backdrop-filter:blur(6px); }
 .map-fs:hover { background:rgba(20,40,68,.9); color:#fff; }
 .map-hint { position:absolute; left:12px; bottom:10px; z-index:6; font:600 9px var(--font-mono); color:#7f93ad; letter-spacing:.04em; text-transform:uppercase; pointer-events:none; text-shadow:0 1px 3px #000; }
+.map-clock-wrap { position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:6; display:flex; flex-direction:column; align-items:center; gap:1px; background:rgba(8,20,36,.74); border:1px solid rgba(127,178,232,.32); border-radius:9px; padding:5px 16px; backdrop-filter:blur(6px); }
+.map-clock-wrap .lbl { font:700 7.5px var(--font-mono); color:#7f93ad; letter-spacing:.1em; text-transform:uppercase; }
+#map-clock { font:800 18px var(--font-mono); color:#cfe6ff; letter-spacing:.03em; line-height:1.1; }
 .kcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-sm); padding:11px 13px; margin-bottom:8px; }
 .kcard .kn { font:800 22px var(--font-sans); color:var(--accent); }
 .kcard .kl { font:600 9px var(--font-mono); color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
@@ -236,6 +239,10 @@ r#"
                 // Centre — map canvas + controls
                 main .cc-map {
                     svg # "map-svg" {}
+                    div .map-clock-wrap {
+                        span .lbl { "Replaying yesterday" }
+                        b # "map-clock" { "--:--" }
+                    }
                     button # "map-fs" .map-fs title="Fullscreen" aria-label="Fullscreen" { "⛶" }
                     span .map-hint { "scroll to zoom · drag to pan" }
                 }
@@ -253,10 +260,10 @@ r#"
                     }
                     div .map-info {
                         b { "What you're seeing: " }
-                        "the GB rail network in faint grey (brighter where more trains run). "
-                        "Real multi-stop journeys run their full routes as bright streaks "
-                        "coloured by delay (green on time, amber slight, red late) — each shows "
-                        "in Tracking while running, Just settled on arrival. Scroll to zoom; ⛶ fullscreen."
+                        "a replay of yesterday's full day on the GB network (clock = time of day). "
+                        "Faint grey shows the lines, brighter where busier; each bright streak is a "
+                        "real service running its route, coloured by delay (green/amber/red). Watch "
+                        "the morning peak build and the network quieten overnight. Scroll to zoom; ⛶ fullscreen."
                     }
                     div .map-info style="margin-top:16px;font-size:10.5px;" {
                         "Map © OpenStreetMap contributors © CARTO"
