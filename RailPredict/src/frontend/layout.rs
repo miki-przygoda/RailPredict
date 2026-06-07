@@ -54,6 +54,7 @@ pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
                         (link("/predictions", "Predictions", NavPage::Predictions))
                         (link("/stations", "Stations", NavPage::Stations))
                         (link("/explore", "Explore", NavPage::Explore))
+                        a href="/demo" target="_blank" rel="noopener" .nav-link.nav-demo { "Demo ↗" }
                     }
                 }
                 main { (content) }
