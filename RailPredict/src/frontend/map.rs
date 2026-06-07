@@ -30,6 +30,7 @@ use crate::frontend::layout::{base, NavPage};
 const MAP_B64: &str = include_str!("../export/assets/gb_map.b64");
 const MAP_BOUNDS: &str = include_str!("../export/assets/gb_map_bounds.json");
 const STATIONS: &str = include_str!("../export/assets/stations.json");
+const EDGES: &str = include_str!("../export/assets/edges.json");
 const MAP_JS: &str = include_str!("../export/map_render.js");
 
 // ---------------------------------------------------------------------------
@@ -245,10 +246,10 @@ r#"
                     }
                     div .map-info {
                         b { "What you're seeing: " }
-                        "every dot is a real train, coloured green (on time), "
-                        "amber (slight delay), or red (late). Dots glide origin → "
-                        "destination; near arrival the colour flips to actual delay. "
-                        "The left panel mirrors predicted → actual outcomes."
+                        "the GB rail network — a node at every station, lines for the "
+                        "connections we've observed in service. Each large dot is a live "
+                        "train at its origin, coloured green (on time), amber (slight "
+                        "delay), or red (late). The left panel shows predicted → actual."
                     }
                     div .map-info style="margin-top:16px;font-size:10.5px;" {
                         "Map © OpenStreetMap contributors © CARTO"
@@ -268,10 +269,11 @@ r#"
         // 1. Seed the basemap snapshot + its bounds before the renderer runs.
         script {
             (PreEscaped(format!(
-                "window.MAP_IMG=\"data:image/png;base64,{b64}\";window.MAP_BOUNDS={bounds};window.MAP_STATIONS={stations};window.MAP={{trains:[]}};",
+                "window.MAP_IMG=\"data:image/png;base64,{b64}\";window.MAP_BOUNDS={bounds};window.MAP_STATIONS={stations};window.MAP_EDGES={edges};window.MAP={{trains:[]}};",
                 b64 = MAP_B64.trim(),
                 bounds = MAP_BOUNDS.trim(),
                 stations = STATIONS.trim(),
+                edges = EDGES.trim(),
             )))
         }
         // 2. Renderer — exposes RailPredictMap.init().
