@@ -183,7 +183,7 @@ r#"
 .map-heading h1 { font:700 18px var(--font-mono); letter-spacing:.01em; }
 .map-heading .live-pill { display:flex; align-items:center; gap:6px; font:600 10px var(--font-mono); color:var(--ok); text-transform:uppercase; letter-spacing:.06em; }
 .map-heading .live-pill .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); animation:live-pulse 2s infinite; }
-.cc-body { display:grid; grid-template-columns:230px 1fr 220px; gap:0; flex:1; min-height:580px; margin-top:0; border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; }
+.cc-body { display:grid; grid-template-columns:230px minmax(300px,540px) 220px; justify-content:center; gap:0; flex:1; min-height:580px; margin-top:0; border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; }
 @media (max-width:960px) { .cc-body { grid-template-columns:1fr; } }
 .cc-rail { padding:14px; overflow:auto; background:var(--surface); }
 .cc-rail.left { border-right:1px solid var(--border); }
