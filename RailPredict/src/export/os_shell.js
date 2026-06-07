@@ -2,7 +2,7 @@
  * os_shell.js — RailPredict OS window manager
  *
  * Vanilla JS, no external dependencies, no framework.
- * Manages windows, dock, desktop icons, and boots the map app.
+ * Manages windows, dock, desktop icons, and boots to the desktop (apps open on demand).
  *
  * Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
  */
@@ -457,7 +457,7 @@
     buildDesktopIcons();
     buildDock();
     startClock();
-    openApp("map");
+    // Boot to the bare desktop — the user opens an app from the dock or icons.
   }
 
   if (document.readyState === "loading") {
