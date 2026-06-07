@@ -605,7 +605,7 @@
 <template id="app-operators">
   <div class="applet">
     <div class="applet-h">Operator league</div>
-    <div class="applet-sub">Ranked by on-time performance (departures within 5 minutes of schedule), based on all finalised journeys observed.</div>
+    <div class="applet-sub">Yesterday's performance — on-time % (arrivals within 5 min) and journeys run, per operator. Swatch coloured by performance.</div>
     <div id="op-list"></div>
   </div>
 </template>
@@ -652,7 +652,7 @@
       <div class="applet-h" style="margin-bottom:0">Predicted → actual</div>
       <span class="rp-counter" id="rp-frame"></span>
     </div>
-    <div class="applet-sub" style="margin-bottom:10px">Live replay of board snapshots — each frame shows active tracking predictions and freshly-settled outcomes.</div>
+    <div class="applet-sub" style="margin-bottom:10px">Replaying yesterday (clock = time of day). Services show their <b>predicted</b> delay while running, then <b>predicted → actual</b> on arrival.</div>
     <div class="replay-wrap">
       <div>
         <div class="replay-zone-h t">Tracking now</div>
@@ -711,7 +711,7 @@
 </template>
 
 <!-- ── Script injection points (generator replaces these) ─────────── -->
-<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP=__MAP_DATA__;</script>
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP=__MAP_DATA__;</script>
 <script>/* __MAP_JS__ */</script>
 <script>/* __APPS_JS__ */</script>
 <script>/* __OS_JS__ */</script>
