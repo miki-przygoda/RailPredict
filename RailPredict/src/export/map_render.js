@@ -40,10 +40,10 @@ window.RailPredictMap = { init: function () {
   var gDots = el("g", {}); svg.appendChild(gDots);
 
   (outline.features || [outline]).forEach(function (f) {
-    gLand.appendChild(el("path", { d: path(f) || "", fill: "#1d3a63", stroke: "#5b93d6", "stroke-width": "1", "stroke-linejoin": "round" }));
+    gLand.appendChild(el("path", { d: path(f) || "", fill: "#27466e", stroke: "#7fb2e8", "stroke-width": "1.5", "stroke-linejoin": "round", "stroke-linecap": "round" }));
   });
   if (rail) (rail.features || [rail]).forEach(function (f) {
-    gRail.appendChild(el("path", { d: path(f) || "", fill: "none", stroke: "#4a76ab", "stroke-width": "0.6", "stroke-opacity": "0.5" }));
+    gRail.appendChild(el("path", { d: path(f) || "", fill: "none", stroke: "#9ecbf2", "stroke-width": "0.65", "stroke-opacity": "0.4" }));
   });
 
   function colorFor(v) { return v <= 0 ? "#34d399" : v <= 5 ? "#f2c14e" : "#f04545"; }
