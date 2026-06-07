@@ -149,9 +149,12 @@
     /* ── Operators ──────────────────────────────────────────────────── */
     operators: function (root) {
       fill(root);
-      var M = window.MAP || {};
-      var container = root.querySelector("#op-list");
-      renderOperatorList(container, M.operators);
+      // Yesterday's per-operator on-time % and journey count; swatch by performance.
+      var ops = (window.MAP_OPS_DAY || []).map(function (o) {
+        var c = o.otp >= 90 ? "#34d399" : o.otp >= 80 ? "#f2c14e" : "#f04545";
+        return { name: o.name, on_time_pct: o.otp, journeys: o.j, brand: c };
+      });
+      renderOperatorList(root.querySelector("#op-list"), ops);
     },
 
     /* ── Predictions ────────────────────────────────────────────────── */
@@ -181,62 +184,48 @@
 
     /* ── Replay ─────────────────────────────────────────────────────── */
     replay: function (root) {
-      var M = window.MAP || {};
-      var frames = M.frames || [];
-      var frameEl = root.querySelector("#rp-frame");
+      fill(root);
+      // Replay yesterday's full day of real predictions: each service appears in
+      // "Tracking" at its departure (showing the predicted delay), then moves to
+      // "Just settled" with predicted → actual once it's run. Driven by a clock.
+      var R = window.MAP_REPLAY || [];
+      var clockEl = root.querySelector("#rp-frame");
       var trackEl = root.querySelector("#rp-track");
       var settledEl = root.querySelector("#rp-settled");
-
-      if (frames.length === 0) {
-        if (trackEl)   trackEl.innerHTML   = '<p class="empty">No frames available.</p>';
+      if (!R.length) {
+        if (trackEl) trackEl.innerHTML = '<p class="empty">No replay data.</p>';
         if (settledEl) settledEl.innerHTML = '<p class="empty">—</p>';
-        if (frameEl)   frameEl.textContent = "0 / 0";
         return;
       }
-
-      var current = 0;
-      var INTERVAL_MS = 2600;
-
-      function renderFrame(idx) {
-        var f = frames[idx] || {};
-        var tracking = f.tracking || [];
-        var settled  = f.settled  || [];
-
-        if (frameEl) {
-          frameEl.textContent = (idx + 1) + " / " + frames.length;
-        }
-
-        if (trackEl) {
-          trackEl.innerHTML = tracking.length
-            ? tracking.slice(0, 8).map(trackCard).join("")
-            : '<p class="empty">—</p>';
-        }
-
-        if (settledEl) {
-          settledEl.innerHTML = settled.length
-            ? settled.slice(0, 6).map(settledCard).join("")
-            : '<p class="empty">—</p>';
-        }
+      var RT = 210000, RUN = 30, SETTLE = 12; // ms/day, replay-min running / settled
+      function pad(n) { return (n < 10 ? "0" : "") + n; }
+      function hhmm(m) { m = ((m % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + ":" + pad(Math.floor(m % 60)); }
+      function dcol(v) { return v <= 1 ? "#34d399" : v <= 5 ? "#f2c14e" : "#f04545"; }
+      function runCard(r) {
+        return '<div class="mini" style="--c:' + dcol(r.a) + '"><span class="hc">' + esc(r.l) + '</span><span class="rt">' + esc(r.o) + ' → ' + esc(r.d) + '</span><span class="pa">' + delayVal(r.p) + '<small>pred</small></span></div>';
       }
-
-      // Initial render
-      renderFrame(current);
-
-      // Advance frame on interval.
-      // Store the interval ID on the root element so closeWin doesn't leak it;
-      // the shell already removes the DOM node, which stops any further renders.
-      var timer = setInterval(function () {
-        current = (current + 1) % frames.length;
-        renderFrame(current);
-      }, INTERVAL_MS);
-
-      // Attach cleanup to the closest .win ancestor if possible, so the
-      // interval is cleared when the window's DOM node is removed.
-      // (Browsers GC it anyway once the node is detached, but this is clean.)
+      function setCard(r) {
+        return '<div class="mini" style="--c:' + dcol(r.a) + '"><span class="hc">' + esc(r.l) + '</span><span class="rt">' + esc(r.o) + ' → ' + esc(r.d) + '</span><span class="pa">' + delayVal(r.p) + '→' + delayVal(r.a) + '<small>' + esc(accTxt(r.a - r.p)) + '</small></span></div>';
+      }
+      var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+      function tick() {
+        var now = (window.performance && performance.now) ? performance.now() : Date.now();
+        var clock = (((now - t0) % RT) / RT) * 1440;
+        if (clockEl) clockEl.textContent = hhmm(clock);
+        var run = [], set = [];
+        for (var i = 0; i < R.length; i++) {
+          var r = R[i], end = r.t + RUN;
+          if (clock >= r.t && clock < end) run.push(r);
+          else if (clock >= end && clock < end + SETTLE) set.push(r);
+        }
+        run.sort(function (a, b) { return b.t - a.t; });
+        if (trackEl) trackEl.innerHTML = run.slice(0, 9).map(runCard).join("") || '<p class="empty">—</p>';
+        if (settledEl) settledEl.innerHTML = set.slice(0, 7).map(setCard).join("") || '<p class="empty">—</p>';
+      }
+      tick();
+      var timer = setInterval(tick, 300);
       var winEl = root.closest ? root.closest(".win-body") : null;
-      if (winEl) {
-        winEl._replayTimer = timer;
-      }
+      if (winEl) winEl._replayTimer = timer;
     }
   };
 
