@@ -99,7 +99,10 @@ pub async fn build_departure_board(
     // Fetch DB timetable rows (Tier A).
     let db_rows = crate::db::static_data::departures_from(&state.db, crs, today)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            tracing::warn!(crs = %crs, error = %e, "departures_from query failed; serving empty timetable");
+            Vec::new()
+        });
 
     // Look up the station's TIPLOC so the registry snapshot can match Darwin entries
     // (which store TIPLOCs like "WATRLMN" rather than the 3-letter CRS "WAT").
@@ -109,8 +112,10 @@ pub async fn build_departure_board(
     .bind(crs.to_uppercase())
     .fetch_optional(&state.db)
     .await
-    .ok()
-    .flatten()
+    .unwrap_or_else(|e| {
+        tracing::warn!(crs = %crs, error = %e, "tiploc lookup query failed; registry match may miss Darwin entries");
+        None
+    })
     .flatten();
 
     let crs_codes: Vec<&str> = std::iter::once(crs)
@@ -139,21 +144,31 @@ pub async fn build_departure_board(
     let mut dest_name_map: HashMap<String, String> = HashMap::new();
     for dest_code in &unique_dest_codes {
         if dest_code.len() == 3 {
-            if let Ok(Some(station)) =
-                crate::db::static_data::get_station(&state.db, dest_code).await
-            {
-                dest_name_map.insert(dest_code.clone(), station.name);
+            match crate::db::static_data::get_station(&state.db, dest_code).await {
+                Ok(Some(station)) => {
+                    dest_name_map.insert(dest_code.clone(), station.name);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(crs = %crs, dest_code = %dest_code, error = %e, "destination get_station lookup failed; name unresolved");
+                }
             }
         } else {
             // TIPLOC (4–7 chars) — look up via stations table tiploc column.
-            if let Ok(Some(name)) = sqlx::query_scalar::<_, String>(
+            match sqlx::query_scalar::<_, String>(
                 "SELECT name FROM stations WHERE UPPER(tiploc) = $1",
             )
             .bind(dest_code.to_uppercase())
             .fetch_optional(&state.db)
             .await
             {
-                dest_name_map.insert(dest_code.clone(), name);
+                Ok(Some(name)) => {
+                    dest_name_map.insert(dest_code.clone(), name);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(crs = %crs, dest_tiploc = %dest_code, error = %e, "destination tiploc name lookup failed; name unresolved");
+                }
             }
         }
     }
@@ -370,7 +385,10 @@ pub async fn journey_handler(
     .bind(date)
     .fetch_all(&state.db)
     .await
-    .map_err(|e| ApiError::internal(format!("DB error: {e}")))?;
+    .map_err(|e| {
+        tracing::error!("journey lookup query failed: {e}");
+        ApiError::internal("journey lookup failed")
+    })?;
 
     let entries: Vec<DepartureBoardEntry> = rows
         .into_iter()
@@ -399,30 +417,6 @@ pub async fn journey_handler(
 pub struct StationResult {
     pub crs: String,
     pub name: String,
-    /// Number of scheduled services at this station today (from timetable_calls).
-    /// Zero when GTFS data has not been ingested yet.
-    #[serde(default)]
-    pub trains_today: i64,
-}
-
-/// `GET /stations/search?q=<term>`
-///
-/// Returns up to 10 stations matching the query via the in-memory prefix index.
-/// Returns an empty array when `q` is shorter than 2 characters.
-pub async fn station_search_handler(
-    Query(params): Query<StationSearchQuery>,
-    State(state): State<AppState>,
-) -> Result<Json<Vec<StationResult>>, ApiError> {
-    let q = params.q.trim().to_string();
-    if q.len() < 2 {
-        return Ok(Json(vec![]));
-    }
-    let hits = state.station_index.search(&q, 10);
-    let results: Vec<StationResult> = hits
-        .into_iter()
-        .map(|h| StationResult { crs: h.crs, name: h.name, trains_today: 0 })
-        .collect();
-    Ok(Json(results))
 }
 
 // ---------------------------------------------------------------------------

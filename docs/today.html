@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RailPredict · Punctuality Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:#1a1a1a; --surface:#242424; --surface-2:#2c2c2c;
+  --border:#333; --green:#00c853; --amber:#ffab40; --red:#ef5350;
+  --blue:#4a9eff; --blue-dim:#1e2d45;
+  --text:#e0e0e0; --muted:#888; --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:1.5rem 2rem}
+a{color:var(--green)}
+h1{font-size:1.5rem;font-weight:700;color:var(--green);letter-spacing:-0.02em}
+.meta{color:var(--muted);font-size:.8rem;margin-top:.3rem}
+.intro{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin:1.25rem 0;font-size:.85rem;line-height:1.7;color:#bbb}
+.intro strong{color:var(--text)}
+.no-data{text-align:center;padding:4rem 2rem;color:var(--muted);border:1px solid var(--border);border-radius:var(--r);margin-top:2rem}
+.no-data h2{font-size:1.1rem;margin-bottom:.5rem;color:var(--text)}
+
+/* Section headers */
+.section-head{font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:1.5rem 0 .6rem}
+.section-head-hero{font-size:.8rem;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.06em;margin:1.5rem 0 .6rem;display:flex;align-items:center;gap:.5rem}
+.section-head-hero::before{content:'';display:inline-block;width:3px;height:1em;background:var(--blue);border-radius:2px}
+
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:.75rem;margin:0 0 1rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.2rem}
+.card-val{font-size:1.75rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.card-lbl{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:.35rem}
+.card-hint{font-size:.7rem;color:var(--muted);margin-top:.2rem}
+.card-verdict{font-size:.72rem;margin-top:.5rem;padding:.3rem .6rem;border-radius:5px;font-weight:600;display:inline-block}
+.vd-good{background:rgba(0,200,83,.12);color:#5dbb80;border:1px solid rgba(0,200,83,.25)}
+.vd-moderate{background:rgba(255,171,64,.12);color:#c9944a;border:1px solid rgba(255,171,64,.25)}
+.vd-poor{background:rgba(239,83,80,.12);color:#c06060;border:1px solid rgba(239,83,80,.25)}
+.card-hero{border-color:#2a3d60;background:#1c2535}
+.c-green{color:var(--green)} .c-amber{color:var(--amber)} .c-red{color:var(--red)} .c-blue{color:var(--blue)}
+
+/* Charts */
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem}
+@media(max-width:680px){.charts{grid-template-columns:1fr}}
+.chart-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.2rem}
+.chart-box-hero{border-color:#2a3d60;background:#1c2535}
+.chart-box-full{grid-column:1/-1}
+.chart-title{font-size:.8rem;font-weight:600;color:var(--text);margin-bottom:.2rem}
+.chart-sub{font-size:.72rem;color:var(--muted);margin-bottom:.75rem}
+
+/* Note boxes */
+.note{background:var(--blue-dim);border:1px solid #2a3d60;border-left:3px solid var(--blue);border-radius:var(--r);padding:.75rem 1rem;margin-top:.9rem;font-size:.78rem;line-height:1.65;color:#aabbd0}
+.note strong{color:#c8ddf5}
+.note p+p{margin-top:.35rem}
+.note-tags{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.5rem}
+.tag{display:inline-flex;align-items:center;gap:.25rem;padding:.15rem .5rem;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.tag-lower{background:rgba(0,200,83,.15);color:var(--green)}
+.tag-higher{background:rgba(0,200,83,.15);color:var(--green)}
+.tag-target{background:rgba(74,158,255,.15);color:var(--blue)}
+.tag-warn{background:rgba(255,171,64,.15);color:var(--amber)}
+.tag-good{background:rgba(0,200,83,.18);color:#5dbb80;border:1px solid rgba(0,200,83,.3)}
+.tag-moderate{background:rgba(255,171,64,.15);color:#c9944a;border:1px solid rgba(255,171,64,.25)}
+.tag-poor{background:rgba(239,83,80,.15);color:#c06060;border:1px solid rgba(239,83,80,.25)}
+
+/* Table */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);margin-bottom:.75rem}
+.tbl-header{display:flex;align-items:baseline;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--border);gap:1rem;flex-wrap:wrap}
+.tbl-title{font-size:.8rem;font-weight:600;color:var(--text)}
+.tbl-note{font-size:.72rem;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{background:var(--surface-2);color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:.7rem;padding:.55rem .75rem;text-align:left;white-space:nowrap}
+td{padding:.45rem .75rem;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:hover td{background:var(--surface-2)}
+.badge{display:inline-block;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-weight:600}
+.bg{background:rgba(0,200,83,.15);color:var(--green)}
+.ba{background:rgba(255,171,64,.15);color:var(--amber)}
+.br{background:rgba(239,83,80,.15);color:var(--red)}
+.dim{color:var(--muted)}
+
+footer{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--border);font-size:.75rem;color:var(--muted)}
+
+/* Toolbar */
+.toolbar{display:flex;align-items:center;gap:.6rem;margin-bottom:1.25rem;flex-wrap:wrap}
+.toolbar-label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-right:.25rem}
+.btn{display:inline-flex;align-items:center;gap:.35rem;padding:.35rem .8rem;border-radius:6px;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;border:1px solid var(--border);background:var(--surface);color:var(--text);transition:background .15s,border-color .15s}
+.btn:hover{background:var(--surface-2);border-color:#555}
+.btn-primary{background:#1a3a28;border-color:var(--green);color:var(--green)}
+.btn-primary:hover{background:#1f4a30}
+.btn-day.active{background:#1a3a28;border-color:var(--green);color:var(--green)}
+</style>
+</head>
+<body>
+<h1>UK Rail Punctuality Report</h1>
+<p class="meta" id="meta-line"></p>
+<div class="toolbar" id="toolbar"></div>
+<div id="root"></div>
+
+<script>
+const DATA = {"generated_at":"31 May 2026 21:11 UTC","days_window":1,"summary":{"total_observations":483642,"total_services":29576,"mean_actual_mins":39.92901981217512,"mean_predicted_mins":40.208072024417774,"mean_abs_error_mins":14.780727590882073,"prediction_coverage_pct":92.87468830250475,"on_time_pct":12.064502255800779,"pct_within_5min":46.18316447044732,"pct_within_10min":62.83792057099477},"daily":[{"day":"2026-05-30","observations":42757,"mean_actual_mins":18.738943330916577,"mean_predicted_mins":19.752093446601943,"mean_abs_error_mins":10.489138349514564,"on_time_pct":17.30243001146011},{"day":"2026-05-31","observations":440885,"mean_actual_mins":41.984032117218774,"mean_predicted_mins":41.827954380004854,"mean_abs_error_mins":15.120572964843197,"on_time_pct":11.556528346394185}],"services":[{"uid":"C37002","origin_crs":"PADTLL","weekday":6,"departure_hour":19,"observations":563,"mean_actual":1.2007104795737122,"mean_predicted":0.1494661921708185,"on_time_pct":50.44404973357016,"coverage_pct":99.82238010657194},{"uid":"C36993","origin_crs":"LIVSTLL","weekday":6,"departure_hour":19,"observations":527,"mean_actual":18.352941176470587,"mean_predicted":18.336501901140686,"on_time_pct":5.313092979127135,"coverage_pct":99.81024667931689},{"uid":"C37233","origin_crs":"CUSTMHS","weekday":6,"departure_hour":19,"observations":513,"mean_actual":27.128654970760234,"mean_predicted":26.64453125,"on_time_pct":0.7797270955165692,"coverage_pct":99.80506822612085},{"uid":"C37124","origin_crs":"ABWDXR","weekday":6,"departure_hour":19,"observations":461,"mean_actual":30.18655097613883,"mean_predicted":28.903930131004365,"on_time_pct":0.0,"coverage_pct":99.34924078091106},{"uid":"C37244","origin_crs":"ABWDXR","weekday":6,"departure_hour":19,"observations":446,"mean_actual":34.66591928251121,"mean_predicted":32.97516930022574,"on_time_pct":0.0,"coverage_pct":99.32735426008969},{"uid":"C37015","origin_crs":"ABWDXR","weekday":6,"departure_hour":19,"observations":424,"mean_actual":28.830188679245282,"mean_predicted":27.85748218527316,"on_time_pct":0.0,"coverage_pct":99.29245283018868},{"uid":"C37116","origin_crs":"WOLWXR","weekday":6,"departure_hour":19,"observations":297,"mean_actual":30.67003367003367,"mean_predicted":30.736486486486488,"on_time_pct":0.0,"coverage_pct":99.66329966329967},{"uid":"C37135","origin_crs":"BNHAM","weekday":6,"departure_hour":21,"observations":251,"mean_actual":-37.669322709163346,"mean_predicted":-23.576,"on_time_pct":97.60956175298804,"coverage_pct":99.60159362549801},{"uid":"C37220","origin_crs":"ABWDXR","weekday":6,"departure_hour":18,"observations":234,"mean_actual":24.252136752136753,"mean_predicted":25.128755364806867,"on_time_pct":0.0,"coverage_pct":99.57264957264957},{"uid":"C36973","origin_crs":"PADTLL","weekday":6,"departure_hour":19,"observations":224,"mean_actual":3.1517857142857144,"mean_predicted":2.0358744394618835,"on_time_pct":49.55357142857143,"coverage_pct":99.55357142857143},{"uid":"C37022","origin_crs":"ABWDXR","weekday":6,"departure_hour":19,"observations":219,"mean_actual":33.84018264840183,"mean_predicted":32.276497695852534,"on_time_pct":0.0,"coverage_pct":99.08675799086758},{"uid":"C37110","origin_crs":"ABWDXR","weekday":6,"departure_hour":18,"observations":215,"mean_actual":26.711627906976744,"mean_predicted":26.96728971962617,"on_time_pct":0.0,"coverage_pct":99.53488372093024},{"uid":"C36973","origin_crs":"ABWDXR","weekday":6,"departure_hour":18,"observations":207,"mean_actual":26.135265700483092,"mean_predicted":26.398058252427184,"on_time_pct":0.0,"coverage_pct":99.51690821256038},{"uid":"C37255","origin_crs":"STHALL","weekday":6,"departure_hour":21,"observations":192,"mean_actual":-15.421875,"mean_predicted":-14.795811518324607,"on_time_pct":82.8125,"coverage_pct":99.47916666666667},{"uid":"C37511","origin_crs":"PADTLL","weekday":6,"departure_hour":18,"observations":191,"mean_actual":28.581151832460733,"mean_predicted":27.48421052631579,"on_time_pct":0.0,"coverage_pct":99.47643979057591},{"uid":"C37493","origin_crs":"WCHAPXR","weekday":6,"departure_hour":19,"observations":178,"mean_actual":18.297752808988765,"mean_predicted":18.129943502824858,"on_time_pct":1.1235955056179776,"coverage_pct":99.43820224719101},{"uid":"C37311","origin_crs":"SHENFLD","weekday":6,"departure_hour":17,"observations":167,"mean_actual":51.0,"mean_predicted":49.174698795180724,"on_time_pct":0.5988023952095808,"coverage_pct":99.40119760479043},{"uid":"C37116","origin_crs":"LIVSTLL","weekday":6,"departure_hour":19,"observations":165,"mean_actual":12.266666666666667,"mean_predicted":11.945121951219512,"on_time_pct":20.0,"coverage_pct":99.39393939393939},{"uid":"C37521","origin_crs":"PADTLL","weekday":6,"departure_hour":19,"observations":164,"mean_actual":22.664634146341463,"mean_predicted":21.895705521472394,"on_time_pct":0.0,"coverage_pct":99.39024390243902},{"uid":"C37054","origin_crs":"ACTONML","weekday":6,"departure_hour":21,"observations":159,"mean_actual":-4.572327044025157,"mean_predicted":-5.449367088607595,"on_time_pct":74.21383647798743,"coverage_pct":99.37106918238993},{"uid":"C37032","origin_crs":"ABWDXR","weekday":6,"departure_hour":10,"observations":155,"mean_actual":27.73548387096774,"mean_predicted":27.24025974025974,"on_time_pct":0.6451612903225806,"coverage_pct":99.35483870967742},{"uid":"C37731","origin_crs":"RDNGSTN","weekday":6,"departure_hour":15,"observations":155,"mean_actual":68.71612903225807,"mean_predicted":67.59740259740259,"on_time_pct":1.935483870967742,"coverage_pct":99.35483870967742},{"uid":"G01071","origin_crs":"PLYMTH","weekday":6,"departure_hour":9,"observations":154,"mean_actual":295.8961038961039,"mean_predicted":188.73856209150327,"on_time_pct":1.2987012987012987,"coverage_pct":99.35064935064935},{"uid":"C37417","origin_crs":"RDNGSTN","weekday":6,"departure_hour":16,"observations":153,"mean_actual":77.05882352941177,"mean_predicted":75.8157894736842,"on_time_pct":1.9607843137254901,"coverage_pct":99.34640522875817},{"uid":"C37484","origin_crs":"BONDST","weekday":6,"departure_hour":18,"observations":151,"mean_actual":36.29801324503311,"mean_predicted":34.88666666666666,"on_time_pct":0.0,"coverage_pct":99.33774834437087},{"uid":"C37774","origin_crs":"RDNGSTN","weekday":6,"departure_hour":15,"observations":151,"mean_actual":65.1456953642384,"mean_predicted":62.58,"on_time_pct":1.3245033112582782,"coverage_pct":99.33774834437087},{"uid":"W29886","origin_crs":"EDINBUR","weekday":6,"departure_hour":9,"observations":151,"mean_actual":309.5960264900662,"mean_predicted":194.90066225165563,"on_time_pct":0.6622516556291391,"coverage_pct":100.0},{"uid":"W29782","origin_crs":"PLYMTH","weekday":6,"departure_hour":10,"observations":151,"mean_actual":286.25165562913907,"mean_predicted":189.88,"on_time_pct":1.9867549668874172,"coverage_pct":99.33774834437087},{"uid":"G01147","origin_crs":"NWCSTLE","weekday":6,"departure_hour":9,"observations":151,"mean_actual":257.63576158940396,"mean_predicted":183.76666666666668,"on_time_pct":1.3245033112582782,"coverage_pct":99.33774834437087},{"uid":"C37814","origin_crs":"RDNGSTN","weekday":6,"departure_hour":16,"observations":150,"mean_actual":70.34666666666666,"mean_predicted":69.03355704697987,"on_time_pct":2.0,"coverage_pct":99.33333333333333},{"uid":"C36865","origin_crs":"PADTLL","weekday":6,"departure_hour":17,"observations":149,"mean_actual":19.80536912751678,"mean_predicted":19.533783783783782,"on_time_pct":0.0,"coverage_pct":99.32885906040268},{"uid":"C37035","origin_crs":"ABWDXR","weekday":6,"departure_hour":20,"observations":149,"mean_actual":26.335570469798657,"mean_predicted":25.503401360544217,"on_time_pct":0.0,"coverage_pct":98.65771812080537},{"uid":"C37400","origin_crs":"HTRWTM4","weekday":6,"departure_hour":17,"observations":148,"mean_actual":59.195945945945944,"mean_predicted":57.6530612244898,"on_time_pct":0.6756756756756757,"coverage_pct":99.32432432432432},{"uid":"W69864","origin_crs":"RTHGLEN","weekday":6,"departure_hour":15,"observations":148,"mean_actual":79.20945945945945,"mean_predicted":70.91156462585035,"on_time_pct":0.6756756756756757,"coverage_pct":99.32432432432432},{"uid":"C37406","origin_crs":"RDNGSTN","weekday":6,"departure_hour":11,"observations":148,"mean_actual":65.99324324324324,"mean_predicted":64.80952380952381,"on_time_pct":2.027027027027027,"coverage_pct":99.32432432432432},{"uid":"G01152","origin_crs":"EDINBUR","weekday":6,"departure_hour":10,"observations":147,"mean_actual":294.4353741496599,"mean_predicted":190.28082191780823,"on_time_pct":0.6802721088435374,"coverage_pct":99.31972789115646},{"uid":"C37749","origin_crs":"MDNHEAD","weekday":6,"departure_hour":16,"observations":147,"mean_actual":53.87074829931973,"mean_predicted":53.178082191780824,"on_time_pct":1.3605442176870748,"coverage_pct":99.31972789115646},{"uid":"G01066","origin_crs":"BRSTLTM","weekday":6,"departure_hour":9,"observations":146,"mean_actual":280.90410958904107,"mean_predicted":188.4344827586207,"on_time_pct":1.36986301369863,"coverage_pct":99.31506849315069},{"uid":"C37673","origin_crs":"MDNHEAD","weekday":6,"departure_hour":20,"observations":145,"mean_actual":50.93793103448276,"mean_predicted":50.62237762237762,"on_time_pct":0.6896551724137931,"coverage_pct":98.62068965517241},{"uid":"W29776","origin_crs":"BRSTLTM","weekday":6,"departure_hour":10,"observations":143,"mean_actual":264.8041958041958,"mean_predicted":177.69718309859155,"on_time_pct":2.097902097902098,"coverage_pct":99.3006993006993},{"uid":"C37759","origin_crs":"BNHAM","weekday":6,"departure_hour":21,"observations":143,"mean_actual":47.72727272727273,"mean_predicted":47.190140845070424,"on_time_pct":0.6993006993006993,"coverage_pct":99.3006993006993},{"uid":"C37437","origin_crs":"MDNHEAD","weekday":6,"departure_hour":17,"observations":142,"mean_actual":63.41549295774648,"mean_predicted":62.751773049645394,"on_time_pct":1.408450704225352,"coverage_pct":99.29577464788733},{"uid":"C36858","origin_crs":"PADTLL","weekday":6,"departure_hour":12,"observations":142,"mean_actual":18.302816901408452,"mean_predicted":18.375886524822697,"on_time_pct":0.0,"coverage_pct":99.29577464788733},{"uid":"C37427","origin_crs":"HTRWTM4","weekday":6,"departure_hour":17,"observations":142,"mean_actual":60.33802816901409,"mean_predicted":59.687943262411345,"on_time_pct":0.704225352112676,"coverage_pct":99.29577464788733},{"uid":"C37377","origin_crs":"EALINGB","weekday":6,"departure_hour":21,"observations":142,"mean_actual":-6.246478873239437,"mean_predicted":-5.943262411347518,"on_time_pct":71.83098591549296,"coverage_pct":99.29577464788733},{"uid":"C37506","origin_crs":"RDNGSTN","weekday":6,"departure_hour":7,"observations":141,"mean_actual":58.60283687943262,"mean_predicted":57.35,"on_time_pct":2.127659574468085,"coverage_pct":99.29078014184397},{"uid":"C37498","origin_crs":"HTRWTM5","weekday":6,"departure_hour":7,"observations":140,"mean_actual":56.45,"mean_predicted":56.13669064748201,"on_time_pct":0.7142857142857143,"coverage_pct":99.28571428571429},{"uid":"C37568","origin_crs":"HTRWTM4","weekday":6,"departure_hour":19,"observations":140,"mean_actual":47.72142857142857,"mean_predicted":47.7463768115942,"on_time_pct":0.7142857142857143,"coverage_pct":98.57142857142857},{"uid":"C36964","origin_crs":"ABWDXR","weekday":6,"departure_hour":13,"observations":139,"mean_actual":26.949640287769785,"mean_predicted":26.905797101449274,"on_time_pct":0.0,"coverage_pct":99.28057553956835},{"uid":"C37562","origin_crs":"PADTLL","weekday":6,"departure_hour":9,"observations":138,"mean_actual":20.434782608695652,"mean_predicted":20.744525547445257,"on_time_pct":0.0,"coverage_pct":99.27536231884058},{"uid":"C37823","origin_crs":"HTRWTM4","weekday":6,"departure_hour":17,"observations":138,"mean_actual":50.47826086956522,"mean_predicted":49.481751824817515,"on_time_pct":0.7246376811594203,"coverage_pct":99.27536231884058},{"uid":"C37479","origin_crs":"MDNHEAD","weekday":6,"departure_hour":7,"observations":138,"mean_actual":49.93478260869565,"mean_predicted":49.67153284671533,"on_time_pct":1.4492753623188406,"coverage_pct":99.27536231884058},{"uid":"C37383","origin_crs":"SHENFLD","weekday":6,"departure_hour":15,"observations":137,"mean_actual":45.98540145985402,"mean_predicted":44.74264705882353,"on_time_pct":1.4598540145985401,"coverage_pct":99.27007299270073},{"uid":"C37531","origin_crs":"PADTLL","weekday":6,"departure_hour":19,"observations":134,"mean_actual":22.067164179104477,"mean_predicted":21.48507462686567,"on_time_pct":0.0,"coverage_pct":100.0},{"uid":"C36855","origin_crs":"PADTLL","weekday":6,"departure_hour":16,"observations":134,"mean_actual":19.082089552238806,"mean_predicted":18.93984962406015,"on_time_pct":0.746268656716418,"coverage_pct":99.25373134328358},{"uid":"C37981","origin_crs":"HTRWTM4","weekday":6,"departure_hour":9,"observations":134,"mean_actual":53.1865671641791,"mean_predicted":53.0,"on_time_pct":0.746268656716418,"coverage_pct":99.25373134328358},{"uid":"C36938","origin_crs":"ABWDXR","weekday":6,"departure_hour":17,"observations":133,"mean_actual":29.1203007518797,"mean_predicted":28.65909090909091,"on_time_pct":0.0,"coverage_pct":99.24812030075188},{"uid":"C36979","origin_crs":"ABWDXR","weekday":6,"departure_hour":18,"observations":133,"mean_actual":22.541353383458645,"mean_predicted":23.061068702290076,"on_time_pct":0.0,"coverage_pct":98.49624060150376},{"uid":"C36868","origin_crs":"ABWDXR","weekday":6,"departure_hour":16,"observations":133,"mean_actual":29.32330827067669,"mean_predicted":28.696969696969695,"on_time_pct":0.0,"coverage_pct":99.24812030075188},{"uid":"C37665","origin_crs":"HTRWAPT","weekday":6,"departure_hour":20,"observations":133,"mean_actual":47.36842105263158,"mean_predicted":47.07575757575758,"on_time_pct":1.5037593984962405,"coverage_pct":99.24812030075188},{"uid":"C37740","origin_crs":"HTRWTM4","weekday":6,"departure_hour":16,"observations":133,"mean_actual":48.94736842105263,"mean_predicted":47.833333333333336,"on_time_pct":0.7518796992481203,"coverage_pct":99.24812030075188},{"uid":"C37929","origin_crs":"PADTLL","weekday":6,"departure_hour":18,"observations":132,"mean_actual":38.88636363636363,"mean_predicted":36.12977099236641,"on_time_pct":0.0,"coverage_pct":99.24242424242425},{"uid":"C37945","origin_crs":"PADTLL","weekday":6,"departure_hour":19,"observations":132,"mean_actual":26.28787878787879,"mean_predicted":25.88372093023256,"on_time_pct":0.0,"coverage_pct":97.72727272727273},{"uid":"C36804","origin_crs":"PADTLL","weekday":6,"departure_hour":13,"observations":131,"mean_actual":17.38167938931298,"mean_predicted":17.353846153846153,"on_time_pct":0.0,"coverage_pct":99.23664122137404},{"uid":"C37392","origin_crs":"MDNHEAD","weekday":6,"departure_hour":17,"observations":129,"mean_actual":56.751937984496124,"mean_predicted":56.171875,"on_time_pct":1.550387596899225,"coverage_pct":99.2248062015504},{"uid":"C37798","origin_crs":"HTRWTM4","weekday":6,"departure_hour":16,"observations":129,"mean_actual":50.310077519379846,"mean_predicted":49.875,"on_time_pct":0.7751937984496124,"coverage_pct":99.2248062015504},{"uid":"W68909","origin_crs":"EDINBUR","weekday":6,"departure_hour":14,"observations":128,"mean_actual":79.25,"mean_predicted":77.31496062992126,"on_time_pct":0.78125,"coverage_pct":99.21875},{"uid":"W69086","origin_crs":"HLNSBRC","weekday":6,"departure_hour":14,"observations":128,"mean_actual":69.9453125,"mean_predicted":68.85039370078741,"on_time_pct":1.5625,"coverage_pct":99.21875},{"uid":"C93269","origin_crs":"PHBR","weekday":6,"departure_hour":16,"observations":128,"mean_actual":74.671875,"mean_predicted":77.63779527559055,"on_time_pct":0.78125,"coverage_pct":99.21875},{"uid":"W29792","origin_crs":"PENZNCE","weekday":6,"departure_hour":11,"observations":127,"mean_actual":241.44094488188978,"mean_predicted":181.99212598425197,"on_time_pct":0.7874015748031497,"coverage_pct":100.0},{"uid":"C37768","origin_crs":"HAYESAH","weekday":6,"departure_hour":21,"observations":127,"mean_actual":32.98425196850393,"mean_predicted":32.51587301587302,"on_time_pct":4.724409448818897,"coverage_pct":99.21259842519684},{"uid":"W68900","origin_crs":"EDINBUR","weekday":6,"departure_hour":13,"observations":127,"mean_actual":81.07086614173228,"mean_predicted":79.17460317460318,"on_time_pct":0.7874015748031497,"coverage_pct":99.21259842519684},{"uid":"W29874","origin_crs":"NWCSTLE","weekday":6,"departure_hour":8,"observations":126,"mean_actual":278.2142857142857,"mean_predicted":184.152,"on_time_pct":1.5873015873015872,"coverage_pct":99.2063492063492},{"uid":"G01077","origin_crs":"PLYMTH","weekday":6,"departure_hour":11,"observations":125,"mean_actual":253.52,"mean_predicted":182.75806451612902,"on_time_pct":2.4,"coverage_pct":99.2},{"uid":"J85666","origin_crs":"DEPTFD","weekday":6,"departure_hour":20,"observations":125,"mean_actual":62.168,"mean_predicted":61.70967741935484,"on_time_pct":1.6,"coverage_pct":99.2},{"uid":"C37714","origin_crs":"HTRWTM4","weekday":6,"departure_hour":15,"observations":124,"mean_actual":46.12096774193548,"mean_predicted":45.82113821138211,"on_time_pct":0.8064516129032258,"coverage_pct":99.19354838709677},{"uid":"X89877","origin_crs":"VICTRIC","weekday":6,"departure_hour":13,"observations":124,"mean_actual":100.62096774193549,"mean_predicted":98.23577235772358,"on_time_pct":0.0,"coverage_pct":99.19354838709677},{"uid":"C37587","origin_crs":"HTRWTM4","weekday":6,"departure_hour":19,"observations":123,"mean_actual":44.75609756097561,"mean_predicted":44.289256198347104,"on_time_pct":0.8130081300813008,"coverage_pct":98.3739837398374},{"uid":"C93225","origin_crs":"PHBR","weekday":6,"departure_hour":7,"observations":123,"mean_actual":68.52845528455285,"mean_predicted":69.22950819672131,"on_time_pct":2.4390243902439024,"coverage_pct":99.1869918699187},{"uid":"X89878","origin_crs":"VICTRIC","weekday":6,"departure_hour":11,"observations":122,"mean_actual":98.36065573770492,"mean_predicted":95.97520661157024,"on_time_pct":0.0,"coverage_pct":99.18032786885246},{"uid":"C38182","origin_crs":"HTRWTM5","weekday":6,"departure_hour":16,"observations":122,"mean_actual":60.34426229508197,"mean_predicted":59.46280991735537,"on_time_pct":0.819672131147541,"coverage_pct":99.18032786885246},{"uid":"J85684","origin_crs":"CANONST","weekday":6,"departure_hour":11,"observations":122,"mean_actual":62.385245901639344,"mean_predicted":62.99173553719008,"on_time_pct":0.819672131147541,"coverage_pct":99.18032786885246},{"uid":"J85667","origin_crs":"DEPTFD","weekday":6,"departure_hour":20,"observations":121,"mean_actual":65.22314049586777,"mean_predicted":62.358333333333334,"on_time_pct":3.3057851239669422,"coverage_pct":99.17355371900827},{"uid":"C36809","origin_crs":"PADTLL","weekday":6,"departure_hour":18,"observations":121,"mean_actual":17.454545454545453,"mean_predicted":17.491666666666667,"on_time_pct":0.0,"coverage_pct":99.17355371900827},{"uid":"C38147","origin_crs":"HTRWTM5","weekday":6,"departure_hour":16,"observations":120,"mean_actual":54.19166666666667,"mean_predicted":53.72268907563025,"on_time_pct":0.8333333333333334,"coverage_pct":99.16666666666667},{"uid":"C37192","origin_crs":"ABWDXR","weekday":6,"departure_hour":17,"observations":120,"mean_actual":34.766666666666666,"mean_predicted":33.64705882352941,"on_time_pct":1.6666666666666667,"coverage_pct":99.16666666666667},{"uid":"C37925","origin_crs":"HTRWTM4","weekday":6,"departure_hour":8,"observations":120,"mean_actual":56.891666666666666,"mean_predicted":57.79831932773109,"on_time_pct":0.8333333333333334,"coverage_pct":99.16666666666667},{"uid":"X57226","origin_crs":"VICTRIC","weekday":6,"departure_hour":8,"observations":119,"mean_actual":116.67226890756302,"mean_predicted":111.58474576271186,"on_time_pct":2.5210084033613445,"coverage_pct":99.15966386554622},{"uid":"C37368","origin_crs":"BRTWOOD","weekday":6,"departure_hour":19,"observations":119,"mean_actual":60.63025210084034,"mean_predicted":62.228813559322035,"on_time_pct":0.0,"coverage_pct":99.15966386554622},{"uid":"C01237","origin_crs":"PENZNCE","weekday":6,"departure_hour":8,"observations":119,"mean_actual":187.87394957983193,"mean_predicted":169.54237288135593,"on_time_pct":0.8403361344537815,"coverage_pct":99.15966386554622},{"uid":"W69091","origin_crs":"HLNSBRC","weekday":6,"departure_hour":14,"observations":119,"mean_actual":67.08403361344538,"mean_predicted":65.10169491525424,"on_time_pct":2.5210084033613445,"coverage_pct":99.15966386554622},{"uid":"C37128","origin_crs":"ABWDXR","weekday":6,"departure_hour":9,"observations":119,"mean_actual":31.69747899159664,"mean_predicted":31.059322033898304,"on_time_pct":0.8403361344537815,"coverage_pct":99.15966386554622},{"uid":"J85665","origin_crs":"LNDNBDE","weekday":6,"departure_hour":21,"observations":119,"mean_actual":59.63025210084034,"mean_predicted":57.686440677966104,"on_time_pct":1.680672268907563,"coverage_pct":99.15966386554622},{"uid":"C33095","origin_crs":"PHBR","weekday":6,"departure_hour":11,"observations":118,"mean_actual":121.88135593220339,"mean_predicted":121.95726495726495,"on_time_pct":2.542372881355932,"coverage_pct":99.15254237288136},{"uid":"L78786","origin_crs":"WATRLMN","weekday":6,"departure_hour":14,"observations":118,"mean_actual":148.82203389830508,"mean_predicted":147.8034188034188,"on_time_pct":0.847457627118644,"coverage_pct":99.15254237288136},{"uid":"X89871","origin_crs":"VICTRIC","weekday":6,"departure_hour":19,"observations":118,"mean_actual":103.59322033898304,"mean_predicted":100.26724137931035,"on_time_pct":0.0,"coverage_pct":98.30508474576271},{"uid":"C01222","origin_crs":"PADTON","weekday":6,"departure_hour":8,"observations":118,"mean_actual":174.0593220338983,"mean_predicted":164.03418803418805,"on_time_pct":5.084745762711864,"coverage_pct":99.15254237288136},{"uid":"W69140","origin_crs":"EDINBUR","weekday":6,"departure_hour":12,"observations":118,"mean_actual":75.71186440677967,"mean_predicted":74.47863247863248,"on_time_pct":1.694915254237288,"coverage_pct":99.15254237288136},{"uid":"G01145","origin_crs":"LEEDS","weekday":6,"departure_hour":9,"observations":118,"mean_actual":219.04237288135593,"mean_predicted":170.73504273504273,"on_time_pct":2.542372881355932,"coverage_pct":99.15254237288136},{"uid":"C37540","origin_crs":"STHALL","weekday":6,"departure_hour":19,"observations":118,"mean_actual":34.30508474576271,"mean_predicted":32.52136752136752,"on_time_pct":0.0,"coverage_pct":99.15254237288136}],"hourly":[{"hour":0,"observations":8790,"mean_delay":13.7547212741752},{"hour":1,"observations":1184,"mean_delay":8.280405405405405},{"hour":2,"observations":402,"mean_delay":13.206467661691542},{"hour":3,"observations":343,"mean_delay":12.527696793002915},{"hour":4,"observations":462,"mean_delay":21.515151515151516},{"hour":5,"observations":1072,"mean_delay":25.482276119402986},{"hour":6,"observations":4692,"mean_delay":33.22399829497016},{"hour":7,"observations":13242,"mean_delay":39.2994260685697},{"hour":8,"observations":23208,"mean_delay":48.38956394346777},{"hour":9,"observations":30524,"mean_delay":56.83432708688245},{"hour":10,"observations":31053,"mean_delay":51.65703796734615},{"hour":11,"observations":30835,"mean_delay":50.73932219880007},{"hour":12,"observations":31246,"mean_delay":50.559719644114445},{"hour":13,"observations":30439,"mean_delay":47.987253194914416},{"hour":14,"observations":29672,"mean_delay":46.90937584254516},{"hour":15,"observations":30154,"mean_delay":47.378689394441864},{"hour":16,"observations":30887,"mean_delay":43.79981869394891},{"hour":17,"observations":27952,"mean_delay":38.1876788780767},{"hour":18,"observations":25698,"mean_delay":32.07650400809401},{"hour":19,"observations":37414,"mean_delay":38.24867696584166},{"hour":20,"observations":22640,"mean_delay":25.84452296819788},{"hour":21,"observations":26844,"mean_delay":19.783266279243033},{"hour":22,"observations":32002,"mean_delay":20.634741578651333},{"hour":23,"observations":12887,"mean_delay":9.14378831380461}],"benchmarks":{"trained_at":"2026-05-31","train_rows":3729314,"test_rows":569879,"baseline_mae":18.07,"day_ahead":{"mae":13.44,"rmse":20.48,"bias":-4.02,"within_2min":14.0,"within_5min":32.1,"within_10min":54.9},"realtime":{"mae":4.0,"rmse":6.29,"bias":-0.15,"within_2min":43.4,"within_5min":73.2,"within_10min":91.0}}};
+
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const fmt1   = v => v != null ? v.toFixed(1) : '—';
+const fmtPct = v => v != null ? v.toFixed(1) + '%' : '—';
+const pctCls = v => v == null ? '' : v >= 70 ? 'bg' : v >= 50 ? 'ba' : 'br';
+const cardPctCls = v => v == null ? '' : v >= 70 ? 'c-green' : v >= 50 ? 'c-amber' : 'c-red';
+const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const esc = s => String(s).replace(/[&<>"']/g, c => ESC_MAP[c]);
+const fmtHour = h => { const ap = h < 12 ? 'am' : 'pm'; return `${h % 12 || 12}${ap}`; };
+const tag = (cls, text) => `<span class="tag ${cls}">${text}</span>`;
+
+// ── Meta line ────────────────────────────────────────────────────────────────
+document.getElementById('meta-line').textContent =
+  `Showing the last ${DATA.days_window} day${DATA.days_window !== 1 ? 's' : ''} · Generated ${DATA.generated_at}`;
+
+// ── Toolbar (live only) ───────────────────────────────────────────────────────
+(function() {
+  const base = window.location.pathname.replace(/\/$/, '');
+  if (!base.endsWith('/report')) return;
+  const days = DATA.days_window;
+  const tb = document.getElementById('toolbar');
+  tb.innerHTML =
+    `<span class="toolbar-label">Time window</span>` +
+    [1,7,14,30].map(d =>
+      `<a class="btn btn-day${d === days ? ' active' : ''}" href="${base}?days=${d}">${d === 1 ? 'Today' : d + ' days'}</a>`
+    ).join('') +
+    `<a class="btn btn-primary" href="${base}?days=${days}">↻ Refresh report</a>`;
+})();
+
+// ── No-data guard ────────────────────────────────────────────────────────────
+if (DATA.summary.total_observations === 0) {
+  document.getElementById('root').innerHTML = `
+    <div class="no-data">
+      <h2>No data available yet</h2>
+      <p>The system is still collecting train data. Check back in a few hours once journeys have been recorded.</p>
+    </div>`;
+} else {
+  renderDashboard();
+}
+
+function renderDashboard() {
+  const s       = DATA.summary;
+  const daily   = DATA.daily;
+  const hourly  = DATA.hourly;
+  const hasPred = s.pct_within_5min != null;
+
+  // ── Grading helpers ──────────────────────────────────────────────────────
+  // Returns 'good' | 'moderate' | 'poor'
+  function grade(val, goodThresh, modThresh, higherIsBetter) {
+    if (val == null) return null;
+    if (higherIsBetter) return val >= goodThresh ? 'good' : val >= modThresh ? 'moderate' : 'poor';
+    return val <= goodThresh ? 'good' : val <= modThresh ? 'moderate' : 'poor';
+  }
+
+  // Verdict chip shown on cards
+  function verdict(tier, goodText, modText, poorText) {
+    if (!tier) return '';
+    const map = {
+      good:     ['vd-good',     '✓ ' + goodText],
+      moderate: ['vd-moderate', '~ ' + modText],
+      poor:     ['vd-poor',     '⚠ ' + poorText],
+    };
+    const [cls, text] = map[tier];
+    return `<div class="card-verdict ${cls}">${text}</div>`;
+  }
+
+  // Grade tag shown in note boxes
+  function gradeTag(tier, goodText, modText, poorText) {
+    if (!tier) return '';
+    const map = {
+      good:     ['tag-good',     '✓ ' + goodText],
+      moderate: ['tag-moderate', '~ ' + modText],
+      poor:     ['tag-poor',     '⚠ ' + poorText],
+    };
+    const [cls, text] = map[tier];
+    return tag(cls, text);
+  }
+
+  // ── Pre-compute all grades ───────────────────────────────────────────────
+  const g5min   = grade(s.pct_within_5min,  50, 30, true);
+  const g10min  = grade(s.pct_within_10min, 65, 45, true);
+  const gErr    = grade(s.mean_abs_error_mins, 8, 18, false);
+  const gDelay  = grade(s.mean_actual_mins,    3,  8, false);
+  const gOnTime = grade(s.on_time_pct,        92, 75, true);
+  const gCov    = grade(s.prediction_coverage_pct, 80, 50, true);
+
+  // ── Pre-compute dynamic insight text ────────────────────────────────────
+
+  // Worst day by forecast error
+  const worstDay = daily.reduce((w, d) =>
+    d.mean_abs_error_mins != null && (!w || d.mean_abs_error_mins > w.mean_abs_error_mins) ? d : w, null);
+
+  // Error trend: compare average of first half vs second half of daily data
+  const validDaily = daily.filter(d => d.mean_abs_error_mins != null);
+  let trendText = '';
+  if (validDaily.length >= 4) {
+    const half = Math.floor(validDaily.length / 2);
+    const avg = arr => arr.reduce((s, d) => s + d.mean_abs_error_mins, 0) / arr.length;
+    const diff = avg(validDaily.slice(half)) - avg(validDaily.slice(0, half));
+    if (diff < -1)      trendText = ' Encouragingly, forecast accuracy has been <strong>improving</strong> across the period.';
+    else if (diff > 1)  trendText = ' Note that forecast accuracy has been <strong>getting worse</strong> recently — this may be worth investigating.';
+    else                trendText = ' Accuracy has been <strong>broadly stable</strong> across the period.';
+  }
+
+  // Overall prediction verdict sentence
+  let predOverallText = '';
+  if (s.pct_within_10min != null) {
+    if (g10min === 'good')
+      predOverallText = `<strong>${fmt1(s.pct_within_10min)}%</strong> of forecasts landed within 10 minutes of the actual delay — the model is performing well overall.`;
+    else if (g10min === 'moderate')
+      predOverallText = `<strong>${fmt1(s.pct_within_10min)}%</strong> of forecasts are within 10 minutes. Predictions are broadly useful but there is meaningful room to improve.`;
+    else
+      predOverallText = `Only <strong>${fmt1(s.pct_within_10min)}%</strong> of forecasts are within 10 minutes. The model may need more training data or retraining on recent delays.`;
+  }
+  const worstDayText = worstDay
+    ? ` The most challenging day was <strong>${worstDay.day}</strong>, where predictions were off by an average of <strong>${fmt1(worstDay.mean_abs_error_mins)} min</strong>.`
+    : '';
+
+  // Peak and best hours
+  const peakHour = hourly.reduce((p, h) =>
+    h.mean_delay != null && (!p || h.mean_delay > p.mean_delay) ? h : p, null);
+  const bestHour = hourly.filter(h => h.mean_delay != null && h.observations > 5)
+    .reduce((b, h) => (!b || h.mean_delay < b.mean_delay) ? h : b, null);
+
+  let hourlyInsight = '';
+  if (peakHour) {
+    const peakSeverity = peakHour.mean_delay > 15
+      ? 'significantly delayed'
+      : peakHour.mean_delay > 5 ? 'notably delayed' : 'slightly delayed';
+    hourlyInsight = `Trains departing around <strong>${fmtHour(peakHour.hour)}</strong> are the most ${peakSeverity}, running an average of <strong>${fmt1(peakHour.mean_delay)} min</strong> late.`;
+    if (bestHour && bestHour.hour !== peakHour.hour)
+      hourlyInsight += ` The most reliable slot is around <strong>${fmtHour(bestHour.hour)}</strong>, averaging just <strong>${fmt1(bestHour.mean_delay)} min</strong> late.`;
+  }
+
+  // Best and worst routes
+  const routesWithPct = DATA.services.filter(r => r.on_time_pct != null);
+  const bestRoute  = routesWithPct.reduce((b, r) => (!b || r.on_time_pct > b.on_time_pct) ? r : b, null);
+  const worstRoute = routesWithPct.filter(r => r.observations >= 5)
+    .reduce((w, r) => (!w || r.on_time_pct < w.on_time_pct) ? r : w, null);
+
+  let routeInsight = '';
+  if (bestRoute && worstRoute && bestRoute.uid !== worstRoute.uid) {
+    routeInsight = `<p>Best performing route in this period: <strong>${esc(bestRoute.uid)}</strong> departing ${esc(bestRoute.origin_crs)} on ${DAYS[bestRoute.weekday]} at ${fmtHour(bestRoute.departure_hour)} — <strong>${fmtPct(bestRoute.on_time_pct)}</strong> on time.
+      Most delayed: <strong>${esc(worstRoute.uid)}</strong> from ${esc(worstRoute.origin_crs)} — only <strong>${fmtPct(worstRoute.on_time_pct)}</strong> on time.</p>`;
+  }
+
+  // Overall punctuality verdict sentence
+  let punctualityText = '';
+  if (s.on_time_pct != null) {
+    if (gOnTime === 'good')
+      punctualityText = `At <strong>${fmt1(s.on_time_pct)}%</strong> on time, trains are meeting the national punctuality target of ~92%.`;
+    else if (gOnTime === 'moderate')
+      punctualityText = `At <strong>${fmt1(s.on_time_pct)}%</strong> on time, punctuality is below the national target of ~92% but most trains are still arriving on schedule.`;
+    else
+      punctualityText = `At <strong>${fmt1(s.on_time_pct)}%</strong> on time, punctuality is significantly below the national target of ~92%. Delays are a systemic issue in this period.`;
+  }
+
+  // ── Build HTML ────────────────────────────────────────────────────────────
+  const root = document.getElementById('root');
+
+  root.innerHTML = `
+    <div class="intro">
+      This report tracks how reliably UK trains ran and <strong>how accurately the system predicted delays</strong> over the selected period.
+      <strong>On-time</strong> means the train arrived no later than its scheduled time.
+      The most important figures are in the <em>Prediction accuracy</em> section below.
+    </div>
+
+    ${DATA.benchmarks ? `
+    <p class="section-head">Model training benchmarks — test-set results</p>
+    <div class="cards" id="cards-bench-da"></div>
+    <div class="cards" id="cards-bench-rt"></div>
+    <div class="note" id="note-bench"></div>
+    ` : ''}
+
+    ${hasPred ? `
+    <p class="section-head-hero">Prediction accuracy — how well did forecasts match reality?</p>
+    <div class="cards" id="cards-pred"></div>
+    <div class="charts">
+      <div class="chart-box chart-box-hero chart-box-full">
+        <div class="chart-title">Predicted delay vs actual delay — day by day</div>
+        <div class="chart-sub">The closer the blue and red lines are, the more accurate the forecasts were.</div>
+        <canvas id="c-pred" height="140"></canvas>
+        <div class="note">
+          <p><strong>How to read this:</strong> The <strong style="color:var(--blue)">blue line</strong> is what the system predicted the average delay would be each day. The <strong style="color:#ef5350">red dashed line</strong> is what actually happened. A wide gap on any day means the model was caught off-guard.</p>
+          <p>${predOverallText}${worstDayText}${trendText}</p>
+          <p>These figures blend the <strong>day-ahead model</strong> (fires before a live signal is available) and the <strong>real-time model</strong> (fires once Darwin reports a current delay). The real-time model is significantly more accurate — see the <em>Model training benchmarks</em> section below for per-model test results.</p>
+          <div class="note-tags">
+            ${gradeTag(g10min, 'Predictions are accurate', 'Predictions are broadly on track', 'Predictions need improvement')}
+            ${tag('tag-target', '✓ Lines overlapping = accurate')}
+            ${tag('tag-lower', '↓ Amber bars — lower is better')}
+          </div>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <p class="section-head">Overall performance</p>
+    <div class="cards" id="cards-summary"></div>
+
+    <p class="section-head">Trends over time</p>
+    <div class="charts">
+      <div class="chart-box">
+        <div class="chart-title">Daily journey volume &amp; forecast error</div>
+        <div class="chart-sub">How many trains ran each day and how far off the predictions were.</div>
+        <canvas id="c-daily" height="200"></canvas>
+        <div class="note" id="note-daily"></div>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Which departure times are most delayed?</div>
+        <div class="chart-sub">Average minutes late by hour of day.</div>
+        <canvas id="c-hourly" height="200"></canvas>
+        <div class="note" id="note-hourly"></div>
+      </div>
+    </div>
+
+    <div class="tbl-wrap">
+      <div class="tbl-header">
+        <span class="tbl-title">Route breakdown</span>
+        <span class="tbl-note">Top ${DATA.services.length} busiest routes in the period</span>
+      </div>
+      <table><thead><tr>
+        <th>Route ID</th><th>From</th><th>Day</th><th>Departs</th>
+        <th>Journeys</th><th>Actual delay ↓</th><th>Predicted delay</th><th>Forecast gap ↓</th>
+        <th>On time ↑</th>
+      </tr></thead><tbody id="tbody"></tbody></table>
+    </div>
+    <div class="note" id="note-table" style="margin-top:0;margin-bottom:1.5rem;border-radius:0 0 var(--r) var(--r);border-top:none"></div>`;
+
+  // ── Fill dynamic note content ─────────────────────────────────────────────
+
+  // Daily chart note
+  const avgErrText = s.mean_abs_error_mins != null
+    ? (gErr === 'good'
+        ? `Overall, predictions average just <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — good accuracy.`
+        : gErr === 'moderate'
+          ? `Overall, predictions are averaging <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — reasonable, with room to improve.`
+          : `Overall, predictions are averaging <strong>${fmt1(s.mean_abs_error_mins)} min</strong> off — this is higher than ideal.`)
+    : '';
+  document.getElementById('note-daily').innerHTML = `
+    <p><strong>How to read this:</strong> Green bars show how many journeys ran each day — taller bars mean more trains. The <strong style="color:#ffab40">amber line</strong> is the forecast error (how many minutes off predictions were). The <strong style="color:#ef5350">red dashed line</strong> is the actual average delay.</p>
+    <p>${avgErrText}${trendText}</p>
+    <div class="note-tags">
+      ${gradeTag(gErr, 'Low forecast error', 'Moderate forecast error', 'High forecast error')}
+      ${tag('tag-lower', '↓ Both lines — lower is better')}
+    </div>`;
+
+  // Hourly chart note
+  document.getElementById('note-hourly').innerHTML = `
+    <p><strong>How to read this:</strong> Each bar is one hour of the day. <strong style="color:rgba(0,200,83,.9)">Green</strong> = on time (under 1 min). <strong style="color:#ffab40">Amber</strong> = slight delay (1–5 min). <strong style="color:#ef5350">Red</strong> = significant delay (over 5 min).</p>
+    <p>${hourlyInsight || 'Not enough hourly data to identify a clear peak time.'}</p>
+    <div class="note-tags">
+      ${tag('tag-lower', '↓ Shorter bars — lower is better')}
+      ${peakHour && peakHour.mean_delay > 10
+        ? tag('tag-poor', `⚠ ${fmtHour(peakHour.hour)} is a high-delay slot`)
+        : peakHour
+          ? tag('tag-moderate', `Peak delays: ${fmtHour(peakHour.hour)}`)
+          : ''}
+    </div>`;
+
+  // Table note
+  document.getElementById('note-table').innerHTML = `
+    <p><strong>Reading the columns:</strong> <strong>Actual delay</strong> — how late this route ran on average (lower is better). <strong>Predicted delay</strong> — what the system forecast. <strong>Forecast gap</strong> — difference between those two; lower means the prediction was accurate. <strong>On time</strong> — percentage arriving on schedule (higher is better).</p>
+    ${routeInsight}
+    <p>${punctualityText}</p>
+    <div class="note-tags">
+      ${gradeTag(gOnTime, 'Punctuality on target', 'Below target', 'Significantly below target')}
+      ${tag('tag-lower', '↓ Actual delay — lower is better')}
+      ${tag('tag-lower', '↓ Forecast gap — lower is better')}
+      ${tag('tag-higher', '↑ On time % — higher is better')}
+      ${tag('tag-target', '✓ Industry target: ~92%')}
+    </div>`;
+
+  // ── Prediction accuracy hero cards ────────────────────────────────────────
+  if (hasPred) {
+    const predCards = [
+      {
+        val: fmtPct(s.pct_within_5min),
+        lbl: 'Predictions within ±5 min',
+        hint: 'Share of forecasts that landed within 5 minutes of the actual delay.',
+        vd: verdict(g5min,
+          'Strong — most predictions are very close',
+          'Decent — roughly half are within 5 min',
+          'Low — the model often misses by more than 5 min'),
+        cls: cardPctCls(s.pct_within_5min),
+        hero: true,
+      },
+      {
+        val: fmtPct(s.pct_within_10min),
+        lbl: 'Predictions within ±10 min',
+        hint: 'Share of forecasts that landed within 10 minutes of the actual delay.',
+        vd: verdict(g10min,
+          'Strong — 3 in 4 forecasts are on target',
+          'Moderate — most forecasts are in the right range',
+          'Weak — many forecasts are significantly off'),
+        cls: cardPctCls(s.pct_within_10min),
+        hero: true,
+      },
+      {
+        val: fmt1(s.mean_abs_error_mins) + (s.mean_abs_error_mins != null ? ' min' : ''),
+        lbl: 'Avg prediction error',
+        hint: "How far off predictions were on average — the model's typical margin of error.",
+        vd: verdict(gErr,
+          'Good — under 8 min average error',
+          'Acceptable — under 18 min average error',
+          'High — consider retraining the model'),
+        cls: s.mean_abs_error_mins != null
+          ? (s.mean_abs_error_mins <= 8 ? 'c-green' : s.mean_abs_error_mins <= 18 ? 'c-amber' : 'c-red')
+          : '',
+        hero: true,
+      },
+      {
+        val: fmtPct(s.prediction_coverage_pct),
+        lbl: 'Journeys with a forecast',
+        hint: 'Share of all journeys where a prediction was available.',
+        vd: verdict(gCov,
+          'High coverage — most journeys have a forecast',
+          'Partial coverage — some journeys lack a forecast',
+          'Low coverage — many journeys have no forecast'),
+        cls: '',
+        hero: true,
+      },
+    ];
+    document.getElementById('cards-pred').innerHTML = predCards.map(c => `
+      <div class="card${c.hero ? ' card-hero' : ''}">
+        <div class="card-val ${c.cls}">${c.val}</div>
+        <div class="card-lbl">${c.lbl}</div>
+        <div class="card-hint">${c.hint}</div>
+        ${c.vd}
+      </div>`).join('');
+  }
+
+  // ── Training benchmark cards ──────────────────────────────────────────────
+  if (DATA.benchmarks) {
+    const b = DATA.benchmarks;
+    const benchDaCards = [
+      { val: fmt1(b.day_ahead.mae) + ' min', lbl: 'Day-ahead MAE', hint: 'Test-set mean absolute error — no live delay signal available.',
+        cls: b.day_ahead.mae <= 10 ? 'c-green' : b.day_ahead.mae <= 20 ? 'c-amber' : 'c-red' },
+      { val: fmt1(b.day_ahead.rmse) + ' min', lbl: 'Day-ahead RMSE', hint: 'Root mean square error — penalises large misses more.', cls: '' },
+      { val: fmtPct(b.day_ahead.within_10min), lbl: '±10 min (day-ahead)', hint: 'Share of test predictions within 10 min of actual delay.', cls: cardPctCls(b.day_ahead.within_10min) },
+      { val: fmtPct(b.day_ahead.within_5min),  lbl: '±5 min (day-ahead)',  hint: 'Share of test predictions within 5 min of actual delay.',  cls: cardPctCls(b.day_ahead.within_5min) },
+    ];
+    const benchRtCards = [
+      { val: fmt1(b.realtime.mae) + ' min', lbl: 'Real-time MAE', hint: 'Test-set MAE when a live Darwin delay reading is present.',
+        cls: b.realtime.mae <= 5 ? 'c-green' : b.realtime.mae <= 10 ? 'c-amber' : 'c-red' },
+      { val: fmt1(b.realtime.rmse) + ' min', lbl: 'Real-time RMSE', hint: 'Root mean square error for the real-time model.', cls: '' },
+      { val: fmtPct(b.realtime.within_10min), lbl: '±10 min (real-time)', hint: 'Share of test predictions within 10 min of actual delay.', cls: cardPctCls(b.realtime.within_10min) },
+      { val: fmtPct(b.realtime.within_5min),  lbl: '±5 min (real-time)',  hint: 'Share of test predictions within 5 min of actual delay.',  cls: cardPctCls(b.realtime.within_5min) },
+    ];
+    const renderBenchCards = (id, cards) => {
+      document.getElementById(id).innerHTML = cards.map(c => `
+        <div class="card">
+          <div class="card-val ${c.cls}">${c.val}</div>
+          <div class="card-lbl">${c.lbl}</div>
+          <div class="card-hint">${c.hint}</div>
+        </div>`).join('');
+    };
+    renderBenchCards('cards-bench-da', benchDaCards);
+    renderBenchCards('cards-bench-rt', benchRtCards);
+    document.getElementById('note-bench').innerHTML = `
+      <p><strong>Two-model cascade:</strong> The system runs two LightGBM ONNX models in sequence.
+      The <strong>day-ahead model</strong> (10 features) fires before a live Darwin delay reading is available — it uses route pattern, rolling 7-day stats, and time of day.
+      The <strong>real-time model</strong> (15 features) activates once Darwin reports a current delay, and feeds the live signal alongside the same pattern features.
+      The live blended MAE (${fmt1(s.mean_abs_error_mins)} min, shown above) sits between these two because it covers observations from both models together.</p>
+      <p>Baseline trimmed-mean MAE was <strong>${fmt1(b.baseline_mae)} min</strong>. Both models beat it substantially. Real-time model reduces error by <strong>${fmt1(b.baseline_mae - b.realtime.mae)} min</strong> vs baseline.</p>
+      <div class="note-tags">
+        ${tag('tag-target', `Trained: ${esc(b.trained_at)}`)}
+        ${tag('tag-target', `${b.train_rows.toLocaleString()} train rows`)}
+        ${tag('tag-target', `${b.test_rows.toLocaleString()} test rows`)}
+        ${tag('tag-good', `Baseline ${fmt1(b.baseline_mae)} min → real-time ${fmt1(b.realtime.mae)} min`)}
+      </div>`;
+  }
+
+  // ── Summary cards ─────────────────────────────────────────────────────────
+  const summaryCards = [
+    {
+      val: s.total_observations.toLocaleString(),
+      lbl: 'Journeys tracked',
+      hint: 'Individual train arrivals recorded in this period.',
+      vd: '',
+    },
+    {
+      val: s.total_services.toLocaleString(),
+      lbl: 'Routes monitored',
+      hint: 'Distinct train services observed.',
+      vd: '',
+    },
+    {
+      val: fmt1(s.mean_actual_mins) + (s.mean_actual_mins != null ? ' min' : ''),
+      lbl: 'Average delay',
+      hint: 'How late trains ran on average across all journeys.',
+      vd: verdict(gDelay,
+        'Minimal delays — trains running close to schedule',
+        'Elevated delays — noticeably above schedule',
+        'Significant delays — a difficult period for punctuality'),
+      cls: s.mean_actual_mins != null && s.mean_actual_mins > 5 ? 'c-amber' : 'c-green',
+    },
+    {
+      val: fmtPct(s.on_time_pct),
+      lbl: 'Arrived on time',
+      hint: 'Share of trains that were not late at all.',
+      vd: verdict(gOnTime,
+        'On target — meeting the 92% national benchmark',
+        'Below target — most trains on time but short of 92%',
+        'Well below target — significant reliability issues'),
+      cls: cardPctCls(s.on_time_pct),
+    },
+  ];
+  document.getElementById('cards-summary').innerHTML = summaryCards.map(c => `
+    <div class="card">
+      <div class="card-val ${c.cls || ''}">${c.val}</div>
+      <div class="card-lbl">${c.lbl}</div>
+      <div class="card-hint">${c.hint}</div>
+      ${c.vd}
+    </div>`).join('');
+
+  // ── Predicted vs actual chart (hero) ─────────────────────────────────────
+  if (hasPred && daily.length && document.getElementById('c-pred')) {
+    new Chart(document.getElementById('c-pred'), {
+      data: {
+        labels: daily.map(d => d.day),
+        datasets: [
+          {
+            type:'line', label:'Predicted avg delay (min)',
+            data: daily.map(d => d.mean_predicted_mins),
+            borderColor:'#4a9eff', backgroundColor:'rgba(74,158,255,.08)',
+            borderWidth:2.5, pointRadius:4, tension:.3, fill:true, order:1,
+          },
+          {
+            type:'line', label:'Actual avg delay (min)',
+            data: daily.map(d => d.mean_actual_mins),
+            borderColor:'#ef5350', backgroundColor:'transparent',
+            borderWidth:2, borderDash:[5,3], pointRadius:4, tension:.3, order:2,
+          },
+          {
+            type:'bar', label:'Avg forecast error (min)',
+            data: daily.map(d => d.mean_abs_error_mins),
+            backgroundColor:'rgba(255,171,64,.25)', borderColor:'rgba(255,171,64,.5)',
+            borderWidth:1, yAxisID:'yb', order:3,
+          },
+        ],
+      },
+      options: {
+        responsive:true, interaction:{mode:'index',intersect:false},
+        plugins:{ legend:{labels:{color:'#888',font:{size:11}}} },
+        scales:{
+          x:{ticks:{color:'#888',font:{size:11}},grid:{color:'#2a3040'}},
+          y:{ticks:{color:'#888',font:{size:11}},grid:{color:'#2a3040'},title:{display:true,text:'minutes late',color:'#888',font:{size:10}}},
+          yb:{position:'right',ticks:{color:'#888',font:{size:11}},grid:{display:false},title:{display:true,text:'error (min)',color:'#888',font:{size:10}}},
+        },
+      },
+    });
+  }
+
+  // ── Daily volume + error chart ────────────────────────────────────────────
+  if (daily.length) {
+    new Chart(document.getElementById('c-daily'), {
+      data: {
+        labels: daily.map(d => d.day),
+        datasets: [
+          {
+            type:'bar', label:'Journeys recorded',
+            data: daily.map(d => d.observations),
+            backgroundColor:'rgba(0,200,83,.2)', borderColor:'rgba(0,200,83,.5)',
+            borderWidth:1, yAxisID:'yb', order:3,
+          },
+          {
+            type:'line', label:'Avg forecast error (min)',
+            data: daily.map(d => d.mean_abs_error_mins),
+            borderColor:'#ffab40', backgroundColor:'transparent',
+            borderWidth:2, pointRadius:4, tension:.3, yAxisID:'ya', order:1,
+          },
+          {
+            type:'line', label:'Avg actual delay (min)',
+            data: daily.map(d => d.mean_actual_mins),
+            borderColor:'#ef5350', backgroundColor:'transparent',
+            borderWidth:1.5, borderDash:[4,3], pointRadius:3, tension:.3, yAxisID:'ya', order:2,
+          },
+        ],
+      },
+      options: {
+        responsive:true, interaction:{mode:'index',intersect:false},
+        plugins:{ legend:{labels:{color:'#888',font:{size:11}}} },
+        scales:{
+          x:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'}},
+          ya:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'minutes late',color:'#888',font:{size:10}}},
+          yb:{position:'right',ticks:{color:'#888',font:{size:11}},grid:{display:false},title:{display:true,text:'journeys',color:'#888',font:{size:10}}},
+        },
+      },
+    });
+  }
+
+  // ── Hourly chart ──────────────────────────────────────────────────────────
+  if (hourly.length) {
+    const delays = Array(24).fill(null);
+    hourly.forEach(h => { delays[h.hour] = h.mean_delay; });
+    new Chart(document.getElementById('c-hourly'), {
+      type:'bar',
+      data: {
+        labels: Array.from({length:24}, (_, i) => fmtHour(i)),
+        datasets:[{
+          label:'Avg delay (min)', data:delays,
+          backgroundColor: delays.map(d =>
+            d == null ? 'transparent' : d <= 1 ? 'rgba(0,200,83,.6)' : d <= 5 ? 'rgba(255,171,64,.6)' : 'rgba(239,83,80,.6)'
+          ),
+          borderWidth:0,
+        }],
+      },
+      options:{
+        responsive:true,
+        plugins:{legend:{display:false}, tooltip:{callbacks:{label: ctx => `${fmt1(ctx.raw)} min avg delay`}}},
+        scales:{
+          x:{ticks:{color:'#888',font:{size:10},maxRotation:45},grid:{color:'#333'}},
+          y:{ticks:{color:'#888',font:{size:11}},grid:{color:'#333'},title:{display:true,text:'avg minutes late',color:'#888',font:{size:10}}},
+        },
+      },
+    });
+  }
+
+  // ── Route table ───────────────────────────────────────────────────────────
+  const tbody = document.getElementById('tbody');
+  if (!DATA.services.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:#888">No routes recorded yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = DATA.services.map(svc => {
+    const gap = (svc.mean_actual != null && svc.mean_predicted != null)
+      ? Math.abs(svc.mean_actual - svc.mean_predicted).toFixed(1) + ' min' : '—';
+    return `<tr>
+      <td class="dim" style="font-size:.75rem">${esc(svc.uid)}</td>
+      <td>${esc(svc.origin_crs)}</td>
+      <td>${DAYS[svc.weekday] ?? esc(svc.weekday)}</td>
+      <td>${fmtHour(svc.departure_hour)}</td>
+      <td>${svc.observations.toLocaleString()}</td>
+      <td class="${svc.mean_actual > 5 ? 'c-amber' : 'c-green'}">${fmt1(svc.mean_actual)} min</td>
+      <td class="dim">${fmt1(svc.mean_predicted)} min</td>
+      <td>${gap}</td>
+      <td><span class="badge ${pctCls(svc.on_time_pct)}">${fmtPct(svc.on_time_pct)}</span></td>
+    </tr>`;
+  }).join('');
+}
+</script>
+<footer>
+  Generated by <strong>RailPredict</strong> &mdash; live train data from National Rail.
+  <a href="https://github.com/miki-przygoda/RailPredict">github.com/miki-przygoda/RailPredict</a>
+</footer>
+</body>
+</html>

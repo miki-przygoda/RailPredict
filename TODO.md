@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.0" -- 29/05/2026**
+**version = "1.19.0" -- 08/06/2026**
 
 ---
 
@@ -64,6 +64,21 @@ See `TODOs/Improvements.md` (sections 8.3, 6.4, 5.6, 2.8) for full detail on eac
 
 ---
 
+## Tech Debt & Deferred Refactors
+
+Full ledger: **`docs/tech-debt.md`** (indexed against the read-only audit in `data/refactor-audit/`).
+
+**A. Approved refactors — ✓ completed (v1.12.10):**
+
+- ✓ **State-machine cut** (`be012f7`) — removed `from_departure`/`emergency_promote`/`poll_interval`/`PromotionReason` and deleted `poll_manager.rs` (PollManager + registration + `main.rs` spawn). Kept the live inline logic; `StateChangeEvent` moved to `train_state.rs` and still drives ingestion→SSE. Net −525/+42.
+- ✓ **Association fix & wire** (`caab859`) — filter taxonomy now routes capital `<Association>` (`Conditional`) to the parser; NP turnround predecessor-delay flows end-to-end, covered by a new integration test.
+
+**B. Verified dead code / no-value items** (marked remove vs keep in the ledger): `trains_at_tiploc`, `is_empty`, `check_tiploc_cascade`/`cascade_trains_for_tiploc` (Tier-C-staged), `StateChangeEvent.reason`, `TrainStatus.cancellation_reason`, `TrainId::headcode` (keep — intentional API), `Stamped::is_stale`, JSON `/stations/search` + `StationResult.trains_today`, the journey self-join SQL in `frontend/` (move to `db/static_data.rs`), `wait_for_shutdown` startup-tail duplication, plus a masked-dead `#[allow]` sweep.
+
+**C. Tier-C production-handoff readiness** (deferred until prod with company creds + their historical data): reconcile `gbr_client.rs` RTT endpoint/auth/UID-vs-RID contract; wire `check_tiploc_cascade` into the delay path; operator league/drill-down stay empty until the GTFS ingest populates `services.toc`.
+
+---
+
 ## Strategic Notes (Carry-Forward)
 
 These are cross-cutting design decisions to keep in mind across all epics:
@@ -72,3 +87,4 @@ These are cross-cutting design decisions to keep in mind across all epics:
 - **The Waiter Pattern:** The coalescer in Epic 3 is the most impactful single piece of work for latency. Prioritise it.
 - **Backpressure:** GBR will revoke API keys for aggressive polling. The rate limiter and circuit breaker are not optional.
 - **The Ingestion Filter:** Apply the region/route filter as step one of ingestion. CPU cost compounds fast on an unfiltered firehose.
+- After deploying Phase 1, run the GTFS ingest once to populate `services.toc` and seed `operators` (CLI `ingest-static`, or the Dev Console → Ingest panel). This is the operator "backfill" — it only writes the small `services`/`operators` tables; `delay_history` is untouched.

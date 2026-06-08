@@ -2,9 +2,461 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.0" -- 29/05/2026**
+**version = "1.19.0" -- 08/06/2026**
 
 ---
+
+## v1.19.0 — 08/06/2026
+
+**Live map** — `/map` now shows the network *live* instead of replaying yesterday.
+
+- **Live, route-positioned services** (`cache::TrainRegistry::live_services`):
+  every running train becomes a `[lon,lat]` route + real timing from its
+  accumulated `journey`, and the renderer glides a node along it by the wall
+  clock. The offline OS demo keeps the baked replay (the renderer falls back when
+  no live feed is present).
+- **Whole-journey retention**: trains are retained in the registry until ~their
+  destination arrival (6 h safety cap) instead of 5 min after departure, so the
+  map can follow them across the country; the `/live` board still shows upcoming
+  departures.
+- **One "running now" definition** (`TrainStatus::is_en_route`): the map count and
+  the dashboard's "Live network" tally now agree (departed, not yet arrived) and
+  no longer count far-future retained trains.
+- **Rail-network routing** (`cache::rail_graph`): live paths snap to the baked GB
+  rail graph by shortest path, so express services follow real track instead of
+  cutting straight across land/sea; node/path lookups are memoised.
+- **Pruned network** (`scripts/build_map_data.py` + `edges.json`): redundant
+  skip-edges overlapping the same line are dropped (6022 → 2720 links,
+  connectivity preserved), and the backdrop is drawn as one flat 1 px layer.
+- **Map UI**: full-bleed page fitting all of GB, a cleaned heading + rounded live
+  pill with a glowing dot and a live train count.
+- **Demo refresh**: `make os` / `make map` regenerate the offline demo with the
+  new map.
+
+## v1.18.1 — 08/06/2026
+
+**UI + demo-hosting polish.**
+
+- **Full-bleed live map** (`frontend/map.rs`): the `/map` command-centre breaks
+  out of the 860 px content column and fills the whole viewport below the nav —
+  edge-to-edge basemap, with the side rails and legend stretched to page height.
+- **Shareable OS export** (`export/os_template.html`): the offline RailPredict OS
+  desktop now carries `noindex`/`nofollow` + Open Graph / Twitter share-card meta
+  so it can be hosted unlisted with a clean link unfurl.
+
+## v1.18.0 — 06/06/2026
+
+**RailPredict OS** — the exec demo is now a fully-offline, macOS-style browser
+desktop that presents the product as a suite of app-windows, replacing the
+scrollytelling demo. Built across five stages:
+
+- **GB coordinate data** (`cache::location_coords`): TIPLOC→lat/lon for 2,751 GB
+  stations (fasteroute, GB-only filter) + `scripts/build_tiploc_coords.py`.
+- **Map command-centre**: vendored D3 v7 (ISC) + GB basemap assets (ONS coastline
+  OGL, OSM rail ODbL); `map_render.js` draws delay-coloured dots gliding
+  origin→destination over a Mercator GB silhouette, flipping to actual on arrival.
+  `export-map` / `make map` → offline `docs/map.html`.
+- **OS shell**: vanilla-JS desktop — wallpaper, dock, draggable min/max/close
+  windows, menubar clock; boots to the Map app maximised.
+- **Six apps**: Live Map (flagship), Operators, Predictions, Reliability, Replay,
+  About — real data baked from the DB. `export-os` / `make os` → offline
+  `docs/os.html`.
+- **Live `/map` dashboard**: server-rendered command-centre that reuses the same
+  renderer ("one renderer, two drivers"), polling `/ui/map/snapshot` every 20 s;
+  trains drawn from the live tracking registry + recently-settled outcomes,
+  TIPLOC-coordinate-attached (unresolved locations silently omitted).
+
+All offline — no network, tiles, or API keys. The shared renderer is idempotent
+(cancels its prior animation loop + clears the SVG) so it serves both the baked
+export and the live polled page without stacking loops.
+
+## v1.17.4 — 06/06/2026
+
+Demo replay: route pinned right + more journeys. The from→to stations now sit in
+a fixed right-hand column on every card (identity left, prediction centre, route
+right) so rows line up cleanly. More journeys on the board too — 8 tracking / 4
+just-settled per frame, drawing from 64 trains (65 frames) for a livelier replay.
+
+## v1.17.3 — 06/06/2026
+
+Demo: uniform replay cards. The banner cards auto-sized to the operator-name
+length, so rows looked ragged. Cards are now a fixed 3-column grid (constant ID
+column; long operator names truncate with ellipsis) at a uniform height, and the
+two zones stack full-width so the banners have room and line up cleanly.
+
+## v1.17.2 — 06/06/2026
+
+Demo polish (CEO feedback):
+- **Vision beat** no longer guesses savings — dropped the projected £/% figures
+  (and `ProjectedFigures`); it now states the ticketing-data value qualitatively.
+- **Dropped the "The product" beat** (Docker / own-it / CTA).
+- **Replay redesign**: full-width banner cards (bigger), a bigger bordered board
+  with two clearly-separated zones, and explicit "Predicted / Actual" labels plus
+  a plain-language accuracy chip ("spot on" / "off by Nm").
+
+## v1.17.1 — 06/06/2026
+
+Polish: demo-site cleanup pass.
+- **Replay** now shows only services where the model made a non-trivial call
+  (`predicted_delay_mins <> 0`) — filters on prediction *activity*, not accuracy
+  — so the board stops reading as "it just guesses on-time".
+- **Operator brand colours**: chips + replay card borders now use real TOC
+  colours derived from the name (`ingestion::operators::brand_color`) instead of
+  the unseeded grey DB column.
+- **Beat 3** gains a journey-reliability strip (destination arrival on-time %,
+  delay-recovery %) from `journey_metrics`, and surfaces the previously-dead
+  distinct-services count.
+- `docs/demo.html` is now tracked (regenerate with `make demo`).
+
+## v1.17.0 — 06/06/2026
+
+Feature: exec demo site (`export-demo`). A single self-contained, offline,
+scrollytelling HTML page for a CEO sales/handover demo — real KPIs + a
+DB-reconstructed predicted→actual replay (auto-plays on scroll) + a clearly
+labelled "with your ticketing data" vision beat. New `src/export/demo.rs`
+(+ `demo_template.html`/`demo.js`), `export-demo` CLI, and `make demo`. Replay
+frames are reconstructed from real `prediction_outcomes` into the existing
+board.js frame shape. See `docs/superpowers/specs/2026-06-06-demo-site-design.md`.
+
+## v1.16.9 — 06/06/2026
+
+Repositioning: from public portfolio/open-source piece to a privately-owned product.
+- **License → proprietary.** Replaced the Apache-2.0 `LICENSE` with an "All Rights
+  Reserved" proprietary licence (© 2026 Mikolaj Mikuliszyn). `Cargo.toml` is now
+  `license = "LicenseRef-Proprietary"` + `publish = false`; `deny.toml` gains
+  `[licenses] private.ignore = true` so the proprietary workspace crate isn't measured
+  against the third-party dependency allow-list.
+- **Removed the public-dataset surface.** Deleted `scripts/export_dataset.py` and the
+  HuggingFace dataset card; stripped the "published to HuggingFace / uk-rail-delays"
+  references from `docs/model-performance.md`, `CLAUDE.md`, and `.gitignore`. The
+  training corpus is now described as internal-only.
+- **Removed portfolio/contributor framing.** Deleted `CONTRIBUTING.md` and the README
+  "AI-Assisted Development" section; replaced it with a proprietary **License** section.
+  Reworded the `make export` comment so it no longer suggests public GitHub Pages/Vercel
+  deployment.
+
+> External privacy actions (both confirmed done, 06/06): the GitHub repository is
+> private, and the HuggingFace dataset `miki-przygoda/uk-rail-delays` is private.
+
+## v1.16.8 — 06/06/2026
+
+Chore: small codebase-cleanup sweep (docs + comments; no behaviour change).
+- **Archived** the 5 shipped specs/plans (dashboard-overhaul, UI-overhaul step-0 +
+  execution, live-board-replay, full-journey-capture) into `docs/superpowers/archive/`
+  with an index README; kept the still-active `visual-changes-plan` ledger in `specs/`.
+- **tech-debt.md:** old §C3 (operator league empty until GTFS populates `services.toc`)
+  resolved by the Phase-2 `journeys.toc` re-point — moved to Completed; §C now C1–C2.
+- **CLAUDE.md / README.md:** refreshed the "Current state" snapshot (v1.12.0 → v1.16.x)
+  and the README "What's Built" table for the journey-capture-era surfaces.
+- **Module `//!` headers:** reconciled `types/train_status.rs` (lead with the FJC `journey`
+  accumulator, not the superseded `calling_points`), `db/overview.rs` (split delay_history
+  vs `journeys`-sourced metrics), `db/stations.rs` (std-dev reliability), `frontend/detail.rs`
+  (journey trajectory panel).
+- **Verified clean:** FJC code carries no cruft (no debug taps, no orphaned re-point paths;
+  the lone `#[allow(dead_code)]` on `Stamped::is_stale` and the Tier-C metrics TODO are both
+  intentional/pre-existing). Clippy green; 79 ingestion unit tests pass.
+
+## v1.16.7 — 06/06/2026
+
+Chore: trim hot-path logging. The per-deactivation ("Train deactivated — removing from registry")
+and per-delayed-train ("Emergency Critical promotion") lines were at INFO, flooding the log
+(thousands of lines per hour). Both dropped to `debug`; the once-per-connection pipeline
+running/stopped lines stay at INFO.
+
+## v1.16.6 — 06/06/2026
+
+Fix (cancellation capture, part 2): persist on detection, not deactivation. v1.16.5 *detected*
+cancellations (the live "Cancelled" count worked) but nothing reached the tables — cancelled
+trains don't move, so they're evicted from the registry before any `deactivated` ever arrives,
+and the deactivation-gated journey/cancellation capture missed them entirely. Now a whole-service
+cancellation (all `schedule` calls `can="true"`) is persisted immediately from the schedule
+handler, deduped per RID: a cancelled `journeys` row (`was_cancelled=true`, no actuals) + a
+`cancellations` row. `build_cancelled_journey` builds the record from the schedule alone.
+
+## v1.16.5 — 06/06/2026
+
+Fix: cancellation capture. Cancellations were never recorded (`was_cancelled` / `cancel_reason` /
+the `cancellations` table all stuck at 0 across thousands of journeys). Root cause found by
+tapping the live feed: Darwin signals a cancellation via **`can="true"` on the `schedule`
+message's calling points** (`<…:OR … can="true"/>`), not on TS — and the schedule parser dropped
+`can`. Now: the schedule parser reads `can` on OR/IP/DT calls; a service is marked cancelled when
+**all** its planned calls carry `can`; `is_cancelled` is **sticky** (only ever set true, so a
+later TS's absent flag can't revert it); and `cancellations.origin_crs` is widened to `VARCHAR(8)`
+(migration 120019) — origins are TIPLOCs, not 3-letter CRS, so the insert was overflowing CHAR(3).
+
+## v1.16.4 — 06/06/2026
+
+Phase 3 (journey surfaces complete) — arrival/recovery on the live board. The `/live` header now
+carries a rolling-24h arrival/recovery strip (arrive-within-5 %, avg arrival delay, recovering %,
+journeys), server-rendered from `db::overview::journey_metrics` (one query per page load, not per
+3s poll — the metric is slow-changing); the live cards stay client-rendered by `board.js`. This
+completes the Phase-3 journey surfaces: detail trajectory (1.16.1), station reliability (1.16.2),
+and arrival/recovery on the overview (1.16.3) + live board.
+
+## v1.16.3 — 06/06/2026
+
+Phase 3 — arrival & recovery on the overview. A new "Arrival & recovery" KPI section on `/`
+(from `journeys`): arrive-within-5-min %, avg arrival delay (the delay passengers actually
+experience at the destination — distinct from the origin-departure figure in the headline
+strip), % of services recovering ≥2 min en route, and avg delay recovered. New
+`db::overview::journey_metrics`.
+
+## v1.16.2 — 06/06/2026
+
+Phase 3 — reliability score on `/stations`. The station explorer now shows the *spread* of
+delay, not just the mean: a **Consistency** KPI (delay std-dev → "tight spread — dependable" /
+"moderate spread" / "wide spread — erratic") and a per-service **Reliability** column (Reliable /
+Moderate / Variable, ± the std). This makes the systematic-vs-stochastic split visible — "reliably
+~2 late" reads very differently from "wildly variable ±12", which a bare on-time % hides. Pure
+query (`STDDEV_SAMP` over the now-clean `delay_history`); `db::stations` `StationSummary` +
+`ServiceRow` gain `std_delay_mins`.
+
+## v1.16.1 — 05/06/2026
+
+Phase 3 (start) — surface the journey on the train-detail page. A new **Journey panel** shows the
+arrival/recovery summary ("departed +X → arrived +Y · recovered Z · peak +M") and the **per-stop
+delay trajectory** — an area-spark over `journey_calls` plus the full calling-point list with
+arrival/departure delays and platforms, names resolved via `cache::location_names`. The detail
+page now also renders **finalised** trains (falling back to the `journeys` table once a train has
+left the live registry), so any captured journey is viewable. New reads:
+`db::journeys::{journey_header, journey_calls_for}`.
+
+## v1.16.0 — 05/06/2026
+
+Phase 2 — operator league on real Darwin `toc`. The `/operators` league + drill-down now read
+from `journeys` (the per-service operator code captured from the `schedule` message) instead of
+the GTFS-dependent `delay_history` + `services` join — so they light up without a timetable feed.
+Metrics use **arrival delay** (origin departure as fallback): on-time % (within 5 min), avg
+delay, prediction MAE (joined from `prediction_outcomes`), per-day trend, delay distribution, and
+worst routes (origin→destination TIPLOC, name-resolved via `cache::location_names`). Plus a
+`services.toc` backfill — the schedule handler persists `uid → toc` (deduped, fire-and-forget)
+into `services` (origin/destination columns made nullable, migration 120018), so the uid-keyed
+`delay_history` becomes operator-attributable too. Coverage grows as `schedule` messages accrue.
+
+## v1.15.3 — 05/06/2026
+
+Follow-up to v1.15.2 — the origin-delay was still inflated. v1.15.2 paired the *registered*
+origin's scheduled time with the *current partial message's* first-stop estimated time, which
+are still different stops on a partial Darwin TS. Now `reported_delay_mins` (→ `delay_history`,
+the model) is derived from the accumulated **origin call** (`journey[0]`), so scheduled and
+estimated/actual come from the **same** stop. Verified live: true delay median 0 vs the prior
+~21–32 (journey duration). delay_history partitions re-truncated for a clean re-accumulation.
+
+## v1.15.2 — 05/06/2026
+
+Fix: origin-delay inflation + midnight rollover. `reported_delay_mins` (which feeds
+`delay_history`, `journeys.origin_delay_mins`, and the model) was computed as *(last `<dep>`
+seen in a TS − origin scheduled departure)*. Darwin TS messages are partial, so the "last dep"
+is whatever stop the train has reached — the metric measured journey **progress**, not delay
+(median ~21–32 min of pure journey duration; the "synthetic-looking" old data was actually this
+bug). Now the scalar estimated/actual departure is taken from the **origin** (first Location,
+paired with `scheduled_departure`), and a ±12h **midnight-rollover guard** (`wrapped_delay_mins`)
+corrects post-midnight `HH:MM` times that previously read as −24h (delay_history min was −1435).
+The per-stop `journey_calls` vector (arrival delay, recovery) was already correct — true origin
+delay there is median 0. On the live DB: polluted `delay_history` truncated to re-accumulate
+clean, and `journeys.origin_delay_mins` backfilled from the per-stop origin.
+
+## v1.15.1 — 05/06/2026
+
+RDS reference-data loader. New `ingest-static --source rds --file <dir>` reads the RSP / Rail
+Delivery Group export CSVs in `imports/` (headerless, positional columns) into Tier A:
+`rds_station.csv` + `rds_station_coords.csv` → `stations` (CRS, name, 4-digit NLC, lat/lon
+joined on NLC), and `rds_toc.csv` → `operators` (ATOC code → name). Real CSV parsing (quoted
+address fields), deduped by primary key, batched upserts. New `ingestion/rds.rs`. Used to seed
+the fresh `railpredict_v2` DB with **3,607 stations + 81 operators**, so station
+search/autocomplete and operator names work without a GTFS feed. (`rds_railcard.csv` /
+`rds_ticket_type.csv` remain reference-only — no target table yet.)
+
+## v1.15.0 — 05/06/2026
+
+Full-Journey Capture (Phase 1). Darwin messages were being distilled to a single
+origin-delay integer; now we parse the `schedule` message (operator `toc`, train category,
+the ordered calling pattern) and **every** `<Location>` in `TS` (per-stop estimated/actual
+arrival + departure, platform confidence, per-stop cancel, and late/cancel reason codes),
+accumulate the whole journey on `TrainStatus` (merging across partial messages, keyed by a
+stable per-TIPLOC `seq`), and persist a "fat record" when a train deactivates: a wide
+`journeys` header (toc, arrival delay, reason + structural/exogenous class, recovery, cheap
+rollups) plus a `journey_calls` child (one row per stop — for trajectory / per-segment /
+dwell analysis). Additive — `delay_history` stays the live predictor's untouched hot path.
+New modules: `db::journeys`, `ingestion::reason`; migrations `journeys` + `journey_calls`.
+Spec: `docs/superpowers/specs/2026-06-05-full-journey-capture-design.md`. Phase 2 (operator
+league from real `toc`) and Phase 3 (surface arrival delay / "why late" / reliability) follow.
+
+## v1.14.1 — 05/06/2026
+
+Friendly station names. `delay_history` / Darwin key locations by TIPLOC code
+(`WATRLMN`); a new embedded TIPLOC→name reference (~3000 entries, from the public
+Darwin-built `fasteroute/national-rail-stations` dataset) resolves them. Wired into
+the stations explorer (title, index, busiest), the live-board cards, and the train
+detail page, falling back to the raw code when unknown. (The operator league still
+needs the per-service `uid→toc` from the timetable ingest; that dataset's
+managing-TOC field is deliberately not used for it.)
+
+## v1.14.0 — 05/06/2026
+
+UI overhaul complete (step 5 — reskin sweep). Reskinned the train-detail page onto
+the panel system and added a per-train prediction-convergence chart
+(`charts::convergence_plot` over `prediction_snapshots`); aligned the departure-board
+chrome to the amber accent (green stays for punctuality data) with a mono hero;
+removed ~296 lines of dead purchase/checkout demo CSS + orphan suggestion classes.
+This completes the Signal Terminal overhaul — nav/IA, cockpit, operators, predictions,
+stations, the live board + server-free replay, and the detail page.
+
+## v1.13.1 — 05/06/2026
+
+UI overhaul step 4 (Stations). New `/stations` busiest-station index (browse + a
+code filter) and `/stations/:code` explorer — reliability KPIs, a delay-by-hour×
+weekday heatmap, and busiest services, from `db::stations`. `delay_history` keys
+origins by TIPLOC-style code (e.g. `WATRLMN`), so the explorer browses those codes
+and shows them raw; a friendly CRS→name mapping is deferred data work. Adds
+`db::busiest_origins` and a "Stations" nav item.
+
+## v1.13.0 — 04/06/2026
+
+Live Board + Replay. New `/live` ambient board: each train enters "Tracking" with its
+prediction and slides into "Just settled" with predicted vs actual + a Δ accuracy chip,
+polling `/ui/live/snapshot` every 3s. A shared vanilla-JS renderer (`board.js`) drives
+both `/live` and a standalone, server-free `replay.html`: Record buffers the live event
+stream, Download emits a capture JSON, and `replay.html` replays it with no Darwin,
+model, or DB. Adds registry `tracking_board`, db `recent_settled`, and a "Live" nav item.
+
+## v1.12.17 — 04/06/2026
+
+UI overhaul step 3 (Predictions explorer). Rebuilt `/predictions` into a
+predicted-vs-actual explorer: KPI strip (scored, within ±5 min %, MAE, signed
+bias), a calibration plot (predicted vs actual against the perfect-calibration
+diagonal), a daily MAE trend, and three bar charts — signed error distribution,
+MAE by model confidence, and MAE by prediction lead time. New
+`charts::calibration_plot`; `accuracy_summary` now applies the same ±[-120,600]
+delay sanity filter the charts use, so the KPIs and charts share one population.
+
+## v1.12.16 — 04/06/2026
+
+UI overhaul step 2 (Operators). New `/operators` punctuality league — operators
+ranked by on-time %, brand-coded with on-time bars, avg delay, per-operator
+prediction MAE and service counts — and `/operators/:toc` drill-down (brand hero,
+KPI strip, on-time trend, delay-distribution histogram, best/worst routes). Added
+"Operators" to the top nav, a `mae_mins` to the league query, and lifted the shared
+range helpers into `components`. Pages show branded empty states until the timetable
+ingest populates `services.toc`.
+
+## v1.12.15 — 04/06/2026
+
+UI overhaul step 1 (Overview cockpit polish). Elevated the `/` cockpit: KPI cards
+gained gradient surfaces, accent edges, captions and area-fill sparklines; added a
+live-status pill and a prediction-accuracy panel (within ±5 min %, scored count, MAE
+trend) replacing the empty operator-league box. Headline metrics already excluded
+synthetic data — the coverage strip now drops the synthetic chip for a real
+"predictions scored" count. New `charts::area_spark` + `KpiTone`; `db` gains an
+`AccuracySummary.within_5_count` and a `CoverageCounts.predictions_scored` figure.
+
+## v1.12.14 — 04/06/2026
+
+UI overhaul step 0 (foundation). Reshaped the top nav to the Option-A product IA
+(Overview · Predictions · Explore; Departures and the dev console off-nav).
+Retired the `/demo` "Developer Console" to an off-nav `/dev` diagnostics page,
+dropped the simulated ticket purchase for a "coming soon" ticketing stub, and
+removed Tier badges / Feature Lab framing. No design-system changes.
+
+## [1.12.13] — 2026-06-04
+### Added
+- **Cancellations persistence:** new `cancellations` table + `db::cancellations`. Ingestion records one row per cancelled service when it deactivates (off the hot path, de-duped), so "% cancelled" can be real historically rather than estimated from live state. Forward-only, best-effort.
+- **Query Explorer v2:** three subjects — `observations` (delay_history), `predictions` (finalised prediction_outcomes → MAE / avg-confidence), `cancellations` (counts) — sharing one filter/group machinery; new metrics (p50/p90 via `percentile_cont`, MAE, avg confidence) with per-subject validation; a date-range filter alongside the window presets; and **CSV export** (`?format=csv`). Engine + HTTP tests across all subjects.
+
+## [1.12.12] — 2026-06-04
+### Added
+- **Query Explorer** (`/explore`, nav-linked): a guided "fill-in-the-gaps" data explorer. The admin composes a query from whitelisted controls (time-of-day, operator, origin/destination, group-by, metric) and the server runs a **safe parameterized** query (`db/explore.rs` — every SQL fragment chosen by a `match` on an enum, every value `push_bind`, always a `LIMIT` + sanity filter + bounded window). v1 subject is observations (`delay_history ⋈ services`). htmx live-update with bookmarkable URLs (`hx-select` + `hx-push-url`). Functional baseline styling — reskin tracked in the visual-changes-plan.
+### Tests
+- First **HTTP-level e2e suite** (zero new deps): a shared harness spins the real axum app up on an ephemeral port and drives it with `reqwest`. Covers the **station connection/journey finder** end-to-end (the previously-unverifiable flow), page smoke tests, the `build_departure_board` DB×registry merge, and the Query Explorer. 14 new tests (8 HTTP + 6 explorer).
+
+## [1.12.11] — 2026-06-04
+### Changed (tech-debt §B dead-code / no-value sweep)
+- Removed `trains_at_tiploc` (+ `TIPLOC_WINDOW_MINS` + its no-op test), dropped the stale `#[allow(dead_code)]` on `is_empty` (kept — satisfies clippy `len_without_is_empty`), and removed `TrainStatus.cancellation_reason` (always-None dead data on the hot-path struct + SSE payloads).
+- Removed never-constructed `ParseError::Empty`, parsed-and-discarded `GtfsTrip.trip_headsign`, the single-use `extract_stops_txt` wrapper, and the stale `#[allow(unused_imports)]` on `types/mod.rs`.
+- Removed the orphan JSON `/stations/search` route + handler and the always-zero `StationResult.trains_today` field (the autocomplete no longer shows a misleading "no service"; logged in the visual-changes-plan).
+- Moved the duplicated `timetable_calls` self-join out of `frontend/` into `db::static_data::direct_journeys(from, to, date, limit)` (called from both search + demo), with a new sqlx::test.
+- Deduped the two startup paths via `build_station_index` + `assemble_app_state` so the normal and ingestion-disabled (`wait_for_shutdown`) paths share one `AppState` definition.
+- Kept (intentional): `db::operators::list_operators` (Phase 3 `/operators` UI), `TrainId::headcode` (public API), `Stamped::is_stale`, and the Tier-C-staged `check_tiploc_cascade`.
+
+## [1.12.10] — 2026-06-04
+### Changed (two approved surgeries from docs/tech-debt.md §A)
+- **State-machine cut** (`be012f7`): removed the production-dead rule engine (`from_departure`, `emergency_promote`, `poll_interval`, `PromotionReason`) and deleted `poll_manager.rs` entirely (the inert `PollManager` + registration plumbing + its `main.rs` spawn and `pm_task` shutdown threading). Kept the live inline transition logic; `StateChangeEvent` (minus the write-only `reason`) moved to `train_state.rs` and still drives the ingestion→broadcast→SSE notifications. Net −525/+42.
+### Fixed
+- **NP association turnround wired up** (`caab859`): the ingestion filter taxonomy used a lowercase `b"association"` needle that never matched the real capital `<Association>` frames, so they were dropped before the parser — leaving the predecessor-delay / turnround predictive signal unreachable. Taxonomy now routes capital `Association` (`Conditional`) to the parser; a new end-to-end integration test drives a real `<Association category="NP">` frame through the pipeline and asserts `registry.predecessor_rid()` is populated.
+
+## [1.12.9] — 2026-06-04
+### Fixed (production-readiness pass — robustness)
+- **Circuit breaker** now routes on a typed `GbrErrorKind` instead of `msg.contains("503")` — timeouts, transport failures, and GBR 500/502/504 finally trip it (previously only a literal "503" did, so a brownout would hammer upstream indefinitely).
+- **`journey_handler`** no longer leaks raw sqlx error text to clients (logs server-side, returns a generic message).
+- **Request-path DB queries** in `build_departure_board` now `tracing::warn!` on failure instead of silently serving an empty board.
+- **`/report`** (4 heavy aggregations over `delay_history`) moved off the un-rate-limited infra router onto the rate-limited router.
+- **`gbr_client` `run_date`** now rejects a malformed date instead of fabricating "today" (which silently corrupted departure times on the live path).
+### Changed (refactor / cleanup)
+- Reconciled the ONNX feature-count contract to the code (14 day / 22 rt) across the module doc, CLAUDE.md, and `LiveFeatures`; named the inference magic numbers.
+- DB layer: lone `query!` macro → runtime `query_as`; consistent MAE cast and rolling-window bound; `DailyPoint.day`; doc accuracy.
+- Removed dead code: unused `Config` fields (`gbr_api_*`, `darwin_*`), `PredictionEngine::with_store`/`arc_store`, `MockGbrClient::set_error`, `ENDPOINT_DEPARTURES`, stale `#[allow]`s, and the fictional "HFT flat-Vec" registry doc.
+- Deduped frontend formatters into `components.rs`; collapsed `station_congestion`/`operator_cascade` into one helper.
+- Unified the startup auto-ingest progress channel so `/ui/demo/ingest/stream` reflects it.
+- Recorded all deferred refactors (state-machine cut, association fix), remaining dead code, and Tier-C readiness in `docs/tech-debt.md`.
+
+## [1.12.8] — 2026-06-04
+### Added
+- Dashboard overhaul **Phase 3–5 data layer** (backend-only, fully `sqlx::test`-covered, no UI yet): the read/query foundations the operator, prediction-explorer, and station-explorer pages will render on top of. Built so they could be implemented and verified entirely without a browser.
+  - `db/predictions.rs`: `prediction_snapshots` read path — `snapshots_for_rid`, `convergence_for_rid` (per-train predicted-vs-actual convergence trail), and `leadtime_accuracy` (mean absolute error bucketed by minutes-before-departure).
+  - `db/operators.rs`: per-operator drill-down — `operator_detail`, `operator_daily_series` (punctuality trend), `operator_delay_distribution`, `operator_routes` (O–D pairs ranked by avg delay). All via the query-time `delay_history ⋈ services` JOIN on `uid` — no writes to the large tables.
+  - `db/analytics.rs` (new): prediction-accuracy analytics — `calibration_curve`, `confidence_error`, `error_distribution` (signed-error bias histogram), `accuracy_over_time`. No day-ahead/real-time split (the outcomes ledger has no model discriminator).
+  - `db/stations.rs` (new): per-station explorer — `station_summary`, `station_heatmap` (delay by weekday×hour), `station_busiest_services`.
+  - 23 new `sqlx::test` DB tests. Clippy cleaned tree-wide (dead import, collapsible-if let-chains, complex-type alias).
+
+## [1.12.7] — 2026-06-03
+### Changed
+- Dashboard overhaul **Phase 2 (Overview cockpit)**: `/` rebuilt into a live Signal-Terminal cockpit — KPI strip (on-time %, avg delay, prediction MAE, trains tracked) with sparklines + trend arrows, re-scopable by the global time-range picker (24h/7d/30d/all via htmx); a live network-state panel (tracked/on-time/delayed/cancelled + worst current delays) from the registry; a mini operator league (top 8 by on-time %, empty until the GTFS operator ingest runs); and a data-coverage footer (stations, real & synthetic record counts). New read helpers `db/overview.rs` and `operator_league`, plus `TrainRegistry::network_summary`. Emoji nav icons replaced with inline SVG.
+
+## [1.12.6] — 2026-06-03
+### Added
+- Dashboard overhaul **Phase 1 (Operator data plumbing)**: GTFS `agency.txt`/`routes.txt` parsing derives a per-UID operator (`toc`) written onto the small `services` table, plus an `operators` reference table (friendly name from the feed + curated brand colour). Operator grouping on all 6.7M+ historic `delay_history` / `prediction_outcomes` rows is unlocked via a query-time JOIN on `uid` — **no rewrite of the large tables**. Re-run the GTFS ingest to populate `toc` ("backfill").
+
+## [1.12.5] — 2026-06-03
+### Added
+- Dashboard overhaul **Phase 0 (Foundation)**: "Signal Terminal" design system — IBM Plex Mono/Sans typography, an amber terminal accent with green/amber/red reserved for punctuality semantics, vendored uPlot, `frontend/charts.rs` inline-SVG helpers (KPI cards, sparklines, trend arrows, bar cells), an upgraded nav with active states + a Dashboard link, a global time-range picker, and a KPI strip on the dashboard proving the system.
+
+## v1.12.4 — 31/05/2026 — Prediction feature logging (schema + Rust wiring)
+
+- **`migrations/20240417120013_prediction_features.sql`**: adds `features JSONB` column to
+  `prediction_outcomes`; creates `prediction_snapshots` table (one row per significant prediction
+  event per RID, indexed by rid and snapshotted_at).
+- **`RailPredict/src/prediction/onnx_engine.rs`**: `predict_day_ahead` and `predict_realtime` now
+  return `Option<(i32, JsonValue)>` — the predicted delay plus a named feature vector as JSON.
+  `DAY_FEATURE_NAMES` and `RT_EXTRA_NAMES` constants added; `feats_to_json` helper zips names onto values.
+- **`RailPredict/src/types/volatility.rs`**: `VolatilityContext.prediction_features: Option<JsonValue>`
+  added; populated by `engine.rs` on every ML prediction; cleared on statistical fallback.
+- **`RailPredict/src/prediction/engine.rs`**: handles `(i32, JsonValue)` from ONNX; stores features
+  in `status.volatility.prediction_features`.
+- **`RailPredict/src/db/predictions.rs`**: `insert_first_prediction` binds `features` column;
+  new `insert_snapshot(db, rid, uid, predicted_delay_mins, features)` function.
+- **`RailPredict/src/ingestion/mod.rs`**: `insert_snapshot` called alongside
+  `insert_first_prediction` in the same `tokio::spawn` block for every initial ML prediction.
+
+## v1.12.3 — 30/05/2026 — v7.5-HC models activated (3k trees, operator features)
+
+- **`scripts/compare_models.py` v7.5**: two new interaction features — `weekday_operator_enc`
+  (encodes weekday × UID-prefix pair; captures operator-specific day-of-week patterns) and
+  `operator_relative_delay` (rolling_mean_7d minus operator's training-set baseline; ranks
+  feature #7 in day-ahead importance). Day-ahead grows from 12 → 14 features; real-time from
+  20 → 22 features. `feature_meta.json` now includes `weekday_operator` and `operator_mean_delay` maps.
+- **HC model training**: high-convergence variant with 3k trees, lr=0.015, num_leaves=255,
+  min_child_samples=100. best_iter=3000 on both models (hitting budget; models are at data's
+  noise floor). Day-ahead MAE 13.94 → 13.47 min (−0.47); real-time MAE 4.06 → 3.97 min (−0.09).
+- **`models/day_ahead.onnx` + `models/realtime.onnx`**: promoted to HC versions (58MB each,
+  up from 14MB standard). Previous 14MB standard models remain as `*_hc.onnx` fallbacks.
+- **`RailPredict/src/prediction/onnx_engine.rs`**: updated feature vector (14/22 features),
+  added `weekday_operator_map` and `operator_mean_delay` maps with graceful fallback for
+  older `feature_meta.json` files. `+6` bias correction retained on day-ahead (bias −5.69 min).
+- **`scripts/generate_synthetic.py`**: fixed distribution parameters so on-time targets are
+  mathematically correct — good days N(−5,3)→95.3% on-time; average days 80% bimodal pool
+  → 70.8% on-time. Fixed `_load_pool()` to not SELECT non-existent columns from delay_history.
+- **`RailPredict/src/frontend/dashboard.rs`**: split "Delay records" metric into "Real delay
+  records" and "Synthetic records" (separate DB queries via `tokio::try_join!`).
 
 ## v1.12.0 — 29/05/2026 — ML model v3: sample weighting, stratified split, fixed features
 

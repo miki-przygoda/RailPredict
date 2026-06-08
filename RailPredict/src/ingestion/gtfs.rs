@@ -78,10 +78,26 @@ pub struct GtfsStation {
 /// A single row from GTFS `trips.txt`.
 #[derive(Debug, Deserialize)]
 struct GtfsTrip {
+    #[serde(default)]
+    route_id: String,
     trip_id: String,
     service_id: String,
-    #[allow(dead_code)]
-    trip_headsign: Option<String>,
+}
+
+/// A single row from GTFS `agency.txt`.
+#[derive(Debug, Deserialize)]
+struct GtfsAgency {
+    #[serde(default)]
+    agency_id: String,
+    agency_name: String,
+}
+
+/// A single row from GTFS `routes.txt`.
+#[derive(Debug, Deserialize)]
+struct GtfsRoute {
+    route_id: String,
+    #[serde(default)]
+    agency_id: String,
 }
 
 /// A single row from GTFS `calendar.txt`.
@@ -191,6 +207,62 @@ fn parse_stop_times(csv_bytes: &[u8]) -> anyhow::Result<Vec<GtfsStopTime>> {
     Ok(stop_times)
 }
 
+/// Parse `agency.txt` into a map of `agency_id → agency_name`.
+/// Rows with an empty agency_id are skipped.
+fn parse_agency(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
+    let mut reader = csv::Reader::from_reader(csv_bytes);
+    let mut map = HashMap::new();
+    for result in reader.deserialize::<GtfsAgency>() {
+        match result {
+            Ok(row) if !row.agency_id.is_empty() => {
+                map.insert(row.agency_id, row.agency_name);
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "Skipping malformed GTFS agency.txt row"),
+        }
+    }
+    Ok(map)
+}
+
+/// Parse `routes.txt` into a map of `route_id → agency_id`.
+/// Rows with an empty agency_id are skipped.
+fn parse_routes(csv_bytes: &[u8]) -> anyhow::Result<HashMap<String, String>> {
+    let mut reader = csv::Reader::from_reader(csv_bytes);
+    let mut map = HashMap::new();
+    for result in reader.deserialize::<GtfsRoute>() {
+        match result {
+            Ok(row) if !row.agency_id.is_empty() => {
+                map.insert(row.route_id, row.agency_id);
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "Skipping malformed GTFS routes.txt row"),
+        }
+    }
+    Ok(map)
+}
+
+/// Derive `uid → toc (agency_id)` from trips and a `route_id → agency_id` map.
+/// First-seen UID wins (mirrors the service-build rule). UIDs whose route does
+/// not resolve to a non-empty agency are omitted (they get NULL toc).
+fn derive_uid_toc(
+    trips: &[GtfsTrip],
+    route_to_agency: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut map: HashMap<String, String> = HashMap::new();
+    for trip in trips {
+        let Some(uid) = extract_uid(&trip.trip_id) else {
+            continue;
+        };
+        if map.contains_key(uid) {
+            continue;
+        }
+        if let Some(agency) = route_to_agency.get(&trip.route_id).filter(|a| !a.is_empty()) {
+            map.insert(uid.to_owned(), agency.clone());
+        }
+    }
+    map
+}
+
 /// Parse a GTFS time string "HH:MM:SS" where HH may be ≥ 24 (overnight services).
 /// Values ≥ 24:00:00 are clamped by taking `HH % 24`.
 fn parse_gtfs_time(s: &str) -> Option<chrono::NaiveTime> {
@@ -261,11 +333,6 @@ fn extract_file(zip_bytes: &[u8], filename: &str) -> anyhow::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Thin wrapper around `extract_file` for the mandatory `stops.txt`.
-fn extract_stops_txt(zip_bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
-    extract_file(zip_bytes, "stops.txt")
-}
-
 // ---------------------------------------------------------------------------
 // DB upsert functions
 // ---------------------------------------------------------------------------
@@ -298,17 +365,17 @@ async fn upsert_stations(db: &Db, stations: &[GtfsStation]) -> anyhow::Result<()
     Ok(())
 }
 
-/// Upsert services rows. Each tuple is `(uid, origin_crs, destination_crs, runs_on_days)`.
+/// Upsert services rows. Each tuple is `(uid, origin_crs, destination_crs, runs_on_days, toc)`.
 /// Only services whose origin_crs and destination_crs are in `known_stations` are inserted
 /// to avoid FK violations.
 async fn upsert_services(
     db: &Db,
-    services: &[(String, String, String, i16)],
+    services: &[(String, String, String, i16, Option<String>)],
     known_stations: &HashSet<String>,
 ) -> anyhow::Result<usize> {
-    let filtered: Vec<&(String, String, String, i16)> = services
+    let filtered: Vec<&(String, String, String, i16, Option<String>)> = services
         .iter()
-        .filter(|(_, origin, dest, _)| {
+        .filter(|(_, origin, dest, _, _)| {
             known_stations.contains(origin) && known_stations.contains(dest)
         })
         .collect();
@@ -316,13 +383,14 @@ async fn upsert_services(
     let mut total = 0usize;
     for chunk in filtered.chunks(SERVICES_CHUNK) {
         let mut qb = QueryBuilder::new(
-            "INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, updated_at) ",
+            "INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, toc, updated_at) ",
         );
-        qb.push_values(chunk, |mut b, (uid, origin, dest, days)| {
+        qb.push_values(chunk, |mut b, (uid, origin, dest, days, toc)| {
             b.push_bind(uid)
                 .push_bind(origin)
                 .push_bind(dest)
                 .push_bind(days)
+                .push_bind(toc.clone())
                 .push_bind(chrono::Utc::now());
         });
         qb.push(
@@ -330,7 +398,38 @@ async fn upsert_services(
                 origin_crs      = EXCLUDED.origin_crs,
                 destination_crs = EXCLUDED.destination_crs,
                 runs_on_days    = EXCLUDED.runs_on_days,
+                toc             = COALESCE(EXCLUDED.toc, services.toc),
                 updated_at      = EXCLUDED.updated_at",
+        );
+        qb.build().execute(db).await?;
+        total += chunk.len();
+    }
+    Ok(total)
+}
+
+/// Upsert operator reference rows from `agency_id → agency_name`, attaching a
+/// brand colour from the curated map.
+async fn upsert_operators(db: &Db, agencies: &HashMap<String, String>) -> anyhow::Result<usize> {
+    if agencies.is_empty() {
+        return Ok(0);
+    }
+    let rows: Vec<(&String, &String)> = agencies.iter().collect();
+    let mut total = 0usize;
+    for chunk in rows.chunks(SERVICES_CHUNK) {
+        let mut qb = QueryBuilder::new(
+            "INSERT INTO operators (toc, name, brand_color, updated_at) ",
+        );
+        qb.push_values(chunk, |mut b, (toc, name)| {
+            b.push_bind(*toc)
+                .push_bind(*name)
+                .push_bind(crate::ingestion::operators::brand_color(name))
+                .push_bind(chrono::Utc::now());
+        });
+        qb.push(
+            " ON CONFLICT (toc) DO UPDATE SET
+                name        = EXCLUDED.name,
+                brand_color = EXCLUDED.brand_color,
+                updated_at  = EXCLUDED.updated_at",
         );
         qb.build().execute(db).await?;
         total += chunk.len();
@@ -406,7 +505,7 @@ pub async fn run_ingest_from_file(db: &Db, path: &std::path::Path) -> anyhow::Re
 }
 
 /// Download `url`, stream progress into `tx`, then run the full ingest pipeline.
-/// Called by the HTTP ingest UI handler (POST /ui/demo/ingest/start).
+/// Called by the HTTP ingest UI handler (POST /ui/dev/ingest/start).
 pub async fn run_ingest_with_watch(
     db: &Db,
     url: &str,
@@ -424,7 +523,7 @@ pub async fn run_ingest_with_watch(
 async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watch::Sender<IngestStatus>>) -> anyhow::Result<usize> {
     // --- Phase 1: Stations ---
     emit(progress, |s| { s.phase = IngestPhase::Parsing; s.push_log("Extracting stations"); });
-    let stops_bytes = extract_stops_txt(zip_bytes)?;
+    let stops_bytes = extract_file(zip_bytes, "stops.txt")?;
     let stations = parse_stops(&stops_bytes)?;
     let station_count = stations.len();
     tracing::info!(stations = station_count, "Parsed GTFS stops");
@@ -515,8 +614,30 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watc
         stops.sort_by_key(|s| s.stop_sequence);
     }
 
+    // --- Operator identity: agency.txt + routes.txt → uid → toc ---
+    let agencies = match extract_file(zip_bytes, "agency.txt") {
+        Ok(bytes) => parse_agency(&bytes).unwrap_or_default(),
+        Err(_) => {
+            tracing::warn!("agency.txt not found in GTFS archive; operators will be unlabelled");
+            HashMap::new()
+        }
+    };
+    let route_to_agency = match extract_file(zip_bytes, "routes.txt") {
+        Ok(bytes) => parse_routes(&bytes).unwrap_or_default(),
+        Err(_) => {
+            tracing::warn!("routes.txt not found in GTFS archive; operators will be unlabelled");
+            HashMap::new()
+        }
+    };
+    let uid_toc = derive_uid_toc(&trips, &route_to_agency);
+    tracing::info!(agencies = agencies.len(), uid_toc = uid_toc.len(), "Resolved operator identity");
+    if !agencies.is_empty() {
+        let n = upsert_operators(db, &agencies).await?;
+        emit(progress, |s| s.push_log(format!("Operators: {n}")));
+    }
+
     // --- Phase 6: Build services list ---
-    let mut services: Vec<(String, String, String, i16)> = Vec::new();
+    let mut services: Vec<(String, String, String, i16, Option<String>)> = Vec::new();
     // Track uid → bitmask so we can know which UIDs made it in
     let mut uid_to_days: HashMap<String, i16> = HashMap::new();
 
@@ -549,8 +670,9 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watc
             None => continue,
         };
 
+        let toc = uid_toc.get(&uid).cloned();
         uid_to_days.insert(uid.clone(), days);
-        services.push((uid, origin_crs, dest_crs, days));
+        services.push((uid, origin_crs, dest_crs, days, toc));
     }
 
     emit(progress, |s| { s.phase = IngestPhase::Services; s.push_log(format!("Upserting {} services", services.len())); });
@@ -561,10 +683,10 @@ async fn run_ingest_from_bytes(db: &Db, zip_bytes: &[u8], progress: Option<&watc
     // Build known UIDs set (those actually persisted)
     let known_uids: HashSet<String> = services
         .iter()
-        .filter(|(_, origin, dest, _)| {
+        .filter(|(_, origin, dest, _, _)| {
             known_stations.contains(origin) && known_stations.contains(dest)
         })
-        .map(|(uid, _, _, _)| uid.clone())
+        .map(|(uid, _, _, _, _)| uid.clone())
         .collect();
 
     // --- Phase 7: Build timetable_calls ---
@@ -795,5 +917,40 @@ abc,lowercase should be skipped,,
                    WE,0,0,0,0,0,1,1\n";
         let map = parse_calendar(csv.as_bytes()).unwrap();
         assert_eq!(map.get("WE").copied(), Some(96i16));
+    }
+
+    #[test]
+    fn parse_agency_maps_id_to_name() {
+        let csv = "agency_id,agency_name,agency_url,agency_timezone\n\
+                   GW,Great Western Railway,http://x,Europe/London\n\
+                   VT,Avanti West Coast,http://y,Europe/London\n";
+        let m = parse_agency(csv.as_bytes()).unwrap();
+        assert_eq!(m.get("GW").map(String::as_str), Some("Great Western Railway"));
+        assert_eq!(m.get("VT").map(String::as_str), Some("Avanti West Coast"));
+    }
+
+    #[test]
+    fn parse_routes_maps_route_to_agency() {
+        let csv = "route_id,agency_id,route_short_name,route_type\n\
+                   R1,GW,GWR,2\n\
+                   R2,VT,AWC,2\n";
+        let m = parse_routes(csv.as_bytes()).unwrap();
+        assert_eq!(m.get("R1").map(String::as_str), Some("GW"));
+        assert_eq!(m.get("R2").map(String::as_str), Some("VT"));
+    }
+
+    #[test]
+    fn derive_uid_toc_resolves_via_route_first_seen_wins() {
+        let trips = vec![
+            GtfsTrip { route_id: "R1".into(), trip_id: "C12345_20240417".into(), service_id: "WD".into() },
+            GtfsTrip { route_id: "R2".into(), trip_id: "C12345_20240418".into(), service_id: "WD".into() },
+            GtfsTrip { route_id: "RX".into(), trip_id: "D99999_20240417".into(), service_id: "WD".into() },
+        ];
+        let mut routes = HashMap::new();
+        routes.insert("R1".to_string(), "GW".to_string());
+        routes.insert("R2".to_string(), "VT".to_string());
+        let m = derive_uid_toc(&trips, &routes);
+        assert_eq!(m.get("C12345").map(String::as_str), Some("GW"));
+        assert_eq!(m.get("D99999"), None);
     }
 }

@@ -6,7 +6,6 @@
 //! main
 //!  ├── db::connect + load_history
 //!  ├── registry warm-up        — pre-register today's timetable (Tier A)
-//!  ├── PollManager::run        — global BinaryHeap poll scheduler
 //!  ├── IngestionPipeline::run  — Darwin STOMP firehose → registry writes
 //!  ├── eviction_task           — 60s tick; calls registry.evict_departed()
 //!  ├── db_flush_task           — 60s tick; flushes delay history to DB
@@ -41,7 +40,6 @@ use railpredict::ingestion::stomp_client::LiveStompClient;
 use railpredict::ingestion::IngestionPipeline;
 use railpredict::networking::{CircuitBreaker, Coalescer, LiveGbrClient, RateLimiter};
 use railpredict::prediction::{OnnxEngine, PredictionEngine};
-use railpredict::state_machine::PollManager;
 use railpredict::types::{TrainId, TrainStatus};
 
 /// Prints a startup diagnostics table to stderr before the structured logger initialises,
@@ -193,9 +191,30 @@ async fn main() -> anyhow::Result<()> {
                 IngestSource::Cif => {
                     anyhow::bail!("CIF ingest is not yet implemented");
                 }
+                IngestSource::Rds => {
+                    let dir = file.ok_or_else(|| {
+                        anyhow::anyhow!("--file <dir> (the imports/ directory) is required for RDS ingest")
+                    })?;
+                    let summary =
+                        railpredict::ingestion::rds::run_ingest_rds(&db_pool, &dir).await?;
+                    tracing::info!(
+                        stations = summary.stations,
+                        operators = summary.operators,
+                        "RDS reference ingest complete"
+                    );
+                }
             },
             Commands::ExportSite { output, days } => {
                 export::export_site(&db_pool, &output, days).await?;
+            }
+            Commands::ExportDemo { output, days } => {
+                export::demo::export_demo(&db_pool, &output, days).await?;
+            }
+            Commands::ExportMap { output, days } => {
+                export::map::export_map(&db_pool, &output, days).await?;
+            }
+            Commands::ExportOs { output, days } => {
+                export::os::export_os(&db_pool, &output, days).await?;
             }
         }
         return Ok(());
@@ -258,6 +277,13 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::warn!(error = %e, "Registry warm-up from timetable skipped"),
     }
 
+    // Watch channel for GTFS ingest progress — updated by the ingest UI task.
+    // Created here (before the startup auto-ingest below) so the same channel that
+    // feeds `AppState.ingest_status` also carries startup-ingest progress, which the
+    // /ui/dev/ingest/stream SSE handler subscribes to.
+    let (ingest_tx, _ingest_rx) = watch::channel(IngestStatus::default());
+    let ingest_tx = Arc::new(ingest_tx);
+
     // --- Auto-ingest: seed stations on first run if GTFS_URL is configured ---
     // If the stations table is empty AND GTFS_URL is set, kick off a background
     // ingest so the departure board and autocomplete work immediately without
@@ -272,7 +298,8 @@ async fn main() -> anyhow::Result<()> {
             if !gtfs_url.trim().is_empty() {
                 tracing::info!("Stations table empty — auto-ingesting from GTFS_URL on startup");
                 let auto_db = db_pool.clone();
-                let auto_tx = Arc::new(watch::Sender::new(IngestStatus::default()));
+                // Use the SHARED ingest channel so dev SSE subscribers see startup progress.
+                let auto_tx = Arc::clone(&ingest_tx);
                 tokio::spawn(async move {
                     auto_tx.send_modify(|s| {
                         s.phase = IngestPhase::Downloading;
@@ -287,30 +314,17 @@ async fn main() -> anyhow::Result<()> {
             }
         } else {
             tracing::warn!(
-                "Stations table is empty — set GTFS_URL or use /demo to ingest timetable data"
+                "Stations table is empty — set GTFS_URL or use /dev to ingest timetable data"
             );
         }
     }
 
-    // Single broadcast channel shared by PollManager, IngestionPipeline, and SSE handlers.
+    // Single broadcast channel shared by the IngestionPipeline and SSE handlers
+    // (state-change events drive the live UI; emitted from the ingestion pipeline).
     let (sc_tx, _initial_rx) = broadcast::channel(1024);
     drop(_initial_rx);
 
-    // Watch channel for GTFS ingest progress — updated by the ingest UI task.
-    let (ingest_tx, _ingest_rx) = watch::channel(IngestStatus::default());
-    let ingest_tx = Arc::new(ingest_tx);
-
     let token = CancellationToken::new();
-
-    // --- Poll manager ---
-    let (poll_manager, _pm_handles) = PollManager::new(sc_tx.clone());
-    let pm_token = token.clone();
-    let pm_task = tokio::spawn(async move {
-        tokio::select! {
-            _ = pm_token.cancelled() => tracing::info!("PollManager shutting down"),
-            _ = poll_manager.run() => tracing::warn!("PollManager exited early"),
-        }
-    });
 
     // --- Ingestion pipeline ---
     // Build the initial STOMP client to verify credentials are present before spawning.
@@ -322,7 +336,7 @@ async fn main() -> anyhow::Result<()> {
                 "Darwin credentials not configured — ingestion disabled."
             );
             wait_for_shutdown(
-                token, pm_task, registry, sc_tx, &config,
+                token, registry, sc_tx, &config,
                 Arc::clone(&history_store), db_pool, Arc::clone(&prometheus_handle),
                 Arc::clone(&ingest_tx),
             )
@@ -669,24 +683,23 @@ async fn main() -> anyhow::Result<()> {
                                 }
                                 Err(e) => {
                                     use railpredict::networking::coalescer::CoalescerError;
+                                    use railpredict::networking::gbr_client::GbrErrorKind;
                                     match &e {
-                                        CoalescerError::GbrError(msg) if msg.contains("503") => {
-                                            cb_clone.record_failure().await;
-                                            tracing::warn!(
-                                                "GBR returned 503 — circuit breaker incremented"
-                                            );
-                                        }
-                                        CoalescerError::GbrError(msg) if msg.contains("429") => {
-                                            tracing::warn!("GBR rate limited — backing off");
+                                        CoalescerError::Gbr { kind, detail } => {
+                                            if kind.is_breaker_failure() {
+                                                cb_clone.record_failure().await;
+                                                tracing::warn!(?kind, %detail, "GBR poll failure — circuit breaker incremented");
+                                            } else if *kind == GbrErrorKind::RateLimited {
+                                                tracing::warn!("GBR rate limited — backing off");
+                                            } else {
+                                                tracing::warn!(?kind, %detail, "GBR poll error");
+                                            }
                                         }
                                         CoalescerError::InFlightDropped => {
                                             tracing::debug!(
                                                 train_id = %train_id,
                                                 "In-flight GBR request dropped"
                                             );
-                                        }
-                                        _ => {
-                                            tracing::warn!(error = %e, "GBR poll error");
                                         }
                                     }
                                 }
@@ -736,28 +749,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // --- Station autocomplete index (in-memory, loaded once) ---
-    let station_index = {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
-            .fetch_all(&db_pool)
-            .await
-            .unwrap_or_default();
-        let count = rows.len();
-        let idx = StationIndex::build(rows);
-        tracing::info!(stations = count, "Station autocomplete index built");
-        Arc::new(idx)
-    };
+    let station_index = build_station_index(&db_pool).await;
 
     // --- axum HTTP server ---
-    let app_state = AppState {
-        registry: Arc::clone(&registry),
-        state_change_tx: sc_tx,
-        db: db_pool.clone(),
-        prometheus: Arc::clone(&prometheus_handle),
-        cors_allowed_origins: config.cors_allowed_origins.clone(),
-        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
-        ingest_status: Arc::clone(&ingest_tx),
-        station_index: Arc::clone(&station_index),
-    };
+    let app_state = assemble_app_state(
+        Arc::clone(&registry),
+        sc_tx,
+        db_pool.clone(),
+        Arc::clone(&prometheus_handle),
+        &config,
+        Arc::clone(&ingest_tx),
+        Arc::clone(&station_index),
+    );
     let app = router(app_state);
     let bind_addr: std::net::SocketAddr = config
         .api_bind_addr
@@ -784,7 +787,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Shutdown signal received — initiating graceful shutdown");
     token.cancel();
 
-    let _ = tokio::join!(pm_task, pipeline_task, eviction_task, flush_task, prune_task, api_task);
+    let _ = tokio::join!(pipeline_task, eviction_task, flush_task, prune_task, api_task);
     if let Some(pt) = poll_task {
         let _ = pt.await;
     }
@@ -814,35 +817,63 @@ async fn shutdown_signal() {
     ctrl_c.await;
 }
 
+/// Build the in-memory station autocomplete index from the DB (once, at startup).
+async fn build_station_index(db: &db::Db) -> Arc<StationIndex> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+    let count = rows.len();
+    let idx = StationIndex::build(rows);
+    tracing::info!(stations = count, "Station autocomplete index built");
+    Arc::new(idx)
+}
+
+/// Assemble the shared `AppState` from its parts. One definition so the normal and
+/// ingestion-disabled (`wait_for_shutdown`) startup paths cannot drift.
+#[allow(clippy::too_many_arguments)]
+fn assemble_app_state(
+    registry: Arc<TrainRegistry>,
+    state_change_tx: broadcast::Sender<railpredict::state_machine::StateChangeEvent>,
+    db: db::Db,
+    prometheus: Arc<metrics_exporter_prometheus::PrometheusHandle>,
+    config: &Config,
+    ingest_status: Arc<watch::Sender<IngestStatus>>,
+    station_index: Arc<StationIndex>,
+) -> AppState {
+    AppState {
+        registry,
+        state_change_tx,
+        db,
+        prometheus,
+        cors_allowed_origins: config.cors_allowed_origins.clone(),
+        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
+        ingest_status,
+        station_index,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn wait_for_shutdown(
     token: CancellationToken,
-    pm_task: tokio::task::JoinHandle<()>,
     registry: Arc<TrainRegistry>,
-    sc_tx: broadcast::Sender<railpredict::state_machine::poll_manager::StateChangeEvent>,
+    sc_tx: broadcast::Sender<railpredict::state_machine::StateChangeEvent>,
     config: &Config,
     history_store: Arc<railpredict::prediction::types::HistoricalStore>,
     db_pool: db::Db,
     prometheus_handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
     ingest_tx: Arc<watch::Sender<IngestStatus>>,
 ) {
-    let station_index = {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT crs, name FROM stations")
-            .fetch_all(&db_pool)
-            .await
-            .unwrap_or_default();
-        Arc::new(StationIndex::build(rows))
-    };
-    let app_state = AppState {
+    let station_index = build_station_index(&db_pool).await;
+    let app_state = assemble_app_state(
         registry,
-        state_change_tx: sc_tx,
-        db: db_pool.clone(),
-        prometheus: prometheus_handle,
-        cors_allowed_origins: config.cors_allowed_origins.clone(),
-        http_rate_limit_per_sec: config.http_rate_limit_per_sec,
-        ingest_status: ingest_tx,
+        sc_tx,
+        db_pool.clone(),
+        prometheus_handle,
+        config,
+        ingest_tx,
         station_index,
-    };
+    );
     let app = router(app_state);
 
     if let Ok(addr) = config.api_bind_addr.parse::<std::net::SocketAddr>()
@@ -864,7 +895,6 @@ async fn wait_for_shutdown(
     shutdown_signal().await;
     tracing::info!("Shutdown signal received — initiating graceful shutdown");
     token.cancel();
-    let _ = pm_task.await;
 
     if let Err(e) = db::history::flush_history(&db_pool, &history_store).await {
         tracing::error!(error = %e, "Final DB flush failed");

@@ -1,6 +1,23 @@
-//! Reusable maud fragments used across search and detail pages.
+//! Reusable maud fragments and formatting helpers shared across pages.
 
 use maud::{Markup, html};
+
+/// Format pence as a pounds string, e.g. `1299 → "£12.99"`.
+pub fn pence_to_pounds(pence: i32) -> String {
+    format!("£{:.2}", pence as f64 / 100.0)
+}
+
+/// Compact human count: `1_284 → "1.3k"`, `6_700_000 → "6.7M"`.
+/// `k_decimals` controls the thousands precision (millions always use 1 dp).
+pub fn compact_count(n: i64, k_decimals: usize) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.*}k", k_decimals, n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
 
 /// Coloured status badge: green / amber / red driven by delay value.
 pub fn delay_badge(delay_mins: Option<i32>, is_cancelled: bool) -> Markup {
@@ -67,5 +84,68 @@ pub fn platform_chip(platform: Option<&str>, is_planned: bool) -> Markup {
                 }
             }
         }
+    }
+}
+
+/// Normalise an incoming `?range=` value to one of the four supported buckets.
+pub fn normalize_range(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some("24h") => "24h",
+        Some("30d") => "30d",
+        Some("all") => "all",
+        _ => "7d",
+    }
+}
+
+/// Window length in hours for a normalised range value.
+pub fn range_to_hours(range: &str) -> i32 {
+    match range {
+        "24h" => 24,
+        "30d" => 720,
+        "all" => 876_000,
+        _ => 168,
+    }
+}
+
+/// Human label for a normalised range value, for captions.
+pub fn range_label(range: &str) -> &'static str {
+    match range {
+        "24h" => "last 24 h",
+        "30d" => "last 30 days",
+        "all" => "all time",
+        _ => "last 7 days",
+    }
+}
+
+/// Global time-range picker. `base_path` is the page it re-scopes (htmx swaps
+/// the page `<main>`), `active` is one of "24h" | "7d" | "30d" | "all".
+pub fn time_range_picker(base_path: &str, active: &str) -> Markup {
+    let ranges = [("24h", "24h"), ("7d", "7d"), ("30d", "30d"), ("all", "All")];
+    html! {
+        div .range-picker role="group" aria-label="Time range" {
+            @for (val, label) in ranges {
+                button
+                    class=(if val == active { "active" } else { "" })
+                    hx-get=(format!("{base_path}?range={val}"))
+                    hx-target="main"
+                    hx-push-url="true"
+                    aria-pressed=(if val == active { "true" } else { "false" })
+                    { (label) }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn range_picker_marks_active_and_targets_path() {
+        let m = time_range_picker("/", "7d").into_string();
+        assert!(m.contains("range-picker"));
+        assert!(m.contains("hx-get=\"/?range=24h\""));
+        assert!(m.contains("hx-get=\"/?range=7d\""));
+        assert!(m.contains("active"));
     }
 }

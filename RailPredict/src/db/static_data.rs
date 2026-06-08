@@ -105,3 +105,40 @@ pub async fn cheapest_fare(
     .await?;
     Ok(fare)
 }
+
+/// Direct (no-change) journeys from `from_crs` to `to_crs` on `date`: services whose
+/// timetable call at the origin precedes a call at the destination (same uid + operating
+/// date, higher `call_order`). Returns `(uid, scheduled_departure, platform)` ordered by
+/// departure time; `limit` caps the rows (`None` = unbounded).
+pub async fn direct_journeys(
+    db: &Db,
+    from_crs: &str,
+    to_crs: &str,
+    date: NaiveDate,
+    limit: Option<i64>,
+) -> sqlx::Result<Vec<(String, NaiveTime, Option<String>)>> {
+    let mut sql = String::from(
+        "SELECT tc_from.uid, tc_from.scheduled_departure, tc_from.platform \
+         FROM timetable_calls tc_from \
+         JOIN timetable_calls tc_to \
+             ON tc_to.uid            = tc_from.uid \
+            AND tc_to.operating_date = tc_from.operating_date \
+            AND tc_to.location_crs   = $2 \
+            AND tc_to.call_order     > tc_from.call_order \
+         WHERE tc_from.location_crs  = $1 \
+           AND tc_from.operating_date = $3 \
+         ORDER BY tc_from.scheduled_departure",
+    );
+    // Static append of a bind placeholder — no user input is interpolated.
+    if limit.is_some() {
+        sql.push_str(" LIMIT $4");
+    }
+    let mut query = sqlx::query_as::<_, (String, NaiveTime, Option<String>)>(&sql)
+        .bind(from_crs)
+        .bind(to_crs)
+        .bind(date);
+    if let Some(n) = limit {
+        query = query.bind(n);
+    }
+    query.fetch_all(db).await
+}

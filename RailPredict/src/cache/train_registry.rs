@@ -6,12 +6,6 @@
 //! The outer `DashMap` shard lock is held only for the initial lookup; the inner
 //! `RwLock` is held only for the duration of the read or write operation.
 //!
-//! ## Hot-path flat array (HFT pattern, ref CLAUDE.md §5)
-//! The registry also maintains a compact `Vec` index of trains currently in `Active` or
-//! `Critical` state. The poll manager holds indices into this vec for O(1) lookups on the
-//! hot polling path, avoiding a DashMap lookup per poll tick.
-//! This vec is rebuilt whenever a train enters or leaves the hot states.
-//!
 //! ## Eviction policy
 //! Trains are evicted `EVICTION_BUFFER_SECS` after their `actual_estimated_departure`
 //! (or `scheduled_departure` if actual is unknown). A background task calls
@@ -29,15 +23,72 @@ use tokio::sync::RwLock;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use serde::Serialize;
 
 use crate::types::{TrainId, TrainStatus};
 
-/// How long after estimated departure a train remains in the registry.
-const EVICTION_BUFFER_SECS: i64 = 300; // 5 minutes post-departure
+/// A single live delayed train, for the cockpit "worst right now" list.
+#[derive(Debug, Clone)]
+pub struct LiveDelay {
+    pub rid: String,
+    pub origin_crs: Option<String>,
+    pub destination_crs: Option<String>,
+    pub delay_mins: i32,
+}
 
-/// Time window (minutes) used by `trains_at_tiploc` to filter calling points.
-/// Only trains scheduled to call at the TIPLOC within the next 60 minutes are returned.
-const TIPLOC_WINDOW_MINS: i64 = 60;
+/// An active train carrying a prediction — feeds the live board's "tracking" zone.
+#[derive(Debug, Clone)]
+pub struct TrackingTrain {
+    pub rid: String,
+    pub uid: Option<String>,
+    pub origin_crs: Option<String>,
+    pub destination_crs: Option<String>,
+    pub scheduled_departure: DateTime<Utc>,
+    pub predicted_delay_mins: i32,
+}
+
+/// A currently-running service positioned for the live map: its route as
+/// `[lon,lat]` calling points plus the timing needed to glide a node along it
+/// in real time. Mirrors the baked replay journey shape so the renderer can
+/// animate it with the same arc-length-by-clock logic.
+#[derive(Debug, Clone, Serialize)]
+pub struct LiveService {
+    /// Display label (UID, else RID).
+    pub lbl: String,
+    /// Origin station name.
+    pub o: String,
+    /// Destination station name.
+    pub d: String,
+    /// Delay band: 0 on-time, 1 slight, 2 late.
+    pub b: u8,
+    /// Best delay estimate in minutes.
+    pub dly: i32,
+    /// Ordered calling points with known coordinates, as `[lon,lat]`.
+    pub route: Vec<[f64; 2]>,
+    /// Origin departure, minutes since UTC midnight (best of actual/est/sched).
+    pub dep: f64,
+    /// Journey duration in minutes (origin departure → destination arrival).
+    pub dur: f64,
+}
+
+/// Live network state derived from the registry snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkSummary {
+    pub tracked: usize,
+    pub on_time: usize,
+    pub delayed: usize,
+    pub cancelled: usize,
+    pub worst: Vec<LiveDelay>,
+}
+
+/// How long after the relevant time (arrival, else departure) a train remains.
+const EVICTION_BUFFER_SECS: i64 = 300; // 5 minutes
+
+/// Hard cap on how long a train is retained past its departure. A service that
+/// never reports arrival can't pin memory indefinitely; 6 h comfortably covers
+/// the longest GB through services. Trains are normally evicted ~5 min after
+/// their destination arrival — this only catches the pathological tail.
+const MAX_INFLIGHT_SECS: i64 = 6 * 3600;
 
 pub struct TrainRegistry {
     trains: DashMap<TrainId, Arc<RwLock<TrainStatus>>>,
@@ -45,6 +96,10 @@ pub struct TrainRegistry {
     /// Updated whenever a train's `calling_points` changes.
     /// Used by the TIPLOC cascade (Phase 2 AdvancedAnalytics).
     tiploc_index: DashMap<String, Vec<TrainId>>,
+    /// Fleet turnround map: next_rid → prev_rid for NP (Next Part) associations.
+    /// Populated from Darwin Association messages (category="NP").
+    /// Used to look up the predecessor service's delay at prediction time.
+    turnround_map: DashMap<String, String>,
 }
 
 impl TrainRegistry {
@@ -52,6 +107,7 @@ impl TrainRegistry {
         Self {
             trains: DashMap::new(),
             tiploc_index: DashMap::new(),
+            turnround_map: DashMap::new(),
         }
     }
 
@@ -164,7 +220,6 @@ impl TrainRegistry {
         self.trains.len()
     }
 
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.trains.is_empty()
     }
@@ -181,7 +236,21 @@ impl TrainRegistry {
                     .actual_estimated_departure
                     .value
                     .unwrap_or(status.scheduled_departure.value);
-                if departure < cutoff {
+                // Retain a train for its whole journey so the live map can follow
+                // it: keep until its best-known destination arrival, capped at
+                // `departure + MAX_INFLIGHT`. Trains whose journey arrival is
+                // unknown (can't be placed on the map anyway) fall back to the old
+                // evict-shortly-after-departure rule.
+                let arrival = status
+                    .journey
+                    .values()
+                    .next_back()
+                    .and_then(|c| c.act_arr.or(c.est_arr).or(c.sched_arr));
+                let keep_until = match arrival {
+                    Some(a) => a.min(departure + chrono::Duration::seconds(MAX_INFLIGHT_SECS)),
+                    None => departure,
+                };
+                if keep_until < cutoff {
                     ids.push(entry.key().clone());
                 }
             }
@@ -198,6 +267,35 @@ impl TrainRegistry {
         for (id, status) in statuses {
             self.upsert(id, status);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fleet turnround (NP Association tracking)
+    // -----------------------------------------------------------------------
+
+    /// Record an NP (Next Part) association: the physical train from `prev_rid`
+    /// is turning round to form `next_rid`.  Overwrites any existing entry for `next_rid`.
+    pub fn record_association(&self, prev_rid: &str, next_rid: &str) {
+        self.turnround_map.insert(next_rid.to_string(), prev_rid.to_string());
+    }
+
+    /// Return the RID of the predecessor service for `rid`, if a turnround link is known.
+    pub fn predecessor_rid(&self, rid: &str) -> Option<String> {
+        self.turnround_map.get(rid).map(|v| v.clone())
+    }
+
+    /// Return the current reported delay in minutes for a given RID, or `None` if
+    /// the train is not in the registry or has no reported delay.
+    pub fn delay_for_rid(&self, rid: &str) -> Option<i32> {
+        // The registry is keyed by `TrainId`. Try constructing a RID key directly.
+        let id = crate::types::TrainId::rid(rid).ok()?;
+        let arc = self.trains.get(&id)?;
+        // We need a blocking read here — this method is called from synchronous
+        // prediction code inside a registry write closure, so we use `try_read`
+        // to avoid a deadlock.  If the lock is contended we return `None` (the
+        // prediction path treats that as "no signal", not an error).
+        let status = arc.try_read().ok()?;
+        status.reported_delay_mins.value
     }
 
     // -----------------------------------------------------------------------
@@ -229,38 +327,6 @@ impl TrainRegistry {
                 .or_default()
                 .push(train_id.clone());
         }
-    }
-
-    /// Return all `TrainId`s that call at `tiploc` with a scheduled time within the
-    /// next `TIPLOC_WINDOW_MINS` (60) minutes.
-    ///
-    /// This requires reading each candidate's `calling_points` from the main registry,
-    /// so it acquires read locks. Returns an empty vec if no matching trains are found.
-    ///
-    /// NOTE: This method is synchronous over the `DashMap` lookup but async for the
-    /// inner `RwLock` reads. For ergonomics it collects eagerly — the expected result
-    /// set is small (< 5 trains per TIPLOC in a 60-minute window).
-    pub async fn trains_at_tiploc(&self, tiploc: &str, now: DateTime<Utc>) -> Vec<TrainId> {
-        let window_end = now + chrono::Duration::minutes(TIPLOC_WINDOW_MINS);
-        let candidates = match self.tiploc_index.get(tiploc) {
-            Some(ids) => ids.clone(),
-            None => return Vec::new(),
-        };
-
-        let mut result = Vec::new();
-        for train_id in candidates {
-            if let Some(arc) = self.trains.get(&train_id) {
-                let status = arc.read().await;
-                // Check if any calling point for this TIPLOC is within the window.
-                let in_window = status.calling_points.iter().any(|(tp, scheduled_time)| {
-                    tp == tiploc && *scheduled_time >= now && *scheduled_time <= window_end
-                });
-                if in_window {
-                    result.push(train_id);
-                }
-            }
-        }
-        result
     }
 
     /// Return all `TrainId`s that should be cascade-promoted due to a delay at `tiploc`.
@@ -306,6 +372,149 @@ impl TrainRegistry {
             }
         }
         result
+    }
+
+    /// Summarise live network state from the current registry snapshot.
+    /// `worst_n` caps the returned worst-delays list. Acquires a read lock per
+    /// train (consistent with `departure_snapshot`); cancelled trains are counted
+    /// as cancelled and excluded from the on-time/delayed tallies.
+    pub async fn network_summary(&self, worst_n: usize) -> NetworkSummary {
+        let now = Utc::now();
+        let mut s = NetworkSummary::default();
+        let mut delays: Vec<LiveDelay> = Vec::new();
+        for arc in self.snapshot_all() {
+            let status = arc.read().await;
+            // Only count services running right now — not the far-future trains
+            // retained in the registry for the live map. Keeps the dashboard's
+            // "Live network" in step with the map's live count.
+            if !status.is_en_route(now) {
+                continue;
+            }
+            s.tracked += 1;
+            if status.is_cancelled.value == Some(true) {
+                s.cancelled += 1;
+                continue;
+            }
+            match status.best_delay_mins() {
+                Some(d) if d > 0 => {
+                    s.delayed += 1;
+                    delays.push(LiveDelay {
+                        rid: status.id.as_str().to_string(),
+                        origin_crs: status.origin_crs.clone(),
+                        destination_crs: status.destination_crs.clone(),
+                        delay_mins: d,
+                    });
+                }
+                _ => s.on_time += 1,
+            }
+        }
+        delays.sort_by_key(|d| std::cmp::Reverse(d.delay_mins));
+        delays.truncate(worst_n);
+        s.worst = delays;
+        s
+    }
+
+    /// Active, non-cancelled trains that carry a prediction, soonest-departing
+    /// first, capped at `limit`. Feeds the live board's "tracking" zone.
+    pub async fn tracking_board(&self, limit: usize) -> Vec<TrackingTrain> {
+        // Trains are now retained for their whole journey (for the live map), so
+        // restrict this "soonest-departing" board to services around departure —
+        // preserving its pre-retention behaviour for the /live page.
+        let upcoming_cutoff = Utc::now() - chrono::Duration::minutes(5);
+        let mut out: Vec<TrackingTrain> = Vec::new();
+        for arc in self.snapshot_all() {
+            let status = arc.read().await;
+            if status.is_cancelled.value == Some(true)
+                || status.scheduled_departure.value < upcoming_cutoff
+            {
+                continue;
+            }
+            let Some(predicted) = status.predicted_delay_mins.value else {
+                continue;
+            };
+            out.push(TrackingTrain {
+                rid: status.id.as_str().to_string(),
+                uid: status.uid.clone(),
+                origin_crs: status.origin_crs.clone(),
+                destination_crs: status.destination_crs.clone(),
+                scheduled_departure: status.scheduled_departure.value,
+                predicted_delay_mins: predicted,
+            });
+        }
+        out.sort_by_key(|t| t.scheduled_departure);
+        out.truncate(limit);
+        out
+    }
+
+    /// Currently-running services, each positioned for the live map. For every
+    /// non-cancelled train the whole `journey` becomes an ordered route of
+    /// `[lon,lat]` calling points (stops without known coordinates are dropped),
+    /// and the best origin-departure / destination-arrival times give the window
+    /// the renderer glides a node across in real time. Only services that are en
+    /// route *now* (or settled within the last ~10 min) are returned.
+    pub async fn live_services(&self) -> Vec<LiveService> {
+        use crate::cache::{location_coords, location_names, rail_graph};
+        use chrono::Timelike;
+
+        let now_min = Utc::now().time().num_seconds_from_midnight() as f64 / 60.0;
+        let mut out: Vec<LiveService> = Vec::new();
+
+        for arc in self.snapshot_all() {
+            let s = arc.read().await;
+            if s.is_cancelled.value == Some(true) || s.journey.len() < 2 {
+                continue;
+            }
+            let calls: Vec<_> = s.journey.values().collect();
+
+            let mut route: Vec<[f64; 2]> = Vec::with_capacity(calls.len());
+            for c in &calls {
+                if let Some((lat, lon)) = location_coords::coords(&c.tpl) {
+                    route.push([lon, lat]);
+                }
+            }
+            if route.len() < 2 {
+                continue;
+            }
+            // Follow the rail network between calling points, not straight lines.
+            let route = rail_graph::snap_route(&route);
+
+            let first = calls.first().unwrap();
+            let last = calls.last().unwrap();
+            let (Some(dep_dt), Some(arr_dt)) = (
+                first.act_dep.or(first.est_dep).or(first.sched_dep),
+                last.act_arr.or(last.est_arr).or(last.sched_arr),
+            ) else {
+                continue;
+            };
+
+            let dep = dep_dt.time().num_seconds_from_midnight() as f64 / 60.0;
+            let arr = arr_dt.time().num_seconds_from_midnight() as f64 / 60.0;
+            let dur = arr - dep;
+            if dur <= 0.0 || dur > 1440.0 {
+                continue;
+            }
+            // Keep services from `LEAD_MIN` before departure (poised at their
+            // origin) through to ~10 min after arrival. The renderer holds a
+            // pre-departure node at the origin, then glides it as it runs.
+            const LEAD_MIN: f64 = 20.0;
+            if now_min < dep - LEAD_MIN || now_min > arr + 10.0 {
+                continue;
+            }
+
+            let dly = s.best_delay_mins().unwrap_or(0);
+            let b = if dly <= 1 { 0 } else if dly < 6 { 1 } else { 2 };
+            out.push(LiveService {
+                lbl: s.uid.clone().unwrap_or_else(|| s.id.as_str().to_string()),
+                o: location_names::name_or_code(&first.tpl).to_string(),
+                d: location_names::name_or_code(&last.tpl).to_string(),
+                b,
+                dly,
+                route,
+                dep,
+                dur,
+            });
+        }
+        out
     }
 }
 
@@ -471,27 +680,6 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn update_tiploc_index_registers_calling_points() {
-        let reg = TrainRegistry::new();
-        let (id, status) = make_status("202404170000001");
-        reg.upsert(id.clone(), status);
-
-        let now = Utc::now();
-        let calling_points = vec![
-            ("LEEDS".to_string(), now + chrono::Duration::minutes(10)),
-            ("YORKAT".to_string(), now + chrono::Duration::minutes(30)),
-        ];
-        reg.update_tiploc_index(&id, &calling_points);
-
-        // Trains at LEEDS within 60 minutes should include our train.
-        let at_leeds = reg.trains_at_tiploc("LEEDS", now).await;
-        // But the status.calling_points is empty (not yet set via update),
-        // so trains_at_tiploc won't find it there — this tests the index registration.
-        // We verify the index itself via cascade_trains_for_tiploc instead.
-        drop(at_leeds); // just ensuring it doesn't panic
-    }
-
-    #[tokio::test]
     async fn cascade_trains_excludes_source_train() {
         let reg = TrainRegistry::new();
         let now = Utc::now();
@@ -519,6 +707,36 @@ mod tests {
         let cascade = reg.cascade_trains_for_tiploc(&id_a, "YORKAT", affected_time, 20).await;
         assert_eq!(cascade.len(), 1);
         assert_eq!(cascade[0], id_b);
+    }
+
+    #[tokio::test]
+    async fn network_summary_counts_and_ranks() {
+        let reg = TrainRegistry::new();
+        let now = Utc::now();
+
+        // On-time train: no delay, not cancelled.
+        let (id_on_time, status_on_time) = make_status("202404170000010");
+        reg.upsert(id_on_time, status_on_time);
+
+        // Delayed train: best_delay_mins() == 12 via reported_delay_mins.
+        let id_delayed = TrainId::rid("202404170000011").unwrap();
+        let mut status_delayed = TrainStatus::new(id_delayed.clone(), now, now);
+        status_delayed.reported_delay_mins = crate::types::train_status::Stamped::new(Some(12));
+        reg.upsert(id_delayed, status_delayed);
+
+        // Cancelled train.
+        let id_cancelled = TrainId::rid("202404170000012").unwrap();
+        let mut status_cancelled = TrainStatus::new(id_cancelled.clone(), now, now);
+        status_cancelled.is_cancelled = crate::types::train_status::Stamped::new(Some(true));
+        reg.upsert(id_cancelled, status_cancelled);
+
+        let s = reg.network_summary(5).await;
+        assert_eq!(s.tracked, 3);
+        assert_eq!(s.cancelled, 1);
+        assert_eq!(s.delayed, 1);
+        assert_eq!(s.on_time, 1);
+        assert_eq!(s.worst.len(), 1);
+        assert_eq!(s.worst[0].delay_mins, 12);
     }
 
     #[tokio::test]

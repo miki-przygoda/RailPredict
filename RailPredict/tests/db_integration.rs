@@ -446,6 +446,45 @@ async fn cheapest_fare_returns_cheapest_valid_fare(pool: sqlx::PgPool) {
 }
 
 // ---------------------------------------------------------------------------
+// Test 12: operator_toc_join_and_reference
+//
+// Verify that:
+//   1. services.toc can be set and JOINed to delay_history via services.uid.
+//   2. list_operators returns the inserted operator with the correct fields.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn operator_toc_join_and_reference(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO stations (crs, name) VALUES ('AAA','Alpha'),('BBB','Beta')")
+        .execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO services (uid, origin_crs, destination_crs, runs_on_days, toc) \
+         VALUES ('C12345','AAA','BBB',127,'GW')",
+    )
+    .execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO operators (toc, name, brand_color) VALUES ('GW','Great Western Railway','#0a493e')",
+    )
+    .execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO delay_history (uid, weekday, origin_crs, delay_mins) \
+         VALUES ('C12345',0,'AAA',5)",
+    )
+    .execute(&pool).await?;
+
+    // The JOIN labels the history row with its operator — no toc on delay_history.
+    let toc: String = sqlx::query_scalar(
+        "SELECT s.toc FROM delay_history d JOIN services s ON s.uid = d.uid LIMIT 1",
+    ).fetch_one(&pool).await?;
+    assert_eq!(toc, "GW");
+
+    let ops = railpredict::db::operators::list_operators(&pool).await?;
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].name, "Great Western Railway");
+    assert_eq!(ops[0].brand_color, "#0a493e");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Test 11: cheapest_fare excludes fares not yet valid (valid_from in future)
 // ---------------------------------------------------------------------------
 #[sqlx::test(migrations = "../migrations")]
@@ -486,4 +525,241 @@ async fn cheapest_fare_excludes_future_fares(pool: sqlx::PgPool) {
         result.is_none(),
         "cheapest_fare must not return fares with valid_from in the future"
     );
+}
+
+#[sqlx::test(migrations = "../migrations")]
+async fn overview_headline_metrics_basic(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO delay_history (uid, weekday, origin_crs, delay_mins, predicted_delay_mins) VALUES
+         ('C00001',0,'AAA',0,2),
+         ('C00002',0,'AAA',-1,NULL),
+         ('C00003',0,'AAA',10,6)",
+    )
+    .execute(&pool)
+    .await?;
+
+    let m = railpredict::db::overview::headline_metrics(&pool, 24).await?;
+    assert_eq!(m.sample_count, 3);
+    assert!((m.on_time_pct.unwrap() - 66.6667).abs() < 0.1, "on_time_pct = {:?}", m.on_time_pct);
+    assert!((m.avg_delay_mins.unwrap() - 3.0).abs() < 0.001);
+    assert!((m.mae_mins.unwrap() - 3.0).abs() < 0.001, "mae = {:?}", m.mae_mins);
+
+    let series = railpredict::db::overview::daily_series(&pool, 24).await?;
+    assert_eq!(series.len(), 1, "all rows fall on one day");
+
+    let cov = railpredict::db::overview::coverage_counts(&pool).await?;
+    assert_eq!(cov.real_records, 3);
+    assert_eq!(cov.predictions_scored, 0, "no finalised predictions seeded in this test");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Test 13: operator_league_ranks_by_on_time
+//
+// Two operators (GW: 100% on time, VT: 0% on time). Verify the league table
+// returns both rows ranked GW first, with correct on_time_pct values.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn operator_league_ranks_by_on_time(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    use chrono::{TimeZone, Utc};
+    sqlx::query("INSERT INTO operators (toc, name, brand_color) VALUES
+                 ('GW','Great Western','#0a493e'),
+                 ('VT','Avanti','#11354e')").execute(&pool).await?;
+    let sched = Utc.with_ymd_and_hms(2026, 6, 5, 9, 0, 0).unwrap();
+    // Source is now `journeys` (toc from Darwin schedule). GW: 2 journeys arriving on time
+    // (<=5); VT: 2 arriving very late. League ranks GW first.
+    sqlx::query(
+        "INSERT INTO journeys (rid, uid, ssd, weekday, departure_hour, toc, origin_tpl, destination_tpl, scheduled_departure, arrival_delay_mins) VALUES
+         ($1,'C00001','2026-06-05',4,9,'GW','PADTON','BRISTM',$3, 0),
+         ($2,'C00002','2026-06-05',4,9,'GW','PADTON','BRISTM',$3, 2),
+         ($4,'C00003','2026-06-05',4,9,'VT','EUSTON','MNCRPIC',$3, 25),
+         ($5,'C00004','2026-06-05',4,9,'VT','EUSTON','MNCRPIC',$3, 30)",
+    )
+    .bind("202606050000001").bind("202606050000002").bind(sched)
+    .bind("202606050000003").bind("202606050000004")
+    .execute(&pool).await?;
+
+    let rows = railpredict::db::operators::operator_league(&pool, 24, 1, 10).await?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].toc.trim(), "GW", "GW ranks first (on time)");
+    assert!((rows[0].on_time_pct.unwrap() - 100.0).abs() < 0.001);
+    assert_eq!(rows[1].toc.trim(), "VT");
+    assert!(rows[1].on_time_pct.unwrap() < 1.0);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2b: upsert_service_toc persists uid->toc with NULL origin/destination.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn upsert_service_toc_persists_without_crs(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    // The Darwin schedule gives uid + toc but only TIPLOCs, so origin/destination must be
+    // nullable (this also exercises migration 120018).
+    db::operators::upsert_service_toc(&pool, "C12345", "GW").await?;
+    db::operators::upsert_service_toc(&pool, "C12345", "GW").await?; // idempotent
+    let (toc, origin): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT toc, origin_crs FROM services WHERE uid = 'C12345'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(toc.as_deref(), Some("GW"));
+    assert!(origin.is_none(), "origin_crs is NULL for a schedule-only service row");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// direct_journeys: the timetable self-join relocated out of frontend/ into db/.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn direct_journeys_finds_through_service(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO stations (crs, name) VALUES ($1,$2),($3,$4) ON CONFLICT (crs) DO NOTHING")
+        .bind("LDS").bind("Leeds").bind("MAN").bind("Manchester Piccadilly")
+        .execute(&pool).await?;
+    sqlx::query("INSERT INTO services (uid, origin_crs, destination_crs) VALUES ($1,$2,$3) ON CONFLICT (uid) DO NOTHING")
+        .bind("C12345").bind("LDS").bind("MAN")
+        .execute(&pool).await?;
+
+    let date = NaiveDate::from_ymd_opt(2024, 4, 17).unwrap();
+    let dep = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+    let arr = NaiveTime::from_hms_opt(10, 0, 0).unwrap();
+    // LDS at call_order 0 precedes MAN at call_order 1 for the same service.
+    sqlx::query(
+        "INSERT INTO timetable_calls (uid, operating_date, location_crs, call_order, scheduled_departure, public_departure, platform)
+         VALUES ($1,$2,'LDS',0,$3,$3,'1'), ($1,$2,'MAN',1,$4,$4,'2')",
+    )
+    .bind("C12345").bind(date).bind(dep).bind(arr)
+    .execute(&pool).await?;
+
+    // Forward direction finds the through service.
+    let rows = db::static_data::direct_journeys(&pool, "LDS", "MAN", date, None).await?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0.trim(), "C12345");
+    assert_eq!(rows[0].1, dep);
+
+    // Reverse direction has no qualifying journey (no MAN call before an LDS call).
+    let none = db::static_data::direct_journeys(&pool, "MAN", "LDS", date, None).await?;
+    assert!(none.is_empty());
+
+    // The limit param caps the result set.
+    let limited = db::static_data::direct_journeys(&pool, "LDS", "MAN", date, Some(0)).await?;
+    assert!(limited.is_empty(), "LIMIT 0 should return nothing");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// cancellations: write + derived pattern fields + recent count.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn cancellations_record_and_count(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    use chrono::{TimeZone, Utc};
+    // 2024-04-17 is a Wednesday → weekday 2 (0=Mon); 08:30 → hour 8.
+    let sched = Utc.with_ymd_and_hms(2024, 4, 17, 8, 30, 0).unwrap();
+    db::cancellations::record_cancellation(&pool, "C12345", "LDS", sched).await?;
+    db::cancellations::record_cancellation(&pool, "C99999", "MAN", sched).await?;
+
+    assert_eq!(db::cancellations::count_recent(&pool, 24).await?, 2);
+
+    let (wd, hr): (i16, i16) =
+        sqlx::query_as("SELECT weekday, departure_hour FROM cancellations WHERE uid = 'C12345'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(wd, 2, "Wednesday");
+    assert_eq!(hr, 8);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// journeys: header + per-stop calls round-trip + idempotent re-insert.
+// ---------------------------------------------------------------------------
+#[sqlx::test(migrations = "../migrations")]
+async fn insert_journey_persists_header_and_calls(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    use chrono::{Duration, TimeZone, Utc};
+    use railpredict::db::journeys::{insert_journey, JourneyCallRecord, JourneyRecord};
+
+    let sched = Utc.with_ymd_and_hms(2026, 6, 5, 8, 0, 0).unwrap();
+    let rid = "202606050123456";
+    let rec = JourneyRecord {
+        rid: rid.to_string(),
+        uid: "C12345".into(),
+        ssd: NaiveDate::from_ymd_opt(2026, 6, 5).unwrap(),
+        weekday: 4,
+        departure_hour: 8,
+        toc: Some("GW".into()),
+        train_category: Some("OO".into()),
+        origin_tpl: "PADTON".into(),
+        destination_tpl: Some("BRISTM".into()),
+        scheduled_departure: sched,
+        actual_departure: Some(sched + Duration::minutes(2)),
+        origin_delay_mins: Some(2),
+        arrival_delay_mins: Some(6),
+        late_reason_code: Some(168),
+        cancel_reason_code: None,
+        reason_tiploc: Some("READING".into()),
+        reason_class: 1,
+        was_cancelled: false,
+        partial_cancel: false,
+        n_calls: 2,
+        max_delay_mins: Some(12),
+        min_delay_mins: Some(2),
+        recovered_mins: Some(6),
+        origin_platform: Some("9".into()),
+        platform_confirmed: Some(true),
+        wind_mph: Some(14.0),
+    };
+    let calls = vec![
+        JourneyCallRecord {
+            seq: 0,
+            tpl: "PADTON".into(),
+            sched_arr: None,
+            actual_arr: None,
+            arr_delay_mins: None,
+            sched_dep: Some(sched),
+            actual_dep: Some(sched + Duration::minutes(2)),
+            dep_delay_mins: Some(2),
+            platform: Some("9".into()),
+            plat_confirmed: Some(true),
+            is_cancelled: false,
+            dwell_secs: None,
+        },
+        JourneyCallRecord {
+            seq: 1,
+            tpl: "BRISTM".into(),
+            sched_arr: Some(sched + Duration::minutes(90)),
+            actual_arr: Some(sched + Duration::minutes(96)),
+            arr_delay_mins: Some(6),
+            sched_dep: None,
+            actual_dep: None,
+            dep_delay_mins: None,
+            platform: None,
+            plat_confirmed: None,
+            is_cancelled: false,
+            dwell_secs: None,
+        },
+    ];
+
+    insert_journey(&pool, &rec, &calls).await?;
+    // Idempotent: a re-finalisation must not duplicate or error.
+    insert_journey(&pool, &rec, &calls).await?;
+
+    let n_journeys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journeys WHERE rid = $1")
+        .bind(rid)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(n_journeys, 1, "header inserted once");
+
+    let n_calls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journey_calls WHERE rid = $1")
+        .bind(rid)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(n_calls, 2, "both calls inserted, no duplicates");
+
+    let (arr, toc): (Option<i32>, Option<String>) =
+        sqlx::query_as("SELECT arrival_delay_mins, toc FROM journeys WHERE rid = $1")
+            .bind(rid)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(arr, Some(6));
+    assert_eq!(toc.as_deref().map(str::trim), Some("GW"));
+
+    assert_eq!(db::journeys::count_recent(&pool, 24).await?, 1);
+    Ok(())
 }

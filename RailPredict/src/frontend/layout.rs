@@ -2,7 +2,31 @@
 
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
-pub fn base(title: &str, content: Markup) -> Markup {
+/// Which top-level page is active — drives nav highlighting.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum NavPage {
+    Dashboard,
+    Departures,
+    // Operators/Stations: reserved for the upcoming league & station pages
+    // (step 0 adds the variants so steps 2/4 only add the nav `link(...)` line).
+    Operators,
+    Live,
+    Map,
+    Predictions,
+    Stations,
+    Explore,
+    DevConsole,
+    None,
+}
+
+pub fn base(title: &str, active: NavPage, content: Markup) -> Markup {
+    let link = |href: &str, label: &str, page: NavPage| {
+        let is_active = page == active;
+        html! {
+            a href=(href) class=(if is_active { "nav-link active" } else { "nav-link" })
+                aria-current=[is_active.then_some("page")] { (label) }
+        }
+    };
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -10,6 +34,8 @@ pub fn base(title: &str, content: Markup) -> Markup {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " — RailPredict" }
+                link rel="preload" as="font" type="font/woff2" href="/static/fonts/IBMPlexMono-Regular.woff2" crossorigin;
+                link rel="preload" as="font" type="font/woff2" href="/static/fonts/IBMPlexSans-Regular.woff2" crossorigin;
                 link rel="stylesheet" href="/static/style.css";
                 script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous" {}
                 script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js" crossorigin="anonymous" {}
@@ -21,16 +47,23 @@ pub fn base(title: &str, content: Markup) -> Markup {
                         "RailPredict"
                     }
                     div .nav-links {
-                        a href="/search" { "Departures" }
-                        a href="/predictions" { "Predictions" }
-                        a href="/demo" { "Dev Console" }
+                        (link("/", "Overview", NavPage::Dashboard))
+                        (link("/operators", "Operators", NavPage::Operators))
+                        (link("/live", "Live", NavPage::Live))
+                        (link("/map", "Map", NavPage::Map))
+                        (link("/predictions", "Predictions", NavPage::Predictions))
+                        (link("/stations", "Stations", NavPage::Stations))
+                        (link("/explore", "Explore", NavPage::Explore))
+                        a href="/demo" target="_blank" rel="noopener" .nav-link.nav-demo { "Demo ↗" }
                     }
                 }
-                main {
-                    (content)
-                }
+                main { (content) }
                 div # "stale-banner" .hidden ."warning-banner" {
-                    "⚠ Live updates paused — showing last known state ("
+                    svg .warn-icon width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" aria-hidden="true" {
+                        path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" {}
+                    }
+                    " Live updates paused — showing last known state ("
                     span # "stale-timestamp" {}
                     ")"
                 }
@@ -54,5 +87,21 @@ pub fn base(title: &str, content: Markup) -> Markup {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NavPage, base};
+
+    #[test]
+    fn active_page_is_marked() {
+        let html = base("Test", NavPage::Predictions, maud::html! { p { "x" } }).into_string();
+        assert!(html.contains("aria-current=\"page\""), "marks active link: {html}");
+        assert!(html.contains("Overview"), "has Overview nav link");
+        assert!(html.contains("Explore"), "has Explore nav link");
+        assert!(!html.contains("Dev Console"), "Dev Console removed from nav");
+        assert!(!html.contains(">Departures<"), "Departures removed from nav");
+        assert!(!html.contains('\u{26A0}'), "emoji replaced with svg");
     }
 }

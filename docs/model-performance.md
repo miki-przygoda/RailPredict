@@ -166,4 +166,4 @@ Models are picked up from `models/` at server startup — no recompilation neede
 
 Retraining takes ~5–10 minutes on a laptop at 3M+ rows (LightGBM, 1500 estimators, 127 leaves). Accuracy improves naturally as the dataset grows and begins to cover multiple months, routes, and seasonal patterns.
 
-The dataset is published to HuggingFace at [`miki-przygoda/uk-rail-delays`](https://huggingface.co/datasets/miki-przygoda/uk-rail-delays) — regenerate and push with `scripts/export_dataset.py` after each retrain.
+The training corpus is held internally in the `delay_history` table (and the frozen `railpredict` corpus DB); it is not distributed.

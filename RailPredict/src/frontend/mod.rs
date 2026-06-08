@@ -4,16 +4,27 @@
 //! `htmx` (loaded from CDN) drives partial swaps and SSE subscriptions; no JS is
 //! hand-written except ~30 lines for the stale-banner SSE error handler in `layout.rs`.
 //!
-//! ## Route responsibilities
-//! - `search`  — `GET /`                      → full search page
-//! - `search`  — `GET /ui/stations/departures?crs=XXX` → departure board fragment (htmx swap)
-//! - `detail`  — `GET /trains/:rid/view`       → full detail page
-//! - `detail`  — `GET /ui/trains/:rid/live`    → SSE stream of HTML OOB swap fragments
+//! ## Pages (routes are wired in `api/mod.rs` — the source of truth)
+//! - `dashboard`   — `/`                 overview cockpit
+//! - `operators`   — `/operators`        operator league + `/operators/:toc` drill-down
+//! - `search`      — `/search`           departure board + journey search (+ `/ui/stations/*`, `/ui/journeys`)
+//! - `predictions` — `/predictions`      prediction-accuracy analytics
+//! - `stations`    — `/stations`         station search + `/stations/:crs` explorer (heatmap)
+//! - `live`        — `/live`             ambient predicted→actual board (+ `/ui/live/snapshot`)
+//! - `detail`      — `/trains/:rid/view` train detail (+ `/ui/trains/:rid/live` SSE)
+//! - `dev`         — `/dev`              internal diagnostics console (+ `/ui/dev/*`)
+//! - `charts` / `components` / `layout`  shared SVG, fragment, and chrome helpers
 
+pub mod charts;
 pub mod components;
 pub mod dashboard;
-pub mod demo;
+pub mod dev;
 pub mod detail;
+pub mod explore;
 pub mod layout;
+pub mod live;
+pub mod map;
+pub mod operators;
 pub mod predictions;
 pub mod search;
+pub mod stations;

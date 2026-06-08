@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RailPredict — Live delay map</title>
+<style>
+  :root{
+    --ink:#0f172a;--muted:#475569;--dim:#94a3b8;--line:#e5e7eb;--soft:#f7f8fa;
+    --accent:#2563eb;--accent-ink:#1e3a8a;--good:#16a34a;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--soft);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .cc{max-width:1320px;margin:0 auto;background:#fff;min-height:100vh;display:flex;flex-direction:column}
+  .cc-top{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--soft)}
+  .cc-top .brand{font:800 17px var(--sans)} .cc-top .brand b{color:var(--accent)}
+  .cc-top .tag{font:600 11px var(--mono);color:var(--dim)}
+  .cc-top .live{display:flex;align-items:center;gap:6px;font:700 10px var(--mono);color:var(--good);text-transform:uppercase;letter-spacing:.05em}
+  .cc-top .live .d{width:8px;height:8px;border-radius:50%;background:var(--good);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .cc-top .kpis{margin-left:auto;display:flex;gap:22px}
+  .cc-top .kpi .v{font:800 16px var(--sans);color:var(--accent-ink)}
+  .cc-top .kpi .l{display:block;font:600 8px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .cc-body{display:grid;grid-template-columns:230px 1fr 220px;flex:1;min-height:620px}
+  .rail{padding:14px;overflow:auto}
+  .rail.l{border-right:1px solid var(--line)} .rail.r{border-left:1px solid var(--line);background:#fbfcfd}
+  .rail-h{font:800 10px var(--sans);text-transform:uppercase;letter-spacing:.07em;color:#64748b;display:flex;align-items:center;gap:6px;margin:4px 0 9px}
+  .rail-h::before{content:"";width:7px;height:7px;border-radius:50%}
+  .rail-h.t::before{background:var(--accent)} .rail-h.s::before{background:var(--good)}
+  .mini{display:grid;grid-template-columns:1fr auto;gap:1px 8px;border:1px solid var(--line);border-left:3px solid var(--c,#94a3b8);border-radius:6px;padding:6px 9px;margin-bottom:6px}
+  .mini .hc{font:700 11px var(--mono)} .mini .rt{grid-column:1;font:600 9.5px var(--mono);color:#64748b}
+  .mini .pa{grid-column:2;grid-row:1/3;align-self:center;font:700 11px var(--mono);text-align:right}
+  .mini .pa small{display:block;font:700 6.5px var(--mono);color:var(--dim);text-transform:uppercase}
+  .empty{color:var(--dim);font:600 11px var(--mono);padding:8px 0}
+  .cc-map{position:relative;background:#1b1d22}
+  #map-svg{position:absolute;inset:0;width:100%;height:100%;cursor:grab}
+  #map-svg:active{cursor:grabbing}
+  .map-fs{position:absolute;top:12px;right:12px;z-index:6;width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(8,20,36,.72);border:1px solid rgba(127,178,232,.32);border-radius:7px;color:#9ec3ef;font-size:15px;cursor:pointer;backdrop-filter:blur(6px)}
+  .map-fs:hover{background:rgba(20,40,68,.9);color:#fff}
+  .map-hint{position:absolute;left:12px;bottom:10px;z-index:6;font:600 9px var(--mono);color:#7f93ad;letter-spacing:.04em;text-transform:uppercase;pointer-events:none;text-shadow:0 1px 3px #000}
+  .map-clock-wrap{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;display:flex;flex-direction:column;align-items:center;gap:1px;background:rgba(8,20,36,.74);border:1px solid rgba(127,178,232,.32);border-radius:9px;padding:5px 16px;backdrop-filter:blur(6px)}
+  .map-clock-wrap .lbl{font:700 7.5px var(--mono);color:#7f93ad;letter-spacing:.1em;text-transform:uppercase}
+  #map-clock{font:800 18px var(--mono);color:#cfe6ff;letter-spacing:.03em;line-height:1.1}
+  .kcard{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 11px;margin-bottom:8px}
+  .kcard .n{font:800 20px var(--sans);color:var(--accent-ink)} .kcard .l{font:600 9px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
+  .info{font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px} .info b{color:var(--ink)}
+  .cc-foot{display:flex;align-items:center;gap:16px;padding:9px 20px;border-top:1px solid var(--line);background:var(--soft);font:600 9.5px var(--mono);color:var(--dim);flex-wrap:wrap}
+  .lg{display:flex;align-items:center;gap:5px} .lg b{width:9px;height:9px;border-radius:50%}
+</style>
+</head>
+<body>
+<div class="cc">
+  <div class="cc-top">
+    <span class="brand">Rail<b>Predict</b></span>
+    <span class="tag">live delay map · Great Britain</span>
+    <span class="live"><span class="d"></span>live</span>
+    <div class="kpis">
+      <div class="kpi"><span class="v" data-fill="hero_number">—</span><span class="l">departures</span></div>
+      <div class="kpi"><span class="v" data-fill="on_time_pct" data-suffix="%">—</span><span class="l">on time</span></div>
+    </div>
+  </div>
+  <div class="cc-body">
+    <aside class="rail l">
+      <div class="rail-h t">Tracking</div>
+      <div id="rail-track"><p class="empty">…</p></div>
+      <div class="rail-h s">Just settled</div>
+      <div id="rail-settled"><p class="empty">…</p></div>
+    </aside>
+    <main class="cc-map"><svg id="map-svg"></svg>
+      <div class="map-clock-wrap"><span class="lbl">Replaying yesterday</span><b id="map-clock">--:--</b></div>
+      <button id="map-fs" class="map-fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+      <span class="map-hint">scroll to zoom · drag to pan</span>
+    </main>
+    <aside class="rail r">
+      <div class="rail-h">The numbers</div>
+      <div class="kcard"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean prediction error</div></div>
+      <div class="kcard"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
+      <div class="kcard"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
+      <div class="kcard"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
+      <div class="kcard"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
+      <div class="info"><b>What you're seeing:</b> a replay of yesterday's full day on the GB network (clock = time of day). Grey shows the network, brighter where busier; each bright node is a real service running its route, coloured by delay (green/amber/red). Watch the morning peak build and the network quieten overnight. Scroll to zoom; ⛶ fullscreen.</div>
+    </aside>
+  </div>
+  <div class="cc-foot">
+    <span class="lg"><b style="background:#34d399"></b>on time</span>
+    <span class="lg"><b style="background:#f2c14e"></b>slight</span>
+    <span class="lg"><b style="background:#f04545"></b>late</span>
+    <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · © OpenStreetMap contributors © CARTO · fully offline</span>
+  </div>
+</div>
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP=__MAP_DATA__;</script>
+<script>/* __MAP_JS__ */</script>
+<script>RailPredictMap.init();</script>
+</body>
+</html>

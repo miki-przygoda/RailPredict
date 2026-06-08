@@ -4,9 +4,11 @@
 //! without a global lock. The `Arc<RwLock<TrainStatus>>` per entry means readers can
 //! snapshot a train's status without blocking writers on other trains.
 
+pub mod location_names;
+pub mod location_coords;
+pub mod rail_graph;
 pub mod station_index;
 pub mod train_registry;
 
-#[allow(unused_imports)]
-pub use train_registry::TrainRegistry;
+pub use train_registry::{LiveService, TrainRegistry};
 pub use station_index::StationIndex;

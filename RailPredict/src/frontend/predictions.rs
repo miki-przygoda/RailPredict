@@ -1,459 +1,278 @@
-//! ML prediction analytics page — `/predictions`
+//! Predicted-vs-actual explorer — `/predictions`.
 //!
-//! Shows a 24-hour summary of model accuracy, a sortable station leaderboard,
-//! an hour-of-day accuracy chart, and a table of the biggest recent errors.
-//! All data is queried at page load (SSR); JS handles client-side sorting only.
+//! Aggregate model-accuracy analytics over a rolling window (re-scopable by the
+//! global time-range picker): a calibration plot, daily MAE trend, the signed
+//! error distribution (bias), MAE by model confidence, and MAE by prediction
+//! lead time. All data is read at page load from `db::analytics` + `db::predictions`.
 
-use axum::extract::State;
-use maud::{Markup, PreEscaped, html};
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
+use maud::{Markup, html};
+use serde::Deserialize;
 
 use crate::api::AppState;
+use crate::db::{analytics, predictions as preds};
+use crate::frontend::charts::{self, KpiTone};
+use crate::frontend::components::{compact_count, normalize_range, range_label, range_to_hours, time_range_picker};
 
-use super::layout::base;
+use super::layout::{base, NavPage};
 
-// ---------------------------------------------------------------------------
-// Query result types
-// ---------------------------------------------------------------------------
-
-struct Summary {
-    total:        i64,
-    mae:          f64,
-    median_ae:    f64,
-    pct_5min:     f64,
-    bias:         f64,
+#[derive(Debug, Deserialize)]
+pub struct RangeParams {
+    #[serde(default)]
+    pub range: Option<String>,
 }
 
-struct StationRow {
-    origin_crs: String,
-    n:          i64,
-    mae:        f64,
-    bias:       f64,
-    pct_5min:   f64,
-}
+pub async fn predictions_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<RangeParams>,
+) -> Markup {
+    let range = normalize_range(params.range.as_deref());
+    let hours = range_to_hours(range);
 
-struct HourRow {
-    hour: i64,
-    n:    i64,
-    mae:  f64,
-}
-
-struct ErrorRow {
-    uid:        String,
-    origin_crs: String,
-    actual:     i32,
-    predicted:  i32,
-    error:      i32,
-}
-
-// ---------------------------------------------------------------------------
-// Page handler
-// ---------------------------------------------------------------------------
-
-pub async fn predictions_page(State(state): State<AppState>) -> Markup {
-    let (summary, stations, hours, errors) = tokio::join!(
-        query_summary(&state),
-        query_stations(&state),
-        query_hours(&state),
-        query_errors(&state),
+    let (summary, calib, acc, errs, conf, lead) = tokio::join!(
+        preds::accuracy_summary(&state.db, hours),
+        analytics::calibration_curve(&state.db, hours),
+        analytics::accuracy_over_time(&state.db, hours),
+        analytics::error_distribution(&state.db, hours),
+        analytics::confidence_error(&state.db, hours),
+        preds::leadtime_accuracy(&state.db, hours),
     );
 
-    base("Predictions", render(summary, stations, hours, errors))
+    let body = render(
+        range,
+        summary.ok(),
+        calib.unwrap_or_default(),
+        acc.unwrap_or_default(),
+        errs.unwrap_or_default(),
+        conf.unwrap_or_default(),
+        lead.unwrap_or_default(),
+    );
+    if headers.contains_key("hx-request") {
+        body
+    } else {
+        base("Predictions", NavPage::Predictions, body)
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Queries
+// Formatting + tone helpers
 // ---------------------------------------------------------------------------
 
-async fn query_summary(state: &AppState) -> Option<Summary> {
-    sqlx::query_as::<_, (i64, f64, f64, f64, f64)>(
-        "SELECT COUNT(*),
-                AVG(ABS(predicted_delay_mins - delay_mins))::float8,
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ABS(predicted_delay_mins - delay_mins))::float8,
-                (AVG(CASE WHEN ABS(predicted_delay_mins - delay_mins) <= 5 THEN 1.0 ELSE 0.0 END) * 100)::float8,
-                AVG((predicted_delay_mins - delay_mins)::float8)
-         FROM delay_history
-         WHERE recorded_at > NOW() - INTERVAL '24 hours'
-           AND predicted_delay_mins IS NOT NULL
-           AND delay_mins BETWEEN -120 AND 600
-           AND ABS(predicted_delay_mins - delay_mins) < 300",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .map(|(total, mae, median, pct, bias)| Summary { total, mae, median_ae: median, pct_5min: pct, bias })
+fn fmt1(v: Option<f64>) -> String {
+    match v {
+        Some(x) => format!("{x:.1}"),
+        None => "—".to_string(),
+    }
 }
 
-async fn query_stations(state: &AppState) -> Vec<StationRow> {
-    sqlx::query_as::<_, (String, i64, f64, f64, f64)>(
-        "SELECT origin_crs,
-                COUNT(*),
-                AVG(ABS(predicted_delay_mins - delay_mins))::float8,
-                AVG((predicted_delay_mins - delay_mins)::float8),
-                (AVG(CASE WHEN ABS(predicted_delay_mins - delay_mins) <= 5 THEN 1.0 ELSE 0.0 END) * 100)::float8
-         FROM delay_history
-         WHERE recorded_at > NOW() - INTERVAL '24 hours'
-           AND predicted_delay_mins IS NOT NULL
-           AND delay_mins BETWEEN -120 AND 600
-           AND ABS(predicted_delay_mins - delay_mins) < 300
-         GROUP BY origin_crs
-         HAVING COUNT(*) >= 20
-         ORDER BY AVG(ABS(predicted_delay_mins - delay_mins)) ASC
-         LIMIT 100",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(origin_crs, n, mae, bias, pct_5min)| StationRow { origin_crs, n, mae, bias, pct_5min })
-    .collect()
+/// Bar tone by mean-absolute-error magnitude.
+fn mae_tone(mae: f64) -> &'static str {
+    if mae < 5.0 { "bar-ok" } else if mae < 10.0 { "bar-info" } else if mae < 15.0 { "bar-warn" } else { "bar-bad" }
 }
 
-async fn query_hours(state: &AppState) -> Vec<HourRow> {
-    sqlx::query_as::<_, (f64, i64, f64, f64)>(
-        "SELECT EXTRACT(HOUR FROM recorded_at AT TIME ZONE 'Europe/London')::float8,
-                COUNT(*),
-                AVG(ABS(predicted_delay_mins - delay_mins))::float8,
-                AVG((predicted_delay_mins - delay_mins)::float8)
-         FROM delay_history
-         WHERE recorded_at > NOW() - INTERVAL '7 days'
-           AND predicted_delay_mins IS NOT NULL
-           AND delay_mins BETWEEN -120 AND 600
-           AND ABS(predicted_delay_mins - delay_mins) < 300
-         GROUP BY 1
-         ORDER BY 1",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(h, n, mae, _bias)| HourRow { hour: h as i64, n, mae })
-    .collect()
+/// One vertical bar: a label, a value caption, a 0–1 height fraction, and a tone class.
+struct VBar {
+    label: &'static str,
+    value: String,
+    frac: f64,
+    cls: &'static str,
 }
 
-async fn query_errors(state: &AppState) -> Vec<ErrorRow> {
-    sqlx::query_as::<_, (String, String, i32, i32, i32)>(
-        "SELECT uid, origin_crs, delay_mins, predicted_delay_mins,
-                (predicted_delay_mins - delay_mins)
-         FROM delay_history
-         WHERE recorded_at > NOW() - INTERVAL '6 hours'
-           AND predicted_delay_mins IS NOT NULL
-           AND delay_mins BETWEEN -120 AND 600
-           AND ABS(predicted_delay_mins - delay_mins) BETWEEN 30 AND 299
-         ORDER BY ABS(predicted_delay_mins - delay_mins) DESC
-         LIMIT 40",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|(uid, origin_crs, actual, predicted, error)| ErrorRow { uid, origin_crs, actual, predicted, error })
-    .collect()
+fn vbar_chart(bars: &[VBar]) -> Markup {
+    html! {
+        @if bars.is_empty() {
+            p .panel-empty { "No data in this window yet." }
+        } @else {
+            div .vbars {
+                @for b in bars {
+                    div .col {
+                        span .v { (b.value) }
+                        div class=(format!("bar {}", b.cls))
+                            style=(format!("height:{}%", (b.frac.clamp(0.0, 1.0) * 100.0).round() as i64)) {}
+                        div .lbl { (b.label) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Label + tone for a signed-error band (negative = over-predicted, positive = under-predicted).
+fn error_band(lower: i32) -> (&'static str, &'static str) {
+    match lower {
+        -999 => ("≤−15", "bar-bad"),
+        -15 => ("−15…−5", "bar-warn"),
+        -5 => ("−5…−2", "bar-info"),
+        -2 => ("−2…2", "bar-ok"),
+        2 => ("2…5", "bar-info"),
+        5 => ("5…15", "bar-warn"),
+        _ => ("15+", "bar-bad"),
+    }
+}
+
+/// Label for a confidence band keyed on its lower edge (0.0/0.2/0.4/0.6/0.8).
+fn conf_band(lower: f64) -> &'static str {
+    match (lower * 10.0).round() as i64 {
+        0 => "0–.2",
+        2 => ".2–.4",
+        4 => ".4–.6",
+        6 => ".6–.8",
+        _ => ".8–1",
+    }
+}
+
+/// Label for a lead-time band keyed on its lower edge in minutes.
+fn lead_band(lower: i32) -> &'static str {
+    match lower {
+        0 => "<15m",
+        15 => "15–30",
+        30 => "30–60",
+        60 => "60–120",
+        _ => "120+",
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn render(
-    summary: Option<Summary>,
-    stations: Vec<StationRow>,
-    hours: Vec<HourRow>,
-    errors: Vec<ErrorRow>,
+    range: &str,
+    summary: Option<preds::AccuracySummary>,
+    calib: Vec<analytics::CalibrationPoint>,
+    acc: Vec<analytics::AccuracyPoint>,
+    errs: Vec<analytics::ErrorBucket>,
+    conf: Vec<analytics::ConfidenceBucket>,
+    lead: Vec<preds::LeadTimeBucket>,
 ) -> Markup {
+    let scored = summary.as_ref().map(|s| s.finalised_count).unwrap_or(0);
+    let within5 = summary
+        .as_ref()
+        .filter(|s| s.finalised_count > 0)
+        .map(|s| s.within_5_count as f64 / s.finalised_count as f64 * 100.0);
+    let mae = summary.as_ref().and_then(|s| s.mean_abs_error_mins);
+    let bias = summary.as_ref().and_then(|s| match (s.mean_predicted_mins, s.mean_actual_mins) {
+        (Some(p), Some(a)) => Some(p - a),
+        _ => None,
+    });
+
+    // Calibration points (predicted, actual), dropping bands with NULL means.
+    let calib_pts: Vec<(f64, f64)> = calib
+        .iter()
+        .filter_map(|c| Some((c.mean_predicted?, c.mean_actual?)))
+        .collect();
+
+    // Daily MAE for the trend.
+    let mae_series: Vec<f64> = acc.iter().filter_map(|p| p.mae_mins).collect();
+
+    // Signed-error bars (share of finalised rows per band).
+    let err_total: i64 = errs.iter().map(|b| b.sample_count).sum::<i64>().max(1);
+    let err_bars: Vec<VBar> = errs
+        .iter()
+        .map(|b| {
+            let (label, cls) = error_band(b.lower_bound_mins);
+            let pct = b.sample_count as f64 / err_total as f64 * 100.0;
+            VBar { label, value: format!("{}%", pct.round() as i64), frac: pct / 100.0, cls }
+        })
+        .collect();
+
+    // Confidence-vs-error bars (height ∝ MAE; ideally descending).
+    let conf_max = conf.iter().filter_map(|b| b.mae_mins).fold(1.0_f64, f64::max);
+    let conf_bars: Vec<VBar> = conf
+        .iter()
+        .map(|b| {
+            let m = b.mae_mins.unwrap_or(0.0);
+            VBar { label: conf_band(b.confidence_lower), value: fmt1(b.mae_mins), frac: m / conf_max, cls: mae_tone(m) }
+        })
+        .collect();
+
+    // Lead-time bars (height ∝ MAE; ideally ascending toward longer lead).
+    let lead_max = lead.iter().filter_map(|b| b.mae_mins).fold(1.0_f64, f64::max);
+    let lead_bars: Vec<VBar> = lead
+        .iter()
+        .map(|b| {
+            let m = b.mae_mins.unwrap_or(0.0);
+            VBar { label: lead_band(b.lower_bound_mins), value: fmt1(b.mae_mins), frac: m / lead_max, cls: mae_tone(m) }
+        })
+        .collect();
+
     html! {
-        div .pred-page {
-            div .pred-page-header {
-                h1 { "ML Predictions" }
-                p .pred-page-subtitle {
-                    "Accuracy analytics for the LightGBM delay models — last 24 hours of live data."
+        div .predictions {
+            div .dash-header {
+                div {
+                    h1 .dash-title { "Predictions" }
+                    p .dash-sub { "Predicted vs actual · model accuracy · " (range_label(range)) }
                 }
+                div .dash-header-right { (time_range_picker("/predictions", range)) }
             }
 
-            // Summary cards
-            @if let Some(s) = &summary {
-                div .pred-summary-row {
-                    div .pred-stat-card {
-                        span .pred-stat-label { "Predictions (24 h)" }
-                        span .pred-stat-value { (format_big(s.total)) }
-                    }
-                    div .pred-stat-card {
-                        span .pred-stat-label { "Mean abs. error" }
-                        span .pred-stat-value { (format!("{:.1}", s.mae)) " min" }
-                    }
-                    div .pred-stat-card {
-                        span .pred-stat-label { "Median abs. error" }
-                        span .pred-stat-value { (format!("{:.0}", s.median_ae)) " min" }
-                    }
-                    div .pred-stat-card {
-                        span .pred-stat-label { "Within ±5 min" }
-                        span .pred-stat-value { (format!("{:.0}", s.pct_5min)) "%" }
-                    }
-                    div .pred-stat-card {
-                        span .pred-stat-label { "Model bias" }
-                        span .pred-stat-value
-                            .pred-bias-over[s.bias > 1.0]
-                            .pred-bias-under[s.bias < -1.0]
-                        {
-                            @if s.bias >= 0.0 {
-                                "+" (format!("{:.1}", s.bias)) " min"
-                            } @else {
-                                (format!("{:.1}", s.bias)) " min"
+            div .kpi-strip {
+                (charts::kpi_card("Scored", &compact_count(scored, 0), None,
+                    Some("finalised this window"), None, None, KpiTone::Neutral))
+                (charts::kpi_card("Within ±5 min", &fmt1(within5), Some("%"),
+                    Some("share of predictions"), None, None, KpiTone::Ok))
+                (charts::kpi_card("MAE", &fmt1(mae), Some("min"),
+                    Some("mean absolute error"), None, None, KpiTone::Info))
+                (charts::kpi_card("Bias", &bias.map(|b| format!("{b:+.1}")).unwrap_or_else(|| "—".into()), Some("min"),
+                    Some("mean predicted − actual"), None, None, KpiTone::Warn))
+            }
+
+            div .cockpit-grid {
+                section .panel {
+                    div .panel-head { h2 { "Calibration" } span .panel-meta { "predicted vs actual" } }
+                    div .panel-body {
+                        @if calib_pts.len() >= 2 {
+                            div .calib-wrap { (charts::calibration_plot(&calib_pts)) }
+                            div .legend {
+                                span .ideal { "perfect calibration" }
+                                span .actual { "model" }
                             }
+                            p .chart-note { "Points below the diagonal = under-predicted; above = over-predicted (minutes)." }
+                        } @else {
+                            p .panel-empty { "Not enough scored predictions for a calibration curve yet." }
                         }
                     }
                 }
-            } @else {
-                p .pred-no-data { "No prediction data for the last 24 hours." }
-            }
 
-            // Hour-of-day chart
-            @if !hours.is_empty() {
-                section .pred-section {
-                    h2 .pred-section-title { "Accuracy by hour of day" }
-                    p .pred-section-sub { "7-day window — mean absolute error per hour (local time). Taller = worse." }
-                    (hour_chart(&hours))
-                }
-            }
-
-            // Station leaderboard
-            @if !stations.is_empty() {
-                section .pred-section {
-                    h2 .pred-section-title {
-                        "Station accuracy"
-                        span .pred-section-meta { " — " (stations.len()) " stations, ≥20 predictions in 24 h" }
-                    }
-                    (station_table(&stations))
-                }
-            }
-
-            // Biggest errors
-            @if !errors.is_empty() {
-                section .pred-section {
-                    h2 .pred-section-title { "Biggest recent errors" }
-                    p .pred-section-sub { "Last 6 hours — predictions off by 30–299 min, sorted by absolute error." }
-                    (errors_table(&errors))
-                }
-            }
-        }
-
-        script { (PreEscaped(SORT_JS)) }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Hour-of-day SVG bar chart
-// ---------------------------------------------------------------------------
-
-fn hour_chart(hours: &[HourRow]) -> Markup {
-    let max_mae = hours.iter().map(|h| h.mae).fold(0.0_f64, f64::max).max(1.0);
-    let chart_h  = 100.0_f64;
-    let bar_w    = 14.0_f64;
-    let gap      = 3.0_f64;
-    let total_w  = 24.0 * (bar_w + gap);
-    let label_h  = 18.0_f64;
-    let svg_h    = chart_h + label_h;
-
-    // Build a lookup by hour
-    let mut by_hour: [Option<&HourRow>; 24] = [None; 24];
-    for h in hours {
-        if h.hour >= 0 && h.hour < 24 {
-            by_hour[h.hour as usize] = Some(h);
-        }
-    }
-
-    html! {
-        div .pred-hour-chart {
-            svg
-                viewBox={ "0 0 " (total_w) " " (svg_h) }
-                width="100%"
-                style={ "max-width:" (total_w * 2.0) "px" }
-                aria-label="Hour-of-day MAE bar chart"
-            {
-                @for (hr, slot) in by_hour.iter().copied().enumerate() {
-                    @let x = hr as f64 * (bar_w + gap);
-                    @let (bar_height, colour, title_text) = if let Some(row) = slot {
-                        let h = (row.mae / max_mae * chart_h).max(2.0);
-                        let c = if row.mae < 5.0 { "#00c896" }
-                                else if row.mae < 15.0 { "#f5a624" }
-                                else { "#f04f4f" };
-                        (h, c, format!("{:02}:00 — MAE {:.1} min ({} trains)", hr, row.mae, row.n))
-                    } else {
-                        (2.0, "#2a2b38", format!("{:02}:00 — no data", hr))
-                    };
-                    @let y = chart_h - bar_height;
-
-                    rect
-                        x=(format!("{:.1}", x))
-                        y=(format!("{:.1}", y))
-                        width=(format!("{:.1}", bar_w))
-                        height=(format!("{:.1}", bar_height))
-                        fill=(colour)
-                        rx="2"
-                    {
-                        title { (title_text) }
-                    }
-
-                    // Hour label — every 3 hours
-                    @if hr % 3 == 0 {
-                        text
-                            x=(format!("{:.1}", x + bar_w / 2.0))
-                            y=(format!("{:.1}", svg_h - 2.0))
-                            text-anchor="middle"
-                            font-size="8"
-                            fill="#6b6c7e"
-                        {
-                            (format!("{:02}", hr))
+                section .panel {
+                    div .panel-head { h2 { "Accuracy over time" } span .panel-meta { "MAE per day" } }
+                    div .panel-body {
+                        @if mae_series.len() >= 2 {
+                            div .acc-chart.chart-info { (charts::area_spark(&mae_series, "pred-acc")) }
+                            p .chart-note { "Daily mean absolute error · " (range_label(range)) "." }
+                        } @else {
+                            p .panel-empty { "Not enough days in range for a trend." }
                         }
                     }
                 }
             }
-        }
-    }
-}
 
-// ---------------------------------------------------------------------------
-// Station table (sortable)
-// ---------------------------------------------------------------------------
-
-fn station_table(stations: &[StationRow]) -> Markup {
-    html! {
-        div .pred-table-wrap {
-            div .pred-sort-bar {
-                span .pred-sort-label { "Sort by:" }
-                button .pred-sort-btn.active data-col="mae"     onclick="sortTable('mae',this)"     { "MAE ↑" }
-                button .pred-sort-btn          data-col="volume" onclick="sortTable('volume',this)"  { "Volume" }
-                button .pred-sort-btn          data-col="pct"    onclick="sortTable('pct',this)"     { "Within 5 min %" }
-                button .pred-sort-btn          data-col="bias"   onclick="sortTable('bias',this)"    { "Bias" }
-            }
-            table .pred-table #station-table {
-                thead {
-                    tr {
-                        th .col-crs  { "Station" }
-                        th .col-n    { "Trains (24 h)" }
-                        th .col-mae  { "MAE" }
-                        th .col-bias { "Bias" }
-                        th .col-pct  { "Within 5 min" }
-                        th .col-bar  { "" }
+            div .pred-grid-3 {
+                section .panel {
+                    div .panel-head { h2 { "Error distribution" } }
+                    div .panel-body {
+                        (vbar_chart(&err_bars))
+                        p .chart-note { "Signed error (actual − predicted). Negative = over-predicted; positive = under-predicted. Centre band = accurate." }
                     }
                 }
-                tbody {
-                    @for row in stations {
-                        @let pct = row.pct_5min;
-                        @let bar_width = (pct as u32).min(100);
-                        tr
-                            data-mae=(format!("{:.2}", row.mae))
-                            data-volume=(row.n)
-                            data-pct=(format!("{:.1}", row.pct_5min))
-                            data-bias=(format!("{:.2}", row.bias.abs()))
-                        {
-                            td .col-crs { code { (row.origin_crs) } }
-                            td .col-n   { (row.n) }
-                            td .col-mae {
-                                span .pred-mae-value
-                                    .pred-mae-good[row.mae < 5.0]
-                                    .pred-mae-ok[row.mae >= 5.0 && row.mae < 15.0]
-                                    .pred-mae-bad[row.mae >= 15.0]
-                                {
-                                    (format!("{:.1}", row.mae)) " min"
-                                }
-                            }
-                            td .col-bias {
-                                span
-                                    .pred-bias-over[row.bias > 1.0]
-                                    .pred-bias-under[row.bias < -1.0]
-                                {
-                                    @if row.bias >= 0.0 { "+" }
-                                    (format!("{:.1}", row.bias)) " min"
-                                }
-                            }
-                            td .col-pct { (format!("{:.0}", pct)) "%" }
-                            td .col-bar {
-                                div .pred-bar-track {
-                                    div .pred-bar-fill
-                                        style={ "width:" (bar_width) "%" }
-                                    {}
-                                }
-                            }
-                        }
+                section .panel {
+                    div .panel-head { h2 { "Confidence vs error" } }
+                    div .panel-body {
+                        (vbar_chart(&conf_bars))
+                        p .chart-note { "MAE by model confidence — higher confidence should mean lower error." }
+                    }
+                }
+                section .panel {
+                    div .panel-head { h2 { "Lead-time accuracy" } }
+                    div .panel-body {
+                        (vbar_chart(&lead_bars))
+                        p .chart-note { "MAE by how far ahead the prediction was made." }
                     }
                 }
             }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Errors table
-// ---------------------------------------------------------------------------
-
-fn errors_table(errors: &[ErrorRow]) -> Markup {
-    html! {
-        table .pred-table .pred-errors-table {
-            thead {
-                tr {
-                    th { "UID" }
-                    th { "Station" }
-                    th { "Actual" }
-                    th { "Predicted" }
-                    th { "Error" }
-                }
-            }
-            tbody {
-                @for row in errors {
-                    tr {
-                        td { code { (row.uid) } }
-                        td { code { (row.origin_crs) } }
-                        td { (row.actual) " min" }
-                        td { (row.predicted) " min" }
-                        td {
-                            span
-                                .pred-error-over[row.error > 0]
-                                .pred-error-under[row.error < 0]
-                            {
-                                @if row.error > 0 { "+" }
-                                (row.error) " min"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Client-side sort JS (table rows only — no server round-trip)
-// ---------------------------------------------------------------------------
-
-const SORT_JS: &str = r#"
-(function () {
-    window.sortTable = function (col, btn) {
-        document.querySelectorAll('.pred-sort-btn')
-            .forEach(function (el) { el.classList.remove('active'); });
-        btn.classList.add('active');
-
-        var tbody = document.querySelector('#station-table tbody');
-        if (!tbody) return;
-        var rows = Array.from(tbody.querySelectorAll('tr'));
-
-        var asc = col === 'mae' || col === 'bias';  // lower is better for these
-        rows.sort(function (a, b) {
-            var va = parseFloat(a.dataset[col] || '0');
-            var vb = parseFloat(b.dataset[col] || '0');
-            return asc ? va - vb : vb - va;
-        });
-        rows.forEach(function (r) { tbody.appendChild(r); });
-    };
-})();
-"#;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn format_big(n: i64) -> String {
-    if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
-    else if n >= 1_000 { format!("{:.0}k", n as f64 / 1_000.0) }
-    else { n.to_string() }
 }

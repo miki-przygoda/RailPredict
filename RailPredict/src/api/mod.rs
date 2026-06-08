@@ -9,6 +9,7 @@
 //! | GET    | /trains/{rid}                      | B    | `TrainSummary`              | Registry; 404 if unknown          |
 //! | GET    | /trains/{rid}/live                 | C    | SSE `LiveUpdateEvent` JSON  | Heartbeat 15s; closes on Terminal |
 //! | GET    | /                                  | —    | HTML dashboard              | system status + navigation; no rate limit |
+//! | GET    | /dev                               | —    | HTML diagnostics console    | off-nav; internal use             |
 //! | GET    | /search                            | —    | HTML search page            | maud server-rendered              |
 //! | GET    | /trains/{rid}/view                 | B/C  | HTML detail page            | maud + htmx SSE                   |
 //! | GET    | /ui/stations/departures?crs=XXX    | A    | HTML fragment               | htmx swap target                  |
@@ -20,7 +21,8 @@
 //! ## Middleware
 //! - `CorsLayer`: permissive in debug mode; restricted to `CORS_ALLOWED_ORIGINS` in production.
 //! - `TraceLayer`: logs method, path, status, latency for every request.
-//! - `GovernorLayer`: per-IP rate limiting (default 60 req/s); excludes /, /health, /metrics.
+//! - `GovernorLayer`: per-IP rate limiting (default 60 req/s). Excludes only the
+//!   infra sub-router (no-limit set): /, /dev, /health, /metrics, and the /ui/dev/* routes.
 //!
 //! ## Error shape
 //! All JSON 4xx/5xx responses use `{ "error": "...", "code": "..." }` — see `types::ApiError`.
@@ -47,9 +49,9 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use crate::{
     cache::{StationIndex, TrainRegistry},
     db::Db,
-    frontend::{dashboard, demo, detail, predictions, search},
+    frontend::{dashboard, dev, detail, explore, live, map, operators, predictions, search, stations},
     ingestion::gtfs::IngestStatus,
-    state_machine::poll_manager::StateChangeEvent,
+    state_machine::StateChangeEvent,
 };
 
 // ---------------------------------------------------------------------------
@@ -67,6 +69,8 @@ async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
                 "text/css; charset=utf-8"
             } else if path.ends_with(".js") {
                 "application/javascript"
+            } else if path.ends_with(".html") {
+                "text/html; charset=utf-8"
             } else {
                 "application/octet-stream"
             };
@@ -163,21 +167,17 @@ pub fn router(state: AppState) -> Router {
     // be throttled, and the dashboard is a lightweight status page that should always load.
     let infra_router = Router::new()
         .route("/", get(dashboard::dashboard_page))
-        .route("/report", get(handlers::report_handler))
-        .route("/demo", get(demo::demo_page))
+        .route("/dev", get(dev::dev_page))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(handlers::health_handler))
-        // Demo fragment routes — no rate limit (dev/admin tools)
-        .route("/ui/demo/status",      get(demo::demo_status_fragment))
-        .route("/ui/demo/predictions", get(demo::demo_predictions_fragment))
-        .route("/ui/demo/registry",    get(demo::demo_registry_fragment))
-        .route("/ui/demo/journeys", get(demo::demo_journeys_fragment))
-        .route("/ui/demo/checkout", get(demo::demo_checkout_fragment))
-        .route("/ui/demo/purchase", post(demo::demo_purchase_fragment))
-        .route("/ui/demo/events",          get(demo::demo_events_sse))
-        .route("/ui/demo/ingest/freshness", get(demo::demo_ingest_freshness))
-        .route("/ui/demo/ingest/start",    post(demo::demo_ingest_start))
-        .route("/ui/demo/ingest/stream",   get(demo::demo_ingest_stream))
+        // Dev fragment routes — no rate limit (internal diagnostics tools)
+        .route("/ui/dev/status",      get(dev::dev_status_fragment))
+        .route("/ui/dev/predictions", get(dev::dev_predictions_fragment))
+        .route("/ui/dev/registry",    get(dev::dev_registry_fragment))
+        .route("/ui/dev/events",          get(dev::dev_events_sse))
+        .route("/ui/dev/ingest/freshness", get(dev::dev_ingest_freshness))
+        .route("/ui/dev/ingest/start",    post(dev::dev_ingest_start))
+        .route("/ui/dev/ingest/stream",   get(dev::dev_ingest_stream))
         .with_state(state.clone());
 
     // Public API sub-router — rate-limited.
@@ -191,8 +191,21 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         // Embedded static assets (CSS baked in at compile time)
         .route("/static/:path", get(static_handler))
         // Page routes — full server-rendered HTML pages
+        // /report runs four heavy GROUP BY aggregations over delay_history,
+        // so it must stay behind the rate limiter (not on infra_router).
+        .route("/report", get(handlers::report_handler))
         .route("/search", get(search::search_page))
+        .route("/operators", get(operators::operators_page))
+        .route("/operators/:toc", get(operators::operator_page))
+        .route("/live", get(live::live_page))
+        .route("/ui/live/snapshot", get(live::live_snapshot))
+        .route("/map", get(map::map_page))
+        .route("/ui/map/snapshot", get(map::map_snapshot))
+        .route("/demo", get(map::demo_page))
         .route("/predictions", get(predictions::predictions_page))
+        .route("/stations", get(stations::stations_page))
+        .route("/stations/:crs", get(stations::station_page))
+        .route("/explore", get(explore::explore_page))
         .route("/trains/:rid/view", get(detail::detail_page))
         // UI fragment routes — consumed by htmx partial swaps
         .route("/ui/stations/departures", get(search::departures_fragment))
@@ -202,7 +215,6 @@ fn build_api_router(state: AppState, rate_limit_per_sec: u64, cors_layer: CorsLa
         .route("/ui/journeys", get(search::journeys_fragment))
         // JSON API routes
         .route("/journeys", get(handlers::journey_handler))
-        .route("/stations/search", get(handlers::station_search_handler))
         .route("/stations/:crs/departures", get(handlers::departures_handler))
         .route("/trains/:rid", get(handlers::train_handler))
         .route("/trains/:rid/live", get(sse::live_handler))
