@@ -25,15 +25,16 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
     assert!(b.contains("Predicted vs actual"), "predictions explorer markup");
     assert!(b.contains("Calibration"), "calibration panel present");
 
-    // Diagnostics console moved to /dev; the old /demo route is gone.
+    // Diagnostics console moved to /dev; /demo now serves the OS demo (checked below).
     let (s, b) = app.get("/dev").await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.contains("Diagnostics"), "dev console markup unexpected");
     assert!(!b.contains("Tier C"), "tier framing removed");
     assert!(!b.contains("Confirm & Pay"), "simulated purchase removed");
 
+    // /demo now renders the self-contained "RailPredict OS" demo desktop.
     let (s, _) = app.get("/demo").await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "/demo retired");
+    assert_eq!(s, StatusCode::OK, "/demo serves the OS demo");
 
     // Top nav no longer advertises the dev console; Operators is now linked.
     let (_s, home) = app.get("/").await;
