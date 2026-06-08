@@ -60,7 +60,8 @@ pub async fn run_weather_task(
     anchors: Vec<WeatherAnchor>,
     client: reqwest::Client,
 ) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+    const WEATHER_POLL_SECS: u64 = 600; // 10-minute cadence
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(WEATHER_POLL_SECS));
     loop {
         interval.tick().await;
         for anchor in &anchors {
@@ -79,8 +80,6 @@ pub async fn run_weather_task(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn parse_weather_anchors_valid() {
         let raw = "LDS:53.796:-1.548,MAN:53.488:-2.242";

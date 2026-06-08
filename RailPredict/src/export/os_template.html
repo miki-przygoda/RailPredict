@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RailPredict OS</title>
+<!-- Proprietary demo — keep out of search indexes. -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="RailPredict OS — an intelligent buffer for UK rail data: local delay prediction, full-journey capture, and a live operator/network view.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="RailPredict OS">
+<meta property="og:description" content="An intelligent buffer for UK rail data — local delay prediction, full-journey capture, and a live operator/network view.">
+<meta property="og:image" content="https://mikolaj-mikuliszyn.dev/og/railpredict-os.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RailPredict OS">
+<meta name="twitter:description" content="An intelligent buffer for UK rail data — local delay prediction, full-journey capture, and a live operator/network view.">
+<meta name="twitter:image" content="https://mikolaj-mikuliszyn.dev/og/railpredict-os.png">
+<meta name="theme-color" content="#0f172a">
+<style>
+  /* ── Design tokens ─────────────────────────────────────────────── */
+  :root {
+    --ink: #0f172a; --muted: #475569; --dim: #94a3b8; --line: #e5e7eb; --soft: #f7f8fa;
+    --accent: #2563eb; --accent-ink: #1e3a8a; --good: #16a34a;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --mb-h: 28px;
+    --dock-h: 70px;
+    --win-radius: 11px;
+    --win-shadow: 0 24px 80px rgba(0,0,0,.55), 0 4px 16px rgba(0,0,0,.35);
+  }
+
+  /* ── Reset ─────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+
+  /* ── Desktop ───────────────────────────────────────────────────── */
+  body {
+    background: radial-gradient(ellipse at 30% 20%, #1a3a5c 0%, #0d1f35 45%, #070c14 100%);
+    color: #f1f5f9;
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  #desktop { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+  /* ── Menu bar ──────────────────────────────────────────────────── */
+  #menubar {
+    flex: 0 0 var(--mb-h);
+    height: var(--mb-h);
+    background: rgba(255,255,255,.14);
+    backdrop-filter: blur(20px) saturate(1.6);
+    -webkit-backdrop-filter: blur(20px) saturate(1.6);
+    border-bottom: 1px solid rgba(255,255,255,.12);
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255,255,255,.92);
+    z-index: 9000;
+  }
+  #menubar .brand {
+    font-weight: 700;
+    font-size: 13px;
+    margin-right: 16px;
+    letter-spacing: -.01em;
+  }
+  #menubar .brand .dot { color: #34d399; }
+  #menubar .menu-items { display: flex; gap: 1px; }
+  #menubar .menu-items span {
+    padding: 2px 9px;
+    border-radius: 4px;
+    cursor: default;
+    font-size: 13px;
+    font-weight: 400;
+    color: rgba(255,255,255,.82);
+    transition: background .1s;
+  }
+  #menubar .menu-items span:hover { background: rgba(255,255,255,.14); }
+  #menubar .menu-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(255,255,255,.82);
+  }
+  #os-clock { font-variant-numeric: tabular-nums; }
+
+  /* ── Desktop icon grid ─────────────────────────────────────────── */
+  #desktop-icons {
+    position: absolute;
+    top: calc(var(--mb-h) + 20px);
+    left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    z-index: 10;
+  }
+  .desk-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 72px;
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 6px 4px;
+    transition: background .12s;
+  }
+  .desk-icon:hover { background: rgba(255,255,255,.1); }
+  .desk-icon:active { background: rgba(255,255,255,.18); transform: scale(.96); }
+  .desk-icon .icon-glyph {
+    font-size: 30px;
+    line-height: 1;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,.4));
+  }
+  .desk-icon .icon-label {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: rgba(255,255,255,.9);
+    text-align: center;
+    text-shadow: 0 1px 4px rgba(0,0,0,.7);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 70px;
+  }
+
+  /* ── Window layer ─────────────────────────────────────────────── */
+  #windows {
+    position: absolute;
+    top: var(--mb-h);
+    left: 0;
+    right: 0;
+    bottom: var(--dock-h);
+  }
+
+  /* ── Window chrome ────────────────────────────────────────────── */
+  .win {
+    position: absolute;
+    background: #fff;
+    border-radius: var(--win-radius);
+    box-shadow: var(--win-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 320px;
+    min-height: 200px;
+    transition: box-shadow .15s;
+  }
+  .win:focus-within { box-shadow: 0 28px 90px rgba(0,0,0,.65), 0 6px 20px rgba(0,0,0,.4); }
+  .win.min { display: none; }
+  .win.max {
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 0;
+  }
+  .win-bar {
+    flex: 0 0 36px;
+    height: 36px;
+    background: #ececec;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    cursor: default;
+    border-bottom: 1px solid rgba(0,0,0,.1);
+    position: relative;
+    border-radius: var(--win-radius) var(--win-radius) 0 0;
+    user-select: none;
+  }
+  .win.max .win-bar { border-radius: 0; }
+  .win-bar .traffic { display: flex; gap: 7px; align-items: center; position: relative; z-index: 1; }
+  .win-bar .traffic button {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    position: relative;
+    transition: filter .1s;
+  }
+  .win-bar .traffic button:hover { filter: brightness(.8); }
+  .win-bar .traffic .t-close  { background: #fe5f57; }
+  .win-bar .traffic .t-min    { background: #febc2e; }
+  .win-bar .traffic .t-max    { background: #28c840; }
+  .win-bar .traffic button .tt {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 8px; color: rgba(0,0,0,.5); opacity: 0; transition: opacity .1s; line-height: 1;
+  }
+  .win-bar .traffic button:hover .tt { opacity: 1; }
+  .win-title {
+    position: absolute; left: 0; right: 0; text-align: center;
+    font: 600 12.5px var(--sans); color: #2d2d2d;
+    pointer-events: none;
+  }
+  .win-body {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    background: #f7f8fa;
+  }
+  /* Drag-to-resize grip, bottom-right corner */
+  .win-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    z-index: 6;
+    background:
+      linear-gradient(135deg, transparent 0 50%, rgba(120,140,170,.55) 50% 60%, transparent 60% 72%, rgba(120,140,170,.55) 72% 82%, transparent 82%);
+    border-bottom-right-radius: var(--win-radius);
+  }
+  .win.max .win-resize { display: none; }
+
+  /* ── Dock ─────────────────────────────────────────────────────── */
+  #dock {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    height: calc(var(--dock-h) - 12px);
+    background: rgba(255,255,255,.18);
+    backdrop-filter: blur(24px) saturate(1.8);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    border: 1px solid rgba(255,255,255,.22);
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 14px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.25);
+    z-index: 8000;
+  }
+  .dock-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+    padding: 4px 6px 0;
+    border-radius: 10px;
+    transition: transform .12s cubic-bezier(.34,1.56,.64,1), background .1s;
+    position: relative;
+  }
+  .dock-item:hover { transform: scale(1.22) translateY(-4px); background: rgba(255,255,255,.12); }
+  .dock-item:active { transform: scale(1.05); }
+  .dock-item .d-glyph {
+    font-size: 28px; line-height: 1;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,.45));
+  }
+  .dock-item .d-dot {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.85);
+    opacity: 0;
+    transition: opacity .15s;
+    margin-top: 1px;
+  }
+  .dock-item.running .d-dot { opacity: 1; }
+  .dock-divider {
+    width: 1px; height: 36px;
+    background: rgba(255,255,255,.2);
+    margin: 0 4px;
+  }
+
+  /* ── "Coming soon" placeholder ────────────────────────────────── */
+  .soon-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    color: #475569;
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .soon-body .soon-icon { font-size: 42px; opacity: .6; }
+  .soon-body .soon-title { font: 700 17px var(--sans); color: #1e293b; }
+  .soon-body .soon-sub {
+    font: 400 13px var(--sans); color: #64748b;
+    text-align: center; max-width: 260px; line-height: 1.5;
+  }
+  .soon-body .soon-tag {
+    margin-top: 8px; font: 600 10px var(--mono); color: #94a3b8;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+
+  /* ── App views: shared applet scaffold ────────────────────────── */
+  .win-body .applet {
+    padding: 22px 24px;
+    overflow: auto;
+    height: 100%;
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .win-body .applet-h {
+    font: 800 18px var(--sans);
+    color: var(--ink);
+    letter-spacing: -.02em;
+    margin-bottom: 3px;
+  }
+  .win-body .applet-sub {
+    font: 400 12.5px var(--sans);
+    color: var(--muted);
+    margin-bottom: 18px;
+    line-height: 1.5;
+    max-width: 520px;
+  }
+  .win-body .applet-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .win-body .kcard-sm {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 13px;
+    min-width: 110px;
+  }
+  .win-body .kcard-sm .n { font: 800 19px var(--sans); color: var(--accent-ink); }
+  .win-body .kcard-sm .l { font: 600 9px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-top: 1px; }
+
+  /* ── Operator bar rows ─────────────────────────────────────────── */
+  .win-body .op-row {
+    display: grid;
+    grid-template-columns: 8px 1fr auto auto;
+    align-items: center;
+    gap: 0 10px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+  }
+  .win-body .op-swatch {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .win-body .op-name {
+    font: 600 12.5px var(--sans);
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .win-body .op-pct {
+    font: 700 12px var(--mono);
+    color: var(--accent-ink);
+    white-space: nowrap;
+  }
+  .win-body .op-journeys {
+    font: 500 10.5px var(--mono);
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .win-body .op-rank {
+    font: 600 10px var(--mono);
+    color: var(--dim);
+    text-align: right;
+    padding-left: 4px;
+  }
+  .win-body .section-label {
+    font: 800 9.5px var(--mono);
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    margin: 16px 0 8px;
+  }
+  .win-body .applet-note {
+    font: 400 11px var(--sans);
+    color: var(--dim);
+    line-height: 1.55;
+    margin-top: 14px;
+  }
+
+  /* ── Replay two-zone board ─────────────────────────────────────── */
+  .win-body .replay-wrap {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 12px;
+  }
+  .win-body .replay-zone-h {
+    font: 800 9.5px var(--mono);
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .win-body .replay-zone-h::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+  }
+  .win-body .replay-zone-h.t::before { background: var(--accent); }
+  .win-body .replay-zone-h.s::before { background: var(--good); }
+  .win-body .rp-counter {
+    font: 600 10.5px var(--mono);
+    color: var(--dim);
+    margin-left: auto;
+  }
+
+  /* ── About page ────────────────────────────────────────────────── */
+  .win-body .about-section {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+  }
+  .win-body .about-section h3 {
+    font: 700 13px var(--sans);
+    color: var(--ink);
+    margin-bottom: 7px;
+    letter-spacing: -.01em;
+  }
+  .win-body .about-section p {
+    font: 400 12px var(--sans);
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 6px;
+  }
+  .win-body .about-section p:last-child { margin-bottom: 0; }
+  .win-body .about-section ul {
+    margin: 6px 0 0 16px;
+    font: 400 12px var(--sans);
+    color: var(--muted);
+    line-height: 1.65;
+  }
+  .win-body .about-highlight {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 9px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+  }
+  .win-body .about-highlight h3 {
+    font: 700 13px var(--sans);
+    color: #1e3a8a;
+    margin-bottom: 6px;
+  }
+  .win-body .about-highlight p, .win-body .about-highlight ul {
+    font: 400 12px var(--sans);
+    color: #1e40af;
+    line-height: 1.6;
+  }
+  .win-body .about-highlight ul { margin: 6px 0 0 16px; }
+  .win-body .about-footer {
+    font: 500 10.5px var(--mono);
+    color: var(--dim);
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    margin-top: 4px;
+    line-height: 1.55;
+  }
+  /* redesigned About: stat strip + pipeline + relationship list */
+  .win-body .about-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; margin-bottom: 6px; }
+  .win-body .about-stats .stat { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+  .win-body .about-stats .stat b { display: block; font: 800 19px var(--sans); color: var(--accent-ink); letter-spacing: -.02em; line-height: 1.15; }
+  .win-body .about-stats .stat span { font: 600 9px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .03em; }
+  .win-body .about-day { font: 600 10px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 16px; }
+  .win-body .about-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .win-body .about-flow span { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; font: 700 11px var(--sans); padding: 5px 11px; border-radius: 20px; }
+  .win-body .about-flow i { color: var(--dim); font-style: normal; font-weight: 800; }
+  .win-body .about-rel { list-style: none; margin: 8px 0 0; padding: 0; }
+  .win-body .about-rel li { font: 400 12px var(--sans); color: var(--muted); line-height: 1.5; padding: 7px 0 7px 16px; border-top: 1px solid var(--line); position: relative; }
+  .win-body .about-rel li:first-child { border-top: none; }
+  .win-body .about-rel li b { color: var(--ink); font-weight: 700; }
+  .win-body .about-rel li::before { content: ""; position: absolute; left: 2px; top: 13px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  /* ── Map app body (reused from map_template.html) ─────────────── */
+  /* Scoped to .win-body to avoid conflicts with desktop chrome */
+  .win-body {
+    --ink: #0f172a; --muted: #475569; --dim: #94a3b8; --line: #e5e7eb; --soft: #f7f8fa;
+    --accent: #2563eb; --accent-ink: #1e3a8a; --good: #16a34a;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .win-body .cc-body {
+    display: grid;
+    grid-template-columns: 230px 1fr 220px;
+    height: 100%;
+    overflow: hidden;
+  }
+  .win-body .rail { padding: 14px; overflow: auto; color: var(--ink); background: #fff; }
+  .win-body .rail.l { border-right: 1px solid var(--line); }
+  .win-body .rail.r { border-left: 1px solid var(--line); background: #fbfcfd; }
+  .win-body .rail-h {
+    font: 800 10px var(--sans); text-transform: uppercase; letter-spacing: .07em;
+    color: #64748b; display: flex; align-items: center; gap: 6px; margin: 4px 0 9px;
+  }
+  .win-body .rail-h::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+  .win-body .rail-h.t::before { background: var(--accent); }
+  .win-body .rail-h.s::before { background: var(--good); }
+  .win-body .mini {
+    display: grid; grid-template-columns: 1fr auto; gap: 1px 8px;
+    border: 1px solid var(--line); border-left: 3px solid var(--c, #94a3b8);
+    border-radius: 6px; padding: 6px 9px; margin-bottom: 6px;
+  }
+  .win-body .mini .hc { font: 700 11px var(--mono); }
+  .win-body .mini .rt { grid-column: 1; font: 600 9.5px var(--mono); color: #64748b; }
+  .win-body .mini .pa { grid-column: 2; grid-row: 1/3; align-self: center; font: 700 11px var(--mono); text-align: right; }
+  .win-body .mini .pa small { display: block; font: 700 6.5px var(--mono); color: var(--dim); text-transform: uppercase; }
+  .win-body .empty { color: var(--dim); font: 600 11px var(--mono); padding: 8px 0; }
+  .win-body .cc-map {
+    position: relative;
+    background: #1b1d22;
+    overflow: hidden;
+  }
+  .win-body #map-svg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  .win-body #map-svg:active { cursor: grabbing; }
+  .win-body .map-fs { position: absolute; top: 12px; right: 12px; z-index: 6; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; background: rgba(8,20,36,.72); border: 1px solid rgba(127,178,232,.32); border-radius: 7px; color: #9ec3ef; font-size: 15px; cursor: pointer; backdrop-filter: blur(6px); }
+  .win-body .map-fs:hover { background: rgba(20,40,68,.9); color: #fff; }
+  .win-body .map-hint { position: absolute; left: 12px; bottom: 10px; z-index: 6; font: 600 9px var(--mono); color: #7f93ad; letter-spacing: .04em; text-transform: uppercase; pointer-events: none; text-shadow: 0 1px 3px #000; }
+  .win-body .map-clock-wrap { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 1px; background: rgba(8,20,36,.74); border: 1px solid rgba(127,178,232,.32); border-radius: 9px; padding: 5px 16px; backdrop-filter: blur(6px); }
+  .win-body .map-clock-wrap .lbl { font: 700 7.5px var(--mono); color: #7f93ad; letter-spacing: .1em; text-transform: uppercase; }
+  .win-body #map-clock { font: 800 18px var(--mono); color: #cfe6ff; letter-spacing: .03em; line-height: 1.1; }
+  .win-body .kcard {
+    background: #fff; border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 11px; margin-bottom: 8px;
+  }
+  .win-body .kcard .n { font: 800 20px var(--sans); color: var(--accent-ink); }
+  .win-body .kcard .l { font: 600 9px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-top: 1px; }
+  .win-body .info { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 10px; }
+  .win-body .info b { color: var(--ink); }
+  .win-body .cc-foot {
+    display: flex; align-items: center; gap: 16px;
+    padding: 9px 20px; border-top: 1px solid var(--line); background: var(--soft);
+    font: 600 9.5px var(--mono); color: var(--dim); flex-wrap: wrap;
+    flex: 0 0 auto;
+  }
+  .win-body .lg { display: flex; align-items: center; gap: 5px; }
+  .win-body .lg b { width: 9px; height: 9px; border-radius: 50%; }
+
+  /* Map window body needs flex column for footer */
+  .win-body .map-wrap { display: flex; flex-direction: column; height: 100%; }
+
+  /* ── Wallpaper grain ──────────────────────────────────────────── */
+  #desktop::after {
+    content: "";
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+<div id="desktop">
+
+  <!-- ── Menu bar ─────────────────────────────────────────────── -->
+  <div id="menubar">
+    <span class="brand"><span class="dot">●</span> RailPredict</span>
+    <div class="menu-items">
+      <span>File</span>
+      <span>View</span>
+      <span>Help</span>
+    </div>
+    <div class="menu-right">
+      <span id="os-clock">00:00:00</span>
+    </div>
+  </div>
+
+  <!-- ── Desktop icons ─────────────────────────────────────────── -->
+  <div id="desktop-icons">
+    <!-- populated by os_shell.js -->
+  </div>
+
+  <!-- ── Window layer ──────────────────────────────────────────── -->
+  <div id="windows"></div>
+
+  <!-- ── Dock ──────────────────────────────────────────────────── -->
+  <div id="dock">
+    <!-- populated by os_shell.js -->
+  </div>
+
+</div>
+
+<!-- ── Map app body template ─────────────────────────────────────── -->
+<template id="app-map">
+  <div class="map-wrap">
+    <div class="cc-body">
+      <aside class="rail l">
+        <div class="rail-h t">Tracking</div>
+        <div id="rail-track"><p class="empty">…</p></div>
+        <div class="rail-h s">Just settled</div>
+        <div id="rail-settled"><p class="empty">…</p></div>
+      </aside>
+      <main class="cc-map"><svg id="map-svg"></svg>
+        <div class="map-clock-wrap"><span class="lbl">Replaying yesterday</span><b id="map-clock">--:--</b></div>
+        <button id="map-fs" class="map-fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+        <span class="map-hint">scroll to zoom · drag to pan</span>
+      </main>
+      <aside class="rail r">
+        <div class="rail-h">The numbers</div>
+        <div class="kcard"><div class="n" data-fill="hero_number">—</div><div class="l">departures analysed</div></div>
+        <div class="kcard"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">on time (≤5 min)</div></div>
+        <div class="kcard"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean prediction error</div></div>
+        <div class="kcard"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
+        <div class="kcard"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
+        <div class="kcard"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
+        <div class="kcard"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
+        <div class="info"><b>What you're seeing:</b> every dot is a real train, coloured by predicted delay, gliding origin→destination; it flips to the actual as it arrives. The left rail shows the same predicted→actual outcomes.</div>
+      </aside>
+    </div>
+    <div class="cc-foot">
+      <span class="lg"><b style="background:#34d399"></b>on time</span>
+      <span class="lg"><b style="background:#f2c14e"></b>slight</span>
+      <span class="lg"><b style="background:#f04545"></b>late</span>
+      <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · © OpenStreetMap contributors © CARTO · fully offline</span>
+    </div>
+  </div>
+</template>
+
+<!-- ── Operators app ───────────────────────────────────────────────── -->
+<template id="app-operators">
+  <div class="applet">
+    <div class="applet-h">Operator league</div>
+    <div class="applet-sub">Yesterday's performance — on-time % (arrivals within 5 min) and journeys run, per operator. Swatch coloured by performance.</div>
+    <div id="op-list"></div>
+  </div>
+</template>
+
+<!-- ── Predictions app ────────────────────────────────────────────── -->
+<template id="app-predictions">
+  <div class="applet">
+    <div class="applet-h">Prediction accuracy</div>
+    <div class="applet-sub">How well the LightGBM models forecast arrival delay — measured against every finalised service where a prediction was made and the actual outcome was recorded.</div>
+    <div class="applet-row">
+      <div class="kcard-sm"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean abs. error</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">on time (≤5 min)</div></div>
+    </div>
+    <div class="about-section">
+      <h3>How predictions work</h3>
+      <p>Two models run in tandem: a <b>day-ahead</b> model that forecasts delay from timetable features and historical patterns, and a <b>real-time</b> model that updates as live Darwin messages arrive. Both export to ONNX and run locally — no round-trips to an external inference server.</p>
+      <p>The engine blends the model output with preceding-service correlation (when a train on the same origin within ±20 min is delayed, downstream trains inherit a weighted signal) and applies weather-driven volatility from the Open-Meteo wind feed.</p>
+    </div>
+    <div class="applet-note">Accuracy is measured on finalised services only. Services with no recorded actual outcome are excluded from all statistics above.</div>
+  </div>
+</template>
+
+<!-- ── Reliability app ────────────────────────────────────────────── -->
+<template id="app-reliability">
+  <div class="applet">
+    <div class="applet-h">Journey reliability</div>
+    <div class="applet-sub">Arrival punctuality and delay-recovery rates across all observed services — a measure of how consistently trains complete their journey close to schedule.</div>
+    <div class="applet-row">
+      <div class="kcard-sm"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
+    </div>
+    <div class="section-label">Most reliable operators</div>
+    <div id="rel-op-list"></div>
+    <div class="applet-note">Recovery rate counts services that departed late but arrived within 5 minutes of schedule. Reliability scores are derived from Darwin real-time messages ingested continuously.</div>
+  </div>
+</template>
+
+<!-- ── Replay app ─────────────────────────────────────────────────── -->
+<template id="app-replay">
+  <div class="applet">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;">
+      <div class="applet-h" style="margin-bottom:0">Predicted → actual</div>
+      <span class="rp-counter" id="rp-frame"></span>
+    </div>
+    <div class="applet-sub" style="margin-bottom:10px">Replaying yesterday (clock = time of day). Services show their <b>predicted</b> delay while running, then <b>predicted → actual</b> on arrival.</div>
+    <div class="replay-wrap">
+      <div>
+        <div class="replay-zone-h t">Tracking now</div>
+        <div id="rp-track"><p class="empty">—</p></div>
+      </div>
+      <div>
+        <div class="replay-zone-h s">Just settled</div>
+        <div id="rp-settled"><p class="empty">—</p></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- ── About app ──────────────────────────────────────────────────── -->
+<template id="app-about">
+  <div class="applet">
+    <div class="applet-h">About RailPredict</div>
+    <div class="applet-sub">A prediction engine for UK rail delays — it turns the live Darwin firehose into accurate, measured delay intelligence, and surfaces it instantly.</div>
+
+    <div class="about-stats">
+      <div class="stat"><b id="ab-journeys">—</b><span>journeys shadowed</span></div>
+      <div class="stat"><b id="ab-calls">—</b><span>calling points</span></div>
+      <div class="stat"><b id="ab-preds">—</b><span>predictions scored</span></div>
+      <div class="stat"><b id="ab-mae">—</b><span>mean error</span></div>
+      <div class="stat"><b id="ab-within5">—</b><span>within 5 min</span></div>
+      <div class="stat"><b id="ab-ontime">—</b><span>on time</span></div>
+    </div>
+    <div class="about-day">Yesterday · <span id="ab-date">—</span> · accuracy measured, not claimed</div>
+
+    <div class="about-flow">
+      <span>Capture</span><i>→</i><span>Relate</span><i>→</i><span>Model</span><i>→</i><span>Predict</span><i>→</i><span>Surface</span>
+    </div>
+
+    <div class="about-section">
+      <h3>What we capture — and why</h3>
+      <p>RailPredict shadows National Rail's Darwin push-port: every movement message for every train, live. From those fragmentary messages it reconstructs each service's <b>full journey</b> — every calling point, scheduled vs actual time, platform, and cancellation — and enriches it with weather on the route. The timetable says what <em>should</em> happen; this records what actually <em>does</em>. That record is the corpus the model learns from.</p>
+    </div>
+
+    <div class="about-section">
+      <h3>The relationships it learns</h3>
+      <p>Delay isn't random — it's structured, and the engine models the structure:</p>
+      <ul class="about-rel">
+        <li><b>Service identity</b> — it tracks the <em>recurring</em> service (same working timetable, weekday, origin, hour), not the one-off daily train, so it learns each service's true character.</li>
+        <li><b>Knock-on</b> — a late preceding service on the same route shifts the next one's forecast, blended within a ±20-minute window.</li>
+        <li><b>Cascade</b> — delay propagates along shared track, tracked through a live location index.</li>
+        <li><b>Volatility</b> — high winds on a corridor raise the alert level for every service on it.</li>
+      </ul>
+    </div>
+
+    <div class="about-highlight">
+      <h3>The model — the core of the IP</h3>
+      <p>Two gradient-boosted models (LightGBM, compiled to ONNX): a <b>day-ahead</b> model for planning and a <b>real-time</b> model that folds in eight live signals as a service runs. Both are trained on the captured delay corpus and sample-weighted so the rare, costly severe delays aren't drowned out by the on-time majority. Inference is local and sub-millisecond — no per-query API cost.</p>
+    </div>
+
+    <div class="about-section">
+      <h3>Predictions, scored against reality</h3>
+      <p>Every service gets a predicted delay and a confidence that decays as its data ages. Crucially, each prediction is <b>logged and later matched to the real outcome</b> — so accuracy is measured, not asserted. The numbers above are yesterday's, straight from that ledger.</p>
+    </div>
+
+    <div class="about-section">
+      <h3>The dashboard</h3>
+      <p>All of it surfaces instantly — the live map replaying a full day across the network, the operator league, the predicted-vs-actual replay, station reliability. That's the value: delay intelligence the moment it matters. Wire in a ticketing feed and the same engine drives proactive rebooking, point-of-sale reliability scores, and automated Delay Repay.</p>
+    </div>
+
+    <div class="about-footer">
+      Generated <span data-fill="generated_at">—</span> · the model, the engine, and this dashboard — one Rust + Docker appliance · Darwin data © Network Rail
+    </div>
+  </div>
+</template>
+
+<!-- ── Script injection points (generator replaces these) ─────────── -->
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP_ABOUT=__ABOUT__;window.MAP=__MAP_DATA__;</script>
+<script>/* __MAP_JS__ */</script>
+<script>/* __APPS_JS__ */</script>
+<script>/* __OS_JS__ */</script>
+
+</body>
+</html>

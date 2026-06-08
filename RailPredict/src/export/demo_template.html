@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RailPredict — Turning delay data into customer experience</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#0f172a; --muted:#475569; --dim:#94a3b8;
+    --line:#e5e7eb; --soft:#f5f6f8; --accent:#2563eb; --accent-ink:#1e3a8a;
+    --good:#16a34a; --good-bg:#dcfce7; --bad:#dc2626; --bad-bg:#fee2e2;
+    --proj:#b45309; --proj-bg:#fef3c7;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --r:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 28px}
+  section{padding:96px 0;border-top:1px solid var(--line)}
+  section:first-child{border-top:0}
+  .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+  .eyebrow{font:700 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+  h1{font:800 clamp(34px,5vw,60px)/1.05 var(--sans);letter-spacing:-.02em;margin:14px 0}
+  h2{font:800 clamp(26px,3.4vw,40px)/1.1 var(--sans);letter-spacing:-.02em;margin:10px 0 14px}
+  p.lead{font-size:clamp(17px,2vw,21px);color:var(--muted);max-width:62ch}
+  .badge{display:inline-block;font:700 11px var(--mono);letter-spacing:.06em;padding:3px 9px;border-radius:6px}
+  .b-real{color:var(--good);background:var(--good-bg)}
+  .b-proj{color:var(--proj);background:var(--proj-bg)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:28px}
+  @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  .kpis3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+  @media(max-width:760px){.kpis3{grid-template-columns:1fr}}
+  .strip-label{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-top:30px}
+  .kpi{background:var(--soft);border:1px solid var(--line);border-radius:var(--r);padding:20px}
+  .kpi .n{font:800 30px var(--sans);letter-spacing:-.02em;color:var(--accent-ink)}
+  .kpi .l{font-size:13px;color:var(--muted);margin-top:4px}
+  .hero-n{font:800 clamp(56px,9vw,104px)/1 var(--sans);letter-spacing:-.03em;color:var(--accent-ink)}
+  .ops{display:flex;flex-direction:column;gap:8px;margin-top:22px}
+  .op{display:flex;align-items:center;gap:12px;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:11px 14px}
+  .op .bar{width:4px;align-self:stretch;border-radius:4px;background:var(--op,#64748b)}
+  .op .nm{font-weight:600}
+  .op .pct{margin-left:auto;font:700 15px var(--mono)}
+  .op .ct{font:600 12px var(--mono);color:var(--dim);width:84px;text-align:right}
+  .vis-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:26px}
+  @media(max-width:760px){.vis-grid{grid-template-columns:1fr}}
+  .vcard{background:var(--soft);border:1px solid var(--line);border-radius:var(--r);padding:22px}
+  .vcard .vh{font:700 16px var(--sans);color:var(--accent-ink);margin-bottom:8px}
+  .vcard p{font-size:14px;color:var(--muted)}
+  footer{padding:40px 0;color:var(--dim);font-size:13px;text-align:center}
+  /* ---- replay board (light-themed mirror of static/board.js markup) ---- */
+  .replay-shell{margin-top:26px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#fff;box-shadow:0 1px 4px rgba(15,23,42,.06)}
+  .replay-bar{display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--line);background:var(--soft)}
+  .replay-bar .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .replay-bar .t{font:700 14px var(--mono)}
+  .replay-bar .f{margin-left:auto;font:600 13px var(--mono);color:var(--dim)}
+  .zones{display:flex;flex-direction:column;gap:18px;padding:22px}
+  .zone{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:16px 18px 18px}
+  .zone-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid var(--line)}
+  .zone-head h3{font:800 15px var(--sans);letter-spacing:-.01em;color:var(--ink);display:flex;align-items:center;gap:8px}
+  .zone-head h3::before{content:"";width:9px;height:9px;border-radius:50%;flex-shrink:0}
+  .zone-track .zone-head h3::before{background:var(--accent)}
+  .zone-settled .zone-head h3::before{background:var(--good)}
+  .zone-head .ct{font:600 12px var(--mono);color:var(--dim)}
+  .tgrid{display:flex;flex-direction:column;gap:10px}
+  /* fixed 3-column grid → cards stay a constant size regardless of operator-name length.
+     Columns: identity | prediction meta | route (pinned to the right edge). */
+  .tcard{position:relative;display:grid;grid-template-columns:168px auto 1fr;align-items:center;column-gap:20px;min-height:62px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 18px 8px 22px;overflow:hidden}
+  .tcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--op,#94a3b8)}
+  .tcard.fresh{animation:slidein .5s ease}
+  @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .tc-id{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .tc-hc{font:700 15px var(--mono);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tc-op{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tc-route{justify-self:end;display:flex;align-items:center;gap:7px;font:700 15px var(--mono);white-space:nowrap}
+  .tc-route .ar{color:var(--dim);flex-shrink:0}
+  .tc-meta{justify-self:start;display:flex;align-items:center;gap:18px}
+  .tc-sched{font:600 12px var(--mono);color:var(--dim);white-space:nowrap}
+  .cell{text-align:center;line-height:1.15;min-width:56px}
+  .cell .k{display:block;font:700 9px var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--dim);margin-bottom:5px}
+  .cell .v{font:700 16px var(--mono);white-space:nowrap}
+  .cell .v.pred{color:var(--muted)}
+  .cell .v.act{color:var(--ink)}
+  .cell.arrow{font-size:17px;color:var(--dim);min-width:auto;align-self:flex-end;padding-bottom:1px}
+  .pchip{font:700 13px var(--mono);padding:5px 12px;border-radius:999px;white-space:nowrap}
+  .p-ontime{color:var(--good);background:var(--good-bg)}
+  .p-min{color:var(--proj);background:var(--proj-bg)}
+  .p-late{color:var(--bad);background:var(--bad-bg)}
+  .acc{font:700 12px var(--mono);padding:6px 11px;border-radius:999px;white-space:nowrap;min-width:84px;text-align:center}
+  .acc-good{color:var(--good);background:var(--good-bg)}
+  .acc-ok{color:var(--accent);background:#dbeafe}
+  .acc-bad{color:var(--bad);background:var(--bad-bg)}
+  .panel-empty{color:var(--dim);font-size:13px;padding:18px 0;text-align:center}
+</style>
+</head>
+<body>
+
+<section id="beat-hero" class="reveal"><div class="wrap">
+  <span class="eyebrow">RailPredict</span>
+  <h1>Every delay is a customer moment.</h1>
+  <p class="lead">We turn the UK rail delay firehose into decisions — predicting which journeys won't run to time before your customer feels it.</p>
+  <div class="hero-n" data-fill="hero_number">—</div>
+  <p class="lead">departures analysed on the live national feed.</p>
+</div></section>
+
+<section id="beat-gap" class="reveal"><div class="wrap">
+  <span class="eyebrow">The gap</span>
+  <h2>You sell the journey. The delay is someone else's surprise.</h2>
+  <p class="lead">Across your operators and Uber you sell millions of journeys. When one is disrupted it becomes a refund, a complaint, a dented trust score — and today you find out <em>after</em> the passenger does. That lag is the opportunity.</p>
+</div></section>
+
+<section id="beat-proof" class="reveal"><div class="wrap">
+  <span class="badge b-real">REAL · LIVE DATA</span>
+  <h2>The engine already works.</h2>
+  <p class="lead">Live numbers from the running system on the national Darwin feed — not a slide.</p>
+  <div class="kpis">
+    <div class="kpi"><div class="n" data-fill="hero_number">—</div><div class="l">Departures analysed</div></div>
+    <div class="kpi"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">On-time departures (≤5 min)</div></div>
+    <div class="kpi"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">Mean prediction error</div></div>
+    <div class="kpi"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">Predictions within 5 min</div></div>
+  </div>
+  <div class="strip-label">Journey reliability — measured at the destination</div>
+  <div class="kpis3">
+    <div class="kpi"><div class="n" data-fill="services_label">—</div><div class="l">Distinct services tracked</div></div>
+    <div class="kpi"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">Arrive within 5 min</div></div>
+    <div class="kpi"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">Recover delay en route</div></div>
+  </div>
+  <div class="ops" id="op-list"></div>
+</div></section>
+
+<section id="beat-replay" class="reveal"><div class="wrap">
+  <span class="badge b-real">REAL · LIVE REPLAY</span>
+  <h2>Watch it call the delay — then be proven right.</h2>
+  <p class="lead">A recorded window of the live board. Each train appears with a prediction, then settles to its actual arrival and an accuracy score. Real predictions, real outcomes.</p>
+  <div class="replay-shell">
+    <div class="replay-bar"><span class="dot"></span><span class="t">Predicted → actual</span><span class="f" id="replay-frame">—</span></div>
+    <div class="zones" id="replay-board"><p class="panel-empty">Replay loads as you scroll here…</p></div>
+  </div>
+</div></section>
+
+<section id="beat-vision" class="reveal"><div class="wrap">
+  <span class="badge" style="color:var(--accent);background:#dbeafe">WITH YOUR TICKETING DATA</span>
+  <h2>Now point it at your ticket sales.</h2>
+  <p class="lead">The same engine, joined to your ticketing data, turns a delay into a save — spotting the journeys you've already sold that are about to be disrupted, and acting before the passenger is.</p>
+  <div class="vis-grid">
+    <div class="vcard"><h3 class="vh">Get ahead of disruption</h3><p>Flag tickets already sold on services we predict will run late, and notify or rebook the passenger before they're stranded.</p></div>
+    <div class="vcard"><h3 class="vh">Reliability at the point of sale</h3><p>Surface how likely each option is to run on time as the customer books, so they choose with confidence — and you carry fewer complaints.</p></div>
+    <div class="vcard"><h3 class="vh">Delay Repay, automatically</h3><p>Predicted-versus-actual is already measured for every journey — trigger eligible compensation without the manual claim.</p></div>
+  </div>
+</div></section>
+
+<footer>Generated <span data-fill="generated_at">—</span> · RailPredict · Proprietary &amp; confidential</footer>
+
+<script>window.DEMO = __DEMO_DATA__;</script>
+<script>/* __DEMO_JS__ */</script>
+</body>
+</html>

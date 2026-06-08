@@ -5,6 +5,10 @@
 //! HTML page with Chart.js (CDN) and all data baked in as a JSON literal — no
 //! server or database connection needed to view it.
 
+pub mod demo;
+pub mod map;
+pub mod os;
+
 use std::path::Path;
 
 use chrono::Utc;
@@ -199,10 +203,10 @@ fn load_benchmarks() -> Option<ModelBenchmarks> {
         Path::new("../models/benchmarks.json").to_path_buf(),
     ];
     for path in &candidates {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(b) = serde_json::from_str::<ModelBenchmarks>(&text) {
-                return Some(b);
-            }
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(b) = serde_json::from_str::<ModelBenchmarks>(&text)
+        {
+            return Some(b);
         }
     }
     None

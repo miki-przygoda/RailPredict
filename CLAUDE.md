@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.12.0" -- 29/05/2026**
+**version = "1.19.0" -- 08/06/2026**
 
 ---
 
@@ -10,7 +10,7 @@ The current version and last worked on date should be noted at the top of this f
 
 RailPredict is a Rust-based high-performance shadow system for UK Rail data. Its core purpose is to act as an **Intelligent Buffer** between users and the GBR (Great British Railways) API — minimising expensive live calls by combining cached static data, local predictive logic, and state-machine-driven polling. The system should feel instant to the user: data is pre-warmed, delays are predicted locally, and live API calls only happen when transactionally unavoidable.
 
-**Current state (v1.12.0):** The full Tier A/B pipeline is live — Darwin stream ingestion, GTFS timetable loading, LightGBM ONNX inference (day-ahead and real-time models), prediction outcome tracking, and the complete departure board and detail UI. Tier C (live GBR purchase API) is the only remaining unconnected piece; the plumbing is already built.
+**Current state (v1.16.7):** The full Tier A/B pipeline is live and deployed on a fresh primary DB (`railpredict_v2`; the old `railpredict` is frozen as a real-data training corpus). Beyond the original pipeline (Darwin ingestion, GTFS/RDS static loading, LightGBM ONNX inference, prediction-outcome tracking, departure board + detail UI), the system now runs **Full-Journey Capture** — every train's per-call journey is accumulated across partial Darwin messages and persisted to the `journeys` (wide header) + `journey_calls` (per-stop) tables, including sticky cancellation capture via `can="true"` on schedule frames. Built on top of that: the **operator league** (`/operators`, real per-TOC coverage from `journeys.toc`), **journey reliability surfaces** (detail-page per-stop trajectory, `/stations` reliability score, arrival/recovery KPIs on the overview + live board), and the **Live Board + Replay** feature (`/live` + server-free `static/replay.html`). The one delay-computation bug (origin delay was journey *duration*) was fixed in v1.15.3 — fresh `delay_history` is now realistic (median 0). Tier C (live GBR purchase API) remains the only unconnected piece; its plumbing is built. Remaining known gap: the Tier-A timetable (`services`/`timetable_calls`) + `fares` need a GTFS feed, so the static departure board stays empty until one is ingested.
 
 ---
 
@@ -46,9 +46,8 @@ This is strict — follow it exactly:
 
 ```
 RailPredict/                        ← repo root
-├── CLAUDE.md                       ← this file; AI session seed + architecture reference
-├── CONTRIBUTING.md                 ← contributor guide; read before opening a PR
-├── README.md                       ← project vision + current status table
+├── CLAUDE.md                       ← this file; architecture reference + engineering conventions
+├── README.md                       ← product overview + current status table
 ├── TODO.md                         ← active sprint tracker + remaining epics
 ├── CHANGELOG.md                    ← completed epics log; updated on minor version bumps
 ├── SECURITY.md                     ← secrets rotation procedure + security posture
@@ -65,7 +64,6 @@ RailPredict/                        ← repo root
 │   └── index.html                  ← generated static snapshot (make export); not hand-edited
 ├── scripts/
 │   ├── compare_models.py           ← LightGBM training + ONNX export; run to retrain models
-│   ├── export_dataset.py           ← export delay_history to Parquet + HuggingFace README
 │   ├── fetch_hsp_history.py        ← bulk HSP historical delay fetch (route-based O-D pairs)
 │   ├── run_hsp_fetch.sh            ← launcher for 4 parallel HSP shards
 │   ├── seed_history.py             ← synthetic delay backfill (use before live data exists)
@@ -91,8 +89,7 @@ RailPredict/                        ← repo root
         │   └── volatility.rs       ← VolatilityContext; CorrelationSignal for Tier B
         ├── state_machine/
         │   ├── mod.rs
-        │   ├── train_state.rs      ← TrainState enum + transition logic + emergency_promote
-        │   └── poll_manager.rs     ← BinaryHeap-based global poll loop; mpsc STATE_CHANGE_BUFFER=256
+        │   └── train_state.rs      ← TrainState urgency vocabulary + StateChangeEvent; states set inline by ingestion
         ├── networking/
         │   ├── mod.rs
         │   ├── gbr_client.rs       ← reqwest GBR REST wrapper; gbr_api_latency_ms histogram
@@ -131,7 +128,7 @@ RailPredict/                        ← repo root
             ├── layout.rs           ← base chrome; SSE error/reconnect banner JS
             ├── components.rs       ← delay_badge, platform_chip, prediction_chip
             ├── dashboard.rs        ← /  — hero + metrics grid + nav cards (with ML accuracy)
-            ├── demo.rs             ← /demo — Feature Lab, Purchase Demo, Predictions ledger
+            ├── dev.rs              ← /dev — internal diagnostics console (status, registry probe, ingest UI)
             ├── search.rs           ← departure board + journey search; uses station_index
             ├── detail.rs           ← train detail page + prediction card; htmx SSE live section
             └── predictions.rs      ← /predictions — public ML accuracy analytics page
@@ -152,6 +149,8 @@ RailPredict/                        ← repo root
 The rule: serve from the lowest tier possible. Only escalate to Tier C when the user is at checkout or when a Tier B prediction confidence falls below threshold.
 
 ### State Machine
+
+> **Current status:** the rule engine (`from_departure`/`emergency_promote`) and `PollManager` were **removed** (commit `be012f7`). Ingestion sets `TrainState` inline per the thresholds above — this table is the conceptual model, not a live code path. `StateChangeEvent` (now in `train_state.rs`) still drives the live ingestion→SSE notifications. A real poll scheduler will be (re)built with Tier C. See `docs/tech-debt.md` §A1.
 
 | State       | Trigger Condition                          | Polling Behaviour               |
 |:------------|:-------------------------------------------|:--------------------------------|
@@ -174,9 +173,10 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - Use `chrono` for all timestamps; always distinguish `scheduled_departure`, `public_departure`, `actual_estimated_departure`
 
 ### State Machine (`src/state_machine/`)
-- `enum TrainState { Dormant, Monitored, Active, Critical, Terminal }`
-- Single global `PollManager` with a `BinaryHeap` ordered by next-poll time — never one `tokio::spawn` per train
-- State changes broadcast via bounded `mpsc` (`STATE_CHANGE_BUFFER=256`); the API/UI layer subscribes — never locks the registry to check for changes
+> **Current status:** the rule engine + `PollManager` were removed (commit `be012f7`); ingestion sets states inline. See `docs/tech-debt.md` §A1.
+- `enum TrainState { Dormant, Monitored, Active, Critical, Terminal }` — the urgency vocabulary, set inline by the ingestion pipeline
+- `StateChangeEvent`s are broadcast on a `tokio::broadcast` channel (capacity 1024) emitted from ingestion; the API/SSE layer subscribes — never locks the registry to check for changes
+- A single-`BinaryHeap` global poll scheduler (one task, never `tokio::spawn` per train) is the pattern to use when Tier C live polling is (re)built
 
 ### Networking (`src/networking/`)
 - Request coalescing (`coalescer.rs`): if a request for a `TrainId` is already in-flight, register a `oneshot` sender and wait; first responder fans the result to all waiters
@@ -187,7 +187,8 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - Apply region/route filter as **step one** in the pipeline — drop irrelevant messages before any parsing
 - `SequenceGuard` in `filter.rs` prevents stale overwrites and handles STOMP reconnect replays; never overwrite a newer update with a late-arriving older one
 - `PipelineContext` holds `Arc`-backed shared state (registry, broadcast tx, prediction engine, filter) so shared state survives STOMP reconnects; only the STOMP client is replaced
-- `check_tiploc_cascade` in `filter.rs` detects knock-on delays via the TIPLOC index in `train_registry.rs` — wire into `ingestion/mod.rs` when Tier C is active
+- `check_tiploc_cascade` in `filter.rs` detects knock-on delays via the TIPLOC index in `train_registry.rs` — wire into `ingestion/mod.rs` when Tier C is active. **Current status:** staged/inert (no production caller); see `docs/tech-debt.md` §C2.
+- **NP-association path:** fixed & wired (commit `caab859`) — the filter now routes capital `<Association>` frames (`Conditional`) to the parser, so the turnround predecessor-delay signal flows end-to-end (covered by an integration test). See `docs/tech-debt.md` §A2.
 
 ### Prediction Engine (`src/prediction/`)
 - `ServicePattern` is keyed on `(uid, weekday, origin_crs, departure_hour)` — stable recurring-service identity, not the daily-changing RID
@@ -203,8 +204,8 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 ### ML Pipeline (`scripts/`)
 - `compare_models.py` trains day-ahead and real-time LightGBM models, applies equal-tier sample weighting to correct the severe-delay bias in the Darwin feed, and exports to ONNX
-- Feature count is fixed: 10 for day-ahead, 15 for real-time — changing this requires matching updates to `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`)
-- `export_dataset.py` regenerates `dataset/delay_history.parquet` and the HuggingFace README from the live DB; run after each retrain
+- Feature count is fixed: 14 for day-ahead, 22 for real-time (= day-ahead + 8 live signals) — changing this requires matching updates to `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`)
+- The training corpus stays internal (`delay_history` + the frozen `railpredict` corpus DB); it is not exported or distributed
 
 ---
 
@@ -212,7 +213,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 These are the key patterns worth preserving as the codebase grows:
 
-**Single global scheduler, not per-train tasks.** `PollManager` uses a `BinaryHeap<(Instant, TrainId)>` so the number of tokio tasks stays O(1) regardless of how many trains are tracked. Never spawn a dedicated `tokio::spawn` per train for polling.
+**Single global scheduler, not per-train tasks (design principle).** The removed `PollManager` used one `BinaryHeap<(Instant, TrainId)>` so tokio task count stayed O(1) regardless of train count. When Tier C live polling is (re)built, keep that pattern — never spawn a dedicated `tokio::spawn` per train for polling.
 
 **Fan-out via oneshot channels.** The coalescer in `networking/coalescer.rs` deduplicates concurrent in-flight requests: the first caller drives the HTTP request, late arrivals attach a `oneshot::Receiver`. This prevents N identical outbound calls when N users load the same train page simultaneously.
 

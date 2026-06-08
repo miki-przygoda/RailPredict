@@ -36,20 +36,23 @@
 
 pub mod filter;
 pub mod gtfs;
+pub mod operators;
 pub mod parser;
+pub mod rds;
+pub mod reason;
 pub mod stomp_client;
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use dashmap::DashSet;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::cache::TrainRegistry;
 use crate::db::Db;
 use crate::prediction::PredictionEngine;
-use crate::state_machine::poll_manager::StateChangeEvent;
-use crate::state_machine::train_state::{PromotionReason, TrainState};
+use crate::state_machine::{StateChangeEvent, TrainState};
 use crate::types::train_status::{Stamped, UpdateSource};
 
 use filter::Filter;
@@ -93,6 +96,13 @@ pub struct PipelineContext {
     /// STOMP reconnects (lives on the shared context). On train deactivation
     /// the entry is removed so memory stays bounded.
     pub persisted_predictions: Arc<DashSet<String>>,
+    /// UIDs we've already written a `services.toc` row for (Phase 2). Per-uid, persists for
+    /// the process lifetime (uids recur daily) — bounded by the ~74k distinct UIDs.
+    pub persisted_services: Arc<DashSet<String>>,
+    /// RIDs we've already recorded a cancellation for. Cancelled trains don't move, so they
+    /// rarely deactivate while tracked (they get evicted) — we persist on schedule-detection,
+    /// deduped here so a schedule replay doesn't double-count.
+    pub persisted_cancellations: Arc<DashSet<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +130,8 @@ impl IngestionPipeline {
             prediction_engine,
             db,
             persisted_predictions: Arc::new(DashSet::new()),
+            persisted_services: Arc::new(DashSet::new()),
+            persisted_cancellations: Arc::new(DashSet::new()),
         };
         Self { stomp, ctx }
     }
@@ -227,7 +239,7 @@ impl IngestionPipeline {
 
         for update in updates {
             match update {
-                ParsedUpdate::TrainStatus(ts_update) => {
+                ParsedUpdate::TrainStatus(mut ts_update) => {
                     // Gate 2: sequence guard.
                     if !self.ctx.filter.should_apply(&ts_update.rid, msg_ts) {
                         tracing::trace!(rid = %ts_update.rid, "Dropping stale TS message");
@@ -259,27 +271,29 @@ impl IngestionPipeline {
                     }
 
                     // Capture values needed inside the closure before borrowing self.
-                    let estimated_dep = ts_update.estimated_departure;
+                    let working_dep = ts_update.working_departure;
                     let platform = ts_update.platform.clone();
                     let ts_uid = ts_update.uid.clone();
                     let ts_destination_crs = ts_update.destination_crs.clone();
+                    // Full-Journey Capture: move the per-call list + reasons out of the parsed
+                    // update so they can be folded into the accumulated journey inside the lock.
+                    let ts_calls = std::mem::take(&mut ts_update.calls);
+                    let ts_late_reason = ts_update.late_reason.take();
+                    let ts_cancel_reason = ts_update.cancel_reason.take();
                     let engine = self.ctx.prediction_engine.clone();
                     let db_for_persist = self.ctx.db.clone();
                     let persisted_set = Arc::clone(&self.ctx.persisted_predictions);
 
+                    // Look up predecessor delay BEFORE the registry.update() closure to avoid
+                    // holding nested locks (update holds a write lock; delay_for_rid needs a read
+                    // lock on a different entry — still a potential deadlock via DashMap shards).
+                    let predecessor_delay = self.ctx.registry
+                        .predecessor_rid(rid.as_str())
+                        .and_then(|prev| self.ctx.registry.delay_for_rid(&prev));
+
                     // Apply live fields to registry (works whether just registered or pre-existing).
                     self.ctx.registry
                         .update(&rid, |status| {
-                            if let Some(dep) = estimated_dep {
-                                let delay_mins =
-                                    (dep - status.scheduled_departure.value).num_minutes() as i32;
-                                status.actual_estimated_departure.apply_if_newer(
-                                    Stamped::with_version(Some(dep), darwin_version),
-                                );
-                                status.reported_delay_mins.apply_if_newer(
-                                    Stamped::with_version(Some(delay_mins), darwin_version),
-                                );
-                            }
                             if let Some(p) = platform {
                                 status.actual_platform.apply_if_newer(
                                     Stamped::with_version(Some(p), darwin_version),
@@ -289,15 +303,71 @@ impl IngestionPipeline {
                             if status.uid.is_none() {
                                 status.uid = ts_uid;
                             }
+                            // Populate working_departure on first sighting.
+                            if status.working_departure.is_none() {
+                                status.working_departure = working_dep;
+                            }
                             // Update destination_crs whenever the parser emits one —
                             // the last Location in the TS message is always the destination.
                             if ts_destination_crs.is_some() {
                                 status.destination_crs = ts_destination_crs;
                             }
-                            status.is_cancelled.apply_if_newer(
-                                Stamped::with_version(Some(is_cancelled), darwin_version),
-                            );
+                            // Sticky: only ever set cancelled=true. Darwin signals cancellation
+                            // via the schedule's can="true" calls, not the TS — writing the TS
+                            // flag's `false` here would revert a schedule-signalled cancellation.
+                            if is_cancelled {
+                                status.is_cancelled.apply_if_newer(
+                                    Stamped::with_version(Some(true), darwin_version),
+                                );
+                            }
                             status.last_update_source = UpdateSource::StompFirehose;
+
+                            // Full-Journey Capture: fold every parsed call into the accumulated
+                            // journey and record the latest reason codes (additive — the scalar
+                            // fields the live predictor uses are untouched above).
+                            for c in &ts_calls {
+                                status.apply_call(call_obs_from(c));
+                            }
+                            if let Some(r) = &ts_late_reason {
+                                status.late_reason_code = Some(r.code);
+                                if r.tiploc.is_some() {
+                                    status.reason_tiploc = r.tiploc.clone();
+                                }
+                            }
+                            if let Some(r) = &ts_cancel_reason {
+                                status.cancel_reason_code = Some(r.code);
+                                if r.tiploc.is_some() {
+                                    status.reason_tiploc = r.tiploc.clone();
+                                }
+                            }
+
+                            // Origin departure + delay from the accumulated origin call, so the
+                            // scheduled and estimated/actual times come from the SAME stop. The old
+                            // scalar paired the origin's schedule with a later stop's time (Darwin
+                            // TS messages are partial), measuring journey progress, not delay.
+                            let origin_dep = status
+                                .journey
+                                .get(&0)
+                                .and_then(|o| o.act_dep.or(o.est_dep).map(|obs| (obs, o.sched_dep)));
+                            if let Some((obs, sched)) = origin_dep {
+                                status.actual_estimated_departure.apply_if_newer(
+                                    Stamped::with_version(Some(obs), darwin_version),
+                                );
+                                if let Some(sched) = sched {
+                                    status.reported_delay_mins.apply_if_newer(
+                                        Stamped::with_version(
+                                            Some(wrapped_delay_mins(sched, obs)),
+                                            darwin_version,
+                                        ),
+                                    );
+                                }
+                            }
+
+                            // Propagate fleet turnround (NP association) delay into volatility
+                            // context so prediction/engine.rs can use it as a feature.
+                            if predecessor_delay.is_some() {
+                                status.volatility.predecessor_train_delay_mins = predecessor_delay;
+                            }
 
                             // Feed confirmed delay into historical store, then refresh prediction.
                             engine.record_outcome(status);
@@ -323,6 +393,26 @@ impl IngestionPipeline {
                                             "Failed to persist first prediction"
                                         );
                                     }
+                                    // Snapshot every initial ML prediction for replay training.
+                                    if let (Some(uid), Some(pred)) = (
+                                        status_snapshot.uid.as_deref(),
+                                        status_snapshot.predicted_delay_mins.value,
+                                    ) {
+                                        let features = status_snapshot.volatility.prediction_features.as_ref();
+                                        if let Err(e) = crate::db::predictions::insert_snapshot(
+                                            &db_clone,
+                                            status_snapshot.id.as_str(),
+                                            uid,
+                                            pred,
+                                            features,
+                                        ).await {
+                                            tracing::warn!(
+                                                error = %e,
+                                                rid = %status_snapshot.id,
+                                                "Failed to insert prediction snapshot"
+                                            );
+                                        }
+                                    }
                                 });
                             }
                         })
@@ -336,15 +426,129 @@ impl IngestionPipeline {
 
                     // Emit state-change event for emergency promotions.
                     if is_cancelled || is_delayed {
-                        tracing::info!(rid = %rid, cancelled = is_cancelled, delayed = is_delayed, "Emergency Critical promotion");
+                        tracing::debug!(rid = %rid, cancelled = is_cancelled, delayed = is_delayed, "Emergency Critical promotion");
                         let event = StateChangeEvent {
                             train_id: rid,
                             old_state: TrainState::Active,
                             new_state: TrainState::Critical,
-                            reason: PromotionReason::IncidentDetected,
                         };
                         let _ = self.ctx.state_change_tx.send(event);
                     }
+                }
+
+                ParsedUpdate::Schedule(sched) => {
+                    // Not gated by the sequence guard: schedule sets toc + the planned plan and
+                    // is idempotent (apply_call merges, toc is set-once), so a reconnect replay
+                    // must not consume the guard slot a TS message needs.
+                    let rid = sched.rid.clone();
+                    let sched_uid = sched.uid.clone();
+                    let sched_toc = sched.toc.clone();
+                    let sched_version = msg_ts.timestamp_millis() as u64;
+                    // Whole-service cancellation: every planned call carries can="true". Build the
+                    // cancelled-journey record now, before `sched` moves into the update closure.
+                    let cancelled_record = (!sched.calls.is_empty()
+                        && sched.calls.iter().all(|c| c.is_cancelled))
+                        .then(|| build_cancelled_journey(&sched))
+                        .flatten();
+                    // Register the train from its plan if unseen, so toc + the planned calling
+                    // pattern are captured even before the first TS message arrives.
+                    if self.ctx.registry.get(&rid).is_none()
+                        && let Some(first_dep) = sched.calls.iter().find_map(|c| c.sched_dep)
+                    {
+                        let mut new_status =
+                            crate::types::TrainStatus::new(rid.clone(), first_dep, first_dep);
+                        new_status.uid = sched.uid.clone();
+                        new_status.origin_crs = sched.calls.first().map(|c| c.tpl.clone());
+                        new_status.destination_crs = sched.calls.last().map(|c| c.tpl.clone());
+                        self.ctx.registry.upsert(rid.clone(), new_status);
+                    }
+                    self.ctx
+                        .registry
+                        .update(&rid, move |status| {
+                            if status.toc.is_none() {
+                                status.toc = sched.toc.clone();
+                            }
+                            if status.train_category.is_none() {
+                                status.train_category = sched.train_category.clone();
+                            }
+                            for c in &sched.calls {
+                                status.apply_call(call_obs_from(c));
+                            }
+                            if let Some(r) = &sched.late_reason {
+                                status.late_reason_code = Some(r.code);
+                                if r.tiploc.is_some() {
+                                    status.reason_tiploc = r.tiploc.clone();
+                                }
+                            }
+                            if let Some(r) = &sched.cancel_reason {
+                                status.cancel_reason_code = Some(r.code);
+                                if r.tiploc.is_some() {
+                                    status.reason_tiploc = r.tiploc.clone();
+                                }
+                            }
+                            // Whole-service cancellation: Darwin flags can="true" on every
+                            // planned call. Sticky (set only to true).
+                            if !sched.calls.is_empty()
+                                && sched.calls.iter().all(|c| c.is_cancelled)
+                            {
+                                status.is_cancelled.apply_if_newer(
+                                    Stamped::with_version(Some(true), sched_version),
+                                );
+                            }
+                        })
+                        .await;
+
+                    // Phase 2: persist uid→toc (deduped) so delay_history (keyed on uid)
+                    // becomes operator-attributable via services.toc.
+                    if let (Some(db), Some(uid), Some(toc)) =
+                        (self.ctx.db.as_ref(), sched_uid, sched_toc)
+                        && !toc.is_empty()
+                        && uid.len() == 6
+                        && self.ctx.persisted_services.insert(uid.clone())
+                    {
+                        let db_clone = db.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                crate::db::operators::upsert_service_toc(&db_clone, &uid, &toc).await
+                            {
+                                tracing::warn!(error = %e, uid = %uid, "Failed to persist service toc");
+                            }
+                        });
+                    }
+
+                    // Persist the cancellation now (deduped) — cancelled trains rarely deactivate
+                    // while tracked, so the journey/cancellation would otherwise never be recorded.
+                    if let (Some(record), Some(db)) = (cancelled_record, self.ctx.db.as_ref())
+                        && self.ctx.persisted_cancellations.insert(record.rid.clone())
+                    {
+                        let db_clone = db.clone();
+                        let uid = record.uid.clone();
+                        let origin = record.origin_tpl.clone();
+                        let sched_dep = record.scheduled_departure;
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                crate::db::journeys::insert_journey(&db_clone, &record, &[]).await
+                            {
+                                tracing::warn!(error = %e, "Failed to persist cancelled journey");
+                            }
+                            if let Err(e) = crate::db::cancellations::record_cancellation(
+                                &db_clone, &uid, &origin, sched_dep,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, "Failed to record cancellation");
+                            }
+                        });
+                    }
+                }
+
+                ParsedUpdate::Association { prev_rid, next_rid } => {
+                    self.ctx.registry.record_association(&prev_rid, &next_rid);
+                    tracing::debug!(
+                        prev_rid = %prev_rid,
+                        next_rid = %next_rid,
+                        "Recorded NP turnround association"
+                    );
                 }
 
                 ParsedUpdate::Deactivated(deact) => {
@@ -354,15 +558,30 @@ impl IngestionPipeline {
                     }
 
                     let rid = deact.rid.clone();
-                    tracing::info!(rid = %rid, "Train deactivated — removing from registry");
+                    tracing::debug!(rid = %rid, "Train deactivated — removing from registry");
 
-                    // Capture the final delay before removing the entry — needed to
-                    // close out the prediction_outcomes row for this RID.
-                    let final_delay = if let Some(arc) = self.ctx.registry.get(&rid) {
+                    // Capture the final delay (to close out the prediction_outcomes row)
+                    // and, if the service was cancelled, the cancellation pattern — both
+                    // before removing the entry.
+                    let (final_delay, cancellation, journey) = if let Some(arc) =
+                        self.ctx.registry.get(&rid)
+                    {
                         let s = arc.read().await;
-                        s.reported_delay_mins.value
+                        let cancellation = if s.is_cancelled.value == Some(true) {
+                            match (s.uid.clone(), s.origin_crs.clone()) {
+                                (Some(uid), Some(origin)) => {
+                                    Some((uid, origin, s.scheduled_departure.value))
+                                }
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        // Full-Journey Capture: snapshot the accumulated journey before eviction.
+                        let journey = build_journey_record(&s);
+                        (s.reported_delay_mins.value, cancellation, journey)
                     } else {
-                        None
+                        (None, None, None)
                     };
 
                     // Remove from registry and forget sequence state.
@@ -387,11 +606,40 @@ impl IngestionPipeline {
                         });
                     }
 
+                    // Persist the cancellation (best-effort) if this service was cancelled.
+                    if let (Some((uid, origin, sched)), Some(db)) =
+                        (cancellation, self.ctx.db.as_ref())
+                    {
+                        let db_clone = db.clone();
+                        let rid_str = rid.as_str().to_string();
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::db::cancellations::record_cancellation(
+                                &db_clone, &uid, &origin, sched,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, rid = %rid_str, "Failed to record cancellation");
+                            }
+                        });
+                    }
+
+                    // Persist the full journey (best-effort) — the analytics "fat record".
+                    if let (Some((record, calls)), Some(db)) = (journey, self.ctx.db.as_ref()) {
+                        let db_clone = db.clone();
+                        let rid_str = rid.as_str().to_string();
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                crate::db::journeys::insert_journey(&db_clone, &record, &calls).await
+                            {
+                                tracing::warn!(error = %e, rid = %rid_str, "Failed to persist journey");
+                            }
+                        });
+                    }
+
                     let event = StateChangeEvent {
                         train_id: rid,
                         old_state: TrainState::Active,
                         new_state: TrainState::Terminal,
-                        reason: PromotionReason::TimeBased,
                     };
                     let _ = self.ctx.state_change_tx.send(event);
                 }
@@ -401,13 +649,216 @@ impl IngestionPipeline {
 }
 
 // ---------------------------------------------------------------------------
+// Full-Journey Capture helpers
+// ---------------------------------------------------------------------------
+
+/// Convert a parsed Darwin call into the registry's accumulated observation shape.
+fn call_obs_from(c: &parser::CallUpdate) -> crate::types::CallObservation {
+    crate::types::CallObservation {
+        tpl: c.tpl.clone(),
+        seq: c.seq,
+        sched_arr: c.sched_arr,
+        sched_dep: c.sched_dep,
+        est_arr: c.est_arr,
+        act_arr: c.act_arr,
+        est_dep: c.est_dep,
+        act_dep: c.act_dep,
+        platform: c.platform.clone(),
+        plat_confirmed: c.plat_confirmed,
+        is_cancelled: c.is_cancelled,
+        activity: c.activity.clone(),
+    }
+}
+
+/// Minutes between a scheduled and an observed (estimated/actual) time, correcting for midnight
+/// rollover. Darwin times are `HH:MM` anchored on the schedule-start date, so a stop just after
+/// midnight (00:05) against a 23:55 schedule naively reads −1430 min. A delay/early beyond ±12h
+/// is always such an artifact, so wrap it back into range.
+fn wrapped_delay_mins(scheduled: DateTime<Utc>, observed: DateTime<Utc>) -> i32 {
+    let mut d = (observed - scheduled).num_minutes();
+    if d < -720 {
+        d += 1440;
+    } else if d > 720 {
+        d -= 1440;
+    }
+    d as i32
+}
+
+/// Delay in whole minutes between a scheduled and an actual/estimated time, if both are known.
+fn delay_between(sched: Option<DateTime<Utc>>, actual: Option<DateTime<Utc>>) -> Option<i32> {
+    match (sched, actual) {
+        (Some(s), Some(a)) => Some(wrapped_delay_mins(s, a)),
+        _ => None,
+    }
+}
+
+/// Assemble a finalised journey (header + per-stop rows) from an accumulated `TrainStatus`.
+/// Returns `None` if the minimum identity (uid + origin TIPLOC) is missing. Computes the cheap
+/// rollups (arrival delay, max/min/recovered, n_calls) the dashboards and regression use.
+fn build_journey_record(
+    status: &crate::types::TrainStatus,
+) -> Option<(
+    crate::db::journeys::JourneyRecord,
+    Vec<crate::db::journeys::JourneyCallRecord>,
+)> {
+    use crate::db::journeys::{JourneyCallRecord, JourneyRecord};
+
+    let uid = status.uid.clone()?;
+    let origin_tpl = status.origin_crs.clone()?;
+    let sched_dep = status.scheduled_departure.value;
+    let weekday = sched_dep.weekday().num_days_from_monday() as i16;
+    let departure_hour = sched_dep.hour() as i16;
+
+    let mut calls: Vec<JourneyCallRecord> = Vec::with_capacity(status.journey.len());
+    let mut max_delay: Option<i32> = None;
+    let mut min_delay: Option<i32> = None;
+    let mut partial_cancel = false;
+
+    // BTreeMap iterates in seq order: calls[0] = origin, calls.last() = destination.
+    for obs in status.journey.values() {
+        let arr_delay = delay_between(obs.sched_arr, obs.act_arr.or(obs.est_arr));
+        let dep_delay = delay_between(obs.sched_dep, obs.act_dep.or(obs.est_dep));
+        let dwell_secs = match (obs.act_arr, obs.act_dep) {
+            (Some(a), Some(d)) => Some((d - a).num_seconds() as i32),
+            _ => None,
+        };
+        if let Some(d) = dep_delay.or(arr_delay) {
+            max_delay = Some(max_delay.map_or(d, |m| m.max(d)));
+            min_delay = Some(min_delay.map_or(d, |m| m.min(d)));
+        }
+        if obs.is_cancelled {
+            partial_cancel = true;
+        }
+        calls.push(JourneyCallRecord {
+            seq: obs.seq as i16,
+            tpl: obs.tpl.clone(),
+            sched_arr: obs.sched_arr,
+            actual_arr: obs.act_arr,
+            arr_delay_mins: arr_delay,
+            sched_dep: obs.sched_dep,
+            actual_dep: obs.act_dep,
+            dep_delay_mins: dep_delay,
+            platform: obs.platform.clone(),
+            plat_confirmed: obs.plat_confirmed,
+            is_cancelled: obs.is_cancelled,
+            dwell_secs,
+        });
+    }
+
+    let was_cancelled = status.is_cancelled.value == Some(true);
+    if was_cancelled {
+        // A whole-service cancel supersedes any per-stop cancel flags.
+        partial_cancel = false;
+    }
+
+    // Identify origin/destination by TIPLOC rather than position: when a TS message registers
+    // a train before its schedule arrives, the first-seen stop (seq 0) may be a mid-journey
+    // location, not the origin. Fall back to positional if the name isn't in the journey.
+    let origin_obs = status
+        .journey
+        .values()
+        .find(|c| c.tpl == origin_tpl)
+        .or_else(|| status.journey.get(&0));
+    let origin_platform = origin_obs
+        .and_then(|c| c.platform.clone())
+        .or_else(|| status.actual_platform.value.clone());
+    let platform_confirmed = origin_obs.and_then(|c| c.plat_confirmed);
+    let actual_departure = origin_obs.and_then(|c| c.act_dep);
+
+    let arrival_delay_mins = status
+        .destination_crs
+        .as_ref()
+        .and_then(|dest| calls.iter().find(|c| &c.tpl == dest))
+        .or_else(|| calls.last())
+        .and_then(|c| c.arr_delay_mins.or(c.dep_delay_mins));
+    let recovered_mins = match (max_delay, arrival_delay_mins) {
+        (Some(mx), Some(ad)) => Some(mx - ad),
+        _ => None,
+    };
+
+    let reason_code = status.late_reason_code.or(status.cancel_reason_code);
+    let reason_class = reason::reason_class_code(reason_code);
+
+    let record = JourneyRecord {
+        rid: status.id.as_str().to_string(),
+        uid,
+        ssd: sched_dep.date_naive(),
+        weekday,
+        departure_hour,
+        toc: status.toc.clone(),
+        train_category: status.train_category.clone(),
+        origin_tpl,
+        destination_tpl: status.destination_crs.clone(),
+        scheduled_departure: sched_dep,
+        actual_departure,
+        origin_delay_mins: status.reported_delay_mins.value,
+        arrival_delay_mins,
+        late_reason_code: status.late_reason_code.map(|c| c as i16),
+        cancel_reason_code: status.cancel_reason_code.map(|c| c as i16),
+        reason_tiploc: status.reason_tiploc.clone(),
+        reason_class,
+        was_cancelled,
+        partial_cancel,
+        n_calls: status.journey.len() as i16,
+        max_delay_mins: max_delay,
+        min_delay_mins: min_delay,
+        recovered_mins,
+        origin_platform,
+        platform_confirmed,
+        wind_mph: status.volatility.wind_speed_mph,
+    };
+    Some((record, calls))
+}
+
+/// Build a finalised journey record for a whole-service cancellation, from the `schedule` alone
+/// (a cancelled train doesn't run, so there are no actuals). `None` without a uid or a scheduled
+/// origin departure.
+fn build_cancelled_journey(
+    sched: &parser::ScheduleUpdate,
+) -> Option<crate::db::journeys::JourneyRecord> {
+    use crate::db::journeys::JourneyRecord;
+    let uid = sched.uid.clone()?;
+    let first = sched.calls.first()?;
+    let last = sched.calls.last()?;
+    let sched_dep = first.sched_dep?;
+    Some(JourneyRecord {
+        rid: sched.rid.as_str().to_string(),
+        uid,
+        ssd: sched.ssd,
+        weekday: sched_dep.weekday().num_days_from_monday() as i16,
+        departure_hour: sched_dep.hour() as i16,
+        toc: sched.toc.clone(),
+        train_category: sched.train_category.clone(),
+        origin_tpl: first.tpl.clone(),
+        destination_tpl: Some(last.tpl.clone()),
+        scheduled_departure: sched_dep,
+        actual_departure: None,
+        origin_delay_mins: None,
+        arrival_delay_mins: None,
+        late_reason_code: None,
+        cancel_reason_code: sched.cancel_reason.as_ref().map(|r| r.code as i16),
+        reason_tiploc: sched.cancel_reason.as_ref().and_then(|r| r.tiploc.clone()),
+        reason_class: 0,
+        was_cancelled: true,
+        partial_cancel: false,
+        n_calls: sched.calls.len() as i16,
+        max_delay_mins: None,
+        min_delay_mins: None,
+        recovered_mins: None,
+        origin_platform: None,
+        platform_confirmed: None,
+        wind_mph: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::poll_manager::StateChangeEvent;
+    use crate::state_machine::StateChangeEvent;
     use crate::types::TrainId;
     use stomp_client::MockStompClient;
 
@@ -483,6 +934,90 @@ mod tests {
             }
         }
         assert!(saw_terminal);
+    }
+
+    #[test]
+    fn build_journey_record_computes_rollups() {
+        use crate::types::{CallObservation, Stamped, TrainId, TrainStatus};
+        let base = Utc::now();
+        let mut s = TrainStatus::new(TrainId::rid("202404170123456").unwrap(), base, base);
+        s.uid = Some("C12345".into());
+        s.origin_crs = Some("LEEDS".into());
+        s.destination_crs = Some("SHEFFLD".into());
+        s.reported_delay_mins = Stamped::new(Some(2));
+
+        // Origin departs +2.
+        let mut c0 = CallObservation::new("LEEDS".into(), 0);
+        c0.sched_dep = Some(base);
+        c0.act_dep = Some(base + chrono::Duration::minutes(2));
+        s.apply_call(c0);
+        // Peaks at +12 mid-journey.
+        let mut c1 = CallObservation::new("WAKEFLD".into(), 0);
+        c1.sched_arr = Some(base + chrono::Duration::minutes(18));
+        c1.act_arr = Some(base + chrono::Duration::minutes(30));
+        s.apply_call(c1);
+        // Recovers to +6 by the destination.
+        let mut c2 = CallObservation::new("SHEFFLD".into(), 0);
+        c2.sched_arr = Some(base + chrono::Duration::minutes(50));
+        c2.act_arr = Some(base + chrono::Duration::minutes(56));
+        s.apply_call(c2);
+
+        let (rec, calls) = build_journey_record(&s).expect("record built");
+        assert_eq!(calls.len(), 3);
+        assert_eq!(rec.n_calls, 3);
+        assert_eq!(rec.origin_tpl, "LEEDS");
+        assert_eq!(rec.destination_tpl.as_deref(), Some("SHEFFLD"));
+        assert_eq!(rec.arrival_delay_mins, Some(6));
+        assert_eq!(rec.max_delay_mins, Some(12));
+        assert_eq!(rec.recovered_mins, Some(6)); // 12 peak − 6 at arrival
+        assert!(!rec.was_cancelled);
+    }
+
+    #[test]
+    fn wrapped_delay_corrects_midnight_rollover() {
+        let base = Utc::now();
+        assert_eq!(wrapped_delay_mins(base, base + chrono::Duration::minutes(8)), 8);
+        // Observed reads 1430 min *before* scheduled = a just-after-midnight rollover → +10.
+        assert_eq!(wrapped_delay_mins(base, base - chrono::Duration::minutes(1430)), 10);
+        // The symmetric case (scheduled just after midnight) wraps the other way.
+        assert_eq!(wrapped_delay_mins(base, base + chrono::Duration::minutes(1435)), -5);
+    }
+
+    #[test]
+    fn build_journey_record_finds_origin_by_tiploc_not_seq() {
+        use crate::types::{CallObservation, TrainId, TrainStatus};
+        let base = Utc::now();
+        let mut s = TrainStatus::new(TrainId::rid("202404170123456").unwrap(), base, base);
+        s.uid = Some("C12345".into());
+        s.origin_crs = Some("LEEDS".into());
+        s.destination_crs = Some("SHEFFLD".into());
+        // A TS arrived before the schedule, leading with a MID stop → seq 0 = WAKEFLD.
+        let mut mid = CallObservation::new("WAKEFLD".into(), 0);
+        mid.act_arr = Some(base + chrono::Duration::minutes(30));
+        s.apply_call(mid);
+        let mut origin = CallObservation::new("LEEDS".into(), 0);
+        origin.act_dep = Some(base + chrono::Duration::minutes(2));
+        origin.platform = Some("3".into());
+        s.apply_call(origin);
+        let mut dest = CallObservation::new("SHEFFLD".into(), 0);
+        dest.sched_arr = Some(base + chrono::Duration::minutes(50));
+        dest.act_arr = Some(base + chrono::Duration::minutes(56));
+        s.apply_call(dest);
+
+        let (rec, _) = build_journey_record(&s).expect("record built");
+        // Origin platform + actual departure must come from LEEDS (seq 1), not WAKEFLD (seq 0).
+        assert_eq!(rec.origin_platform.as_deref(), Some("3"));
+        assert!(rec.actual_departure.is_some());
+        assert_eq!(rec.arrival_delay_mins, Some(6)); // by name → SHEFFLD
+    }
+
+    #[test]
+    fn build_journey_record_requires_identity() {
+        use crate::types::{TrainId, TrainStatus};
+        let base = Utc::now();
+        // uid + origin_crs never set → not enough to build a journey row.
+        let s = TrainStatus::new(TrainId::rid("202404170123456").unwrap(), base, base);
+        assert!(build_journey_record(&s).is_none());
     }
 
     #[tokio::test]

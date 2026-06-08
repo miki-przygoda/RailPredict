@@ -9,6 +9,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use super::TrainId;
 
@@ -53,6 +54,17 @@ pub struct VolatilityContext {
     /// `None` when no qualifying preceding service was detected at prediction time, or
     /// when the prediction engine was called without a registry snapshot.
     pub correlation_signal: Option<CorrelationSignal>,
+
+    /// Reported delay of the predecessor service (same physical train set, previous trip).
+    /// Set from Darwin `Association` messages (category NP) via the ingestion pipeline.
+    /// `None` until a turnround association is seen for this RID.
+    pub predecessor_train_delay_mins: Option<i32>,
+
+    /// Named ML feature vector used to produce the most recent ONNX prediction.
+    /// Persisted to `prediction_outcomes.features` and `prediction_snapshots.features`
+    /// so every stored prediction is replayable and usable as a training row.
+    /// `None` when the statistical fallback (trimmed mean) was used instead of ONNX.
+    pub prediction_features: Option<JsonValue>,
 }
 
 impl VolatilityContext {
@@ -64,6 +76,8 @@ impl VolatilityContext {
             historical_reliability: None,
             last_updated: Utc::now(),
             correlation_signal: None,
+            predecessor_train_delay_mins: None,
+            prediction_features: None,
         }
     }
 

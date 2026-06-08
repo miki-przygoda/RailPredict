@@ -1,275 +1,283 @@
-//! Dashboard page — served at `/`, outside rate limiting.
+//! Overview cockpit — served at `/`, outside rate limiting.
 //!
-//! Shows system health, live ML accuracy stats, and quick navigation.
-//! DB queries run in parallel via tokio::join!.
+//! A live Signal-Terminal metrics cockpit: KPI strip (on-time %, avg delay,
+//! prediction MAE, trains tracked) with area sparklines, a live network-state
+//! panel, a prediction-accuracy panel, and a data-coverage footer. Re-scopable by
+//! the global time-range picker; htmx range swaps return just the cockpit fragment.
 
-use axum::extract::State;
-use maud::{Markup, html};
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
+use maud::{Markup, PreEscaped, html};
+use serde::Deserialize;
 
 use crate::api::AppState;
+use crate::db::{analytics, overview, predictions};
+use crate::frontend::charts::{self, KpiTone, Polarity};
+use crate::frontend::components;
 
-use super::layout::base;
+use super::layout::{base, NavPage};
 
-struct PredStats {
-    count_24h: i64,
-    median_ae:  f64,
-    pct_5min:   f64,
-    bias:       f64,
+#[derive(Debug, Deserialize)]
+pub struct DashParams {
+    #[serde(default)]
+    pub range: Option<String>,
 }
 
-pub async fn dashboard_page(State(state): State<AppState>) -> Markup {
-    let db_ok = sqlx::query("SELECT 1")
-        .execute(&state.db)
-        .await
-        .is_ok();
+pub async fn dashboard_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<DashParams>,
+) -> Markup {
+    let range = components::normalize_range(params.range.as_deref());
+    let hours = components::range_to_hours(range);
 
-    let (station_count, history_count, pred_stats) = tokio::join!(
-        fetch_station_count(&state, db_ok),
-        fetch_history_count(&state, db_ok),
-        fetch_pred_stats(&state, db_ok),
+    let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
+
+    let (headline, series, accuracy, acc_series, coverage, journeys) = tokio::join!(
+        overview::headline_metrics(&state.db, hours),
+        overview::daily_series(&state.db, hours),
+        predictions::accuracy_summary(&state.db, hours),
+        analytics::accuracy_over_time(&state.db, hours),
+        overview::coverage_counts(&state.db),
+        overview::journey_metrics(&state.db, hours),
+    );
+    let net = state.registry.network_summary(6).await;
+
+    let body = render_cockpit(
+        range,
+        db_ok,
+        headline.unwrap_or_default(),
+        series.unwrap_or_default(),
+        accuracy.ok(),
+        acc_series.unwrap_or_default(),
+        coverage.unwrap_or_default(),
+        journeys.unwrap_or_default(),
+        net,
     );
 
-    let train_count = state.registry.len();
-    let stomp_ok = !state.registry.is_empty();
-
-    base("Dashboard", render(
-        db_ok, stomp_ok, train_count,
-        station_count, history_count, pred_stats,
-    ))
+    if headers.contains_key("hx-request") {
+        body
+    } else {
+        base("Overview", NavPage::Dashboard, body)
+    }
 }
 
-async fn fetch_station_count(state: &AppState, db_ok: bool) -> Option<i64> {
-    if !db_ok { return None; }
-    sqlx::query_scalar("SELECT COUNT(*) FROM stations")
-        .fetch_one(&state.db)
-        .await
-        .ok()
+/// Extract a metric column from the series as an f64 vec (dropping NULL days).
+fn col(series: &[overview::DailyPoint], f: impl Fn(&overview::DailyPoint) -> Option<f64>) -> Vec<f64> {
+    series.iter().filter_map(f).collect()
 }
 
-async fn fetch_history_count(state: &AppState, db_ok: bool) -> Option<i64> {
-    if !db_ok { return None; }
-    sqlx::query_scalar("SELECT COUNT(*) FROM delay_history")
-        .fetch_one(&state.db)
-        .await
-        .ok()
+/// Delta between the last and first non-null points of a series (None if <2 points).
+fn delta(vals: &[f64]) -> Option<f64> {
+    match (vals.first(), vals.last()) {
+        (Some(a), Some(b)) if vals.len() >= 2 => Some(b - a),
+        _ => None,
+    }
 }
 
-async fn fetch_pred_stats(state: &AppState, db_ok: bool) -> Option<PredStats> {
-    if !db_ok { return None; }
-    sqlx::query_as::<_, (i64, f64, f64, f64)>(
-        "SELECT COUNT(*),
-                PERCENTILE_CONT(0.5) WITHIN GROUP
-                    (ORDER BY ABS(predicted_delay_mins - delay_mins))::float8,
-                (AVG(CASE WHEN ABS(predicted_delay_mins - delay_mins) <= 5
-                          THEN 1.0 ELSE 0.0 END) * 100)::float8,
-                AVG((predicted_delay_mins - delay_mins)::float8)
-         FROM delay_history
-         WHERE recorded_at > NOW() - INTERVAL '24 hours'
-           AND predicted_delay_mins IS NOT NULL
-           AND delay_mins BETWEEN -120 AND 600
-           AND ABS(predicted_delay_mins - delay_mins) < 300",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .map(|(count, median, pct, bias)| PredStats {
-        count_24h: count,
-        median_ae: median,
-        pct_5min: pct,
-        bias,
-    })
+/// Format an optional metric value, or an em dash when absent.
+fn fmt_opt(v: Option<f64>, prec: usize) -> String {
+    match v {
+        Some(x) => format!("{x:.*}", prec),
+        None => "—".to_string(),
+    }
 }
 
-fn render(
+use super::components::compact_count;
+
+#[allow(clippy::too_many_arguments)]
+fn render_cockpit(
+    range: &str,
     db_ok: bool,
-    stomp_ok: bool,
-    train_count: usize,
-    station_count: Option<i64>,
-    history_count: Option<i64>,
-    pred_stats: Option<PredStats>,
+    headline: overview::HeadlineMetrics,
+    series: Vec<overview::DailyPoint>,
+    accuracy: Option<predictions::AccuracySummary>,
+    acc_series: Vec<analytics::AccuracyPoint>,
+    coverage: overview::CoverageCounts,
+    jm: overview::JourneyMetrics,
+    net: crate::cache::train_registry::NetworkSummary,
 ) -> Markup {
+    let ontime_spark = col(&series, |p| p.on_time_pct);
+    let delay_spark = col(&series, |p| p.avg_delay_mins);
+    let mae_spark = col(&series, |p| p.mae_mins);
+
     html! {
         div .dashboard {
+            div .dash-header {
+                div {
+                    h1 .dash-title { "Network Overview" }
+                    p .dash-sub { "Live UK rail punctuality & prediction accuracy" }
+                }
+                div .dash-header-right {
+                    @if net.tracked > 0 {
+                        span .live-pill { span .live-dot {} "Live · " (net.tracked) " trains" }
+                    } @else {
+                        span .live-pill.idle { span .live-dot {} "Awaiting feed" }
+                    }
+                    (components::time_range_picker("/", range))
+                }
+            }
 
-            // ── Hero ──────────────────────────────────────────────────────────
-            div .dash-hero {
-                div .dash-hero-left {
-                    div .dash-hero-brand {
-                        span .dash-hero-dot {}
-                        h1 { "RailPredict" }
+            div .kpi-strip {
+                (charts::kpi_card("On-time", &fmt_opt(headline.on_time_pct, 1), Some("%"),
+                    Some("live movement sample"),
+                    delta(&ontime_spark).map(|d| (d, Polarity::HigherIsBetter)), Some(&ontime_spark), KpiTone::Ok))
+                (charts::kpi_card("Avg delay", &fmt_opt(headline.avg_delay_mins, 1), Some("min"),
+                    Some("across sampled movements"),
+                    delta(&delay_spark).map(|d| (d, Polarity::LowerIsBetter)), Some(&delay_spark), KpiTone::Warn))
+                (charts::kpi_card("Prediction MAE", &fmt_opt(headline.mae_mins, 2), Some("min"),
+                    Some("predicted vs actual error"),
+                    delta(&mae_spark).map(|d| (d, Polarity::LowerIsBetter)), Some(&mae_spark), KpiTone::Info))
+                (charts::kpi_card("Trains tracked", &net.tracked.to_string(), None,
+                    Some("on the Darwin feed"),
+                    None, None, KpiTone::Neutral))
+            }
+
+            div .cockpit-grid {
+                section .panel {
+                    div .panel-head {
+                        h2 { "Live network" }
+                        span .panel-meta { @if db_ok { "● Darwin feed" } @else { "DB offline" } }
                     }
-                    p .dash-hero-sub {
-                        "UK Rail data engine — v" (env!("CARGO_PKG_VERSION"))
-                    }
-                    div .dash-status-strip {
-                        span .dash-status-pill .(if db_ok { "pill-ok" } else { "pill-error" }) {
-                            span .dash-status-dot {}
-                            @if db_ok { "DB Online" } @else { "DB Down" }
+                    div .panel-body {
+                        div .net-counts {
+                            (net_stat("Tracked", net.tracked, "net-neutral"))
+                            (net_stat("On time", net.on_time, "net-ok"))
+                            (net_stat("Delayed", net.delayed, "net-warn"))
+                            (net_stat("Cancelled", net.cancelled, "net-bad"))
                         }
-                        span .dash-status-pill .(if stomp_ok { "pill-ok" } else { "pill-warn" }) {
-                            span .dash-status-dot {}
-                            @if stomp_ok { "Darwin Live" } @else { "Darwin Awaiting" }
+                        @if net.worst.is_empty() {
+                            p .panel-empty { "No delayed trains right now." }
+                        } @else {
+                            @let max_delay = net.worst.iter().map(|w| w.delay_mins).max().unwrap_or(1).max(1);
+                            ul .worst-list {
+                                @for w in &net.worst {
+                                    @let pct = (w.delay_mins as f64 / max_delay as f64 * 100.0).round() as i64;
+                                    li .worst-row {
+                                        span .worst-route {
+                                            code { (w.origin_crs.as_deref().unwrap_or("???")) }
+                                            span .arrow { "→" }
+                                            code { (w.destination_crs.as_deref().unwrap_or("???")) }
+                                        }
+                                        span .worst-bar { span .worst-fill style=(format!("width:{pct}%")) {} }
+                                        span .worst-delay { "+" (w.delay_mins) "m" }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                div .dash-hero-right {
-                    a .dash-cta-btn href="/search" {
-                        "Search departures"
-                        span .dash-cta-arrow { "→" }
+
+                section .panel {
+                    div .panel-head {
+                        h2 { "Prediction accuracy" }
+                        a .panel-link href="/predictions" { "Full analytics →" }
                     }
-                    a .dash-secondary-btn href="/predictions" {
-                        "ML analytics"
+                    div .panel-body {
+                        @match accuracy.filter(|a| a.finalised_count > 0) {
+                            Some(acc) => {
+                                @let within5 = acc.within_5_count as f64 / acc.finalised_count as f64 * 100.0;
+                                @let mae_series: Vec<f64> = acc_series.iter().filter_map(|p| p.mae_mins).collect();
+                                div .acc-top {
+                                    div .acc-headline {
+                                        span .acc-big { (within5.round() as i64) span .acc-pct { "%" } }
+                                        span .acc-cap { "within ±5 min" }
+                                    }
+                                    div .acc-detail {
+                                        p .acc-sub {
+                                            (compact_count(acc.finalised_count, 0)) " scored · MAE "
+                                            (fmt_opt(acc.mean_abs_error_mins, 1)) " min"
+                                        }
+                                        @if mae_series.len() >= 2 {
+                                            div .acc-chart { (charts::area_spark(&mae_series, "acc-trend")) }
+                                            span .acc-cap { "MAE trend · " (components::range_label(range)) }
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                p .panel-empty { "No scored predictions in this window yet." }
+                            }
+                        }
                     }
                 }
             }
 
-            // ── Metrics row ───────────────────────────────────────────────────
-            div .dash-metrics {
-                div .dash-metric {
-                    span .dm-label { "Active trains" }
-                    span .dm-value { (train_count) }
-                }
-                div .dash-metric {
-                    span .dm-label { "Stations" }
-                    span .dm-value {
-                        @if let Some(n) = station_count { (fmt_big(n)) } @else { "—" }
-                    }
-                }
-                div .dash-metric {
-                    span .dm-label { "Delay records" }
-                    span .dm-value {
-                        @if let Some(n) = history_count { (fmt_big(n)) } @else { "—" }
-                    }
-                }
-                @if let Some(p) = &pred_stats {
-                    div .dash-metric.dm-ml {
-                        span .dm-label { "Predictions (24 h)" }
-                        span .dm-value { (fmt_big(p.count_24h)) }
-                    }
-                    div .dash-metric.dm-ml {
-                        span .dm-label { "Median accuracy" }
-                        span .dm-value {
-                            (format!("{:.1}", p.median_ae))
-                            span .dm-unit { " min" }
-                        }
-                    }
-                    div .dash-metric.dm-ml {
-                        span .dm-label { "Within ±5 min" }
-                        span .dm-value
-                            .(if p.pct_5min >= 70.0 { "dm-ok" }
-                              else if p.pct_5min >= 50.0 { "dm-warn" }
-                              else { "dm-bad" })
-                        {
-                            (format!("{:.0}", p.pct_5min))
-                            span .dm-unit { "%" }
-                        }
-                    }
-                    div .dash-metric.dm-ml {
-                        span .dm-label { "Model bias" }
-                        span .dm-value
-                            .(if p.bias.abs() <= 1.0 { "dm-ok" }
-                              else if p.bias.abs() <= 3.0 { "dm-warn" }
-                              else { "dm-bad" })
-                        {
-                            @if p.bias >= 0.0 { "+" }
-                            (format!("{:.1}", p.bias))
-                            span .dm-unit { " min" }
-                        }
-                    }
-                } @else {
-                    div .dash-metric.dm-ml {
-                        span .dm-label { "ML model" }
-                        span .dm-value.dm-muted { "No data" }
-                    }
-                }
-            }
-
-            // ── Quick access ──────────────────────────────────────────────────
             section .dash-section {
-                p .dash-section-label { "Quick access" }
+                p .dash-section-label { "Arrival & recovery · " (compact_count(jm.journeys, 0)) " journeys captured" }
+                div .kpi-strip {
+                    (charts::kpi_card("Arrive within 5 min", &fmt_opt(jm.arrival_on_time_pct, 0), Some("%"),
+                        Some("delay at the destination"), None, None, KpiTone::Ok))
+                    (charts::kpi_card("Avg arrival delay", &fmt_opt(jm.avg_arrival_delay_mins, 1), Some("min"),
+                        Some("what passengers experience"), None, None, KpiTone::Warn))
+                    (charts::kpi_card("Services recovering", &fmt_opt(jm.recovered_pct, 0), Some("%"),
+                        Some("shed ≥2 min en route"), None, None, KpiTone::Info))
+                    (charts::kpi_card("Avg delay recovered", &fmt_opt(jm.avg_recovered_mins, 1), Some("min"),
+                        Some("when a service recovers"), None, None, KpiTone::Neutral))
+                }
+            }
+
+            section .dash-section {
+                p .dash-section-label { "Demo" }
                 div .dash-nav-grid {
-                    a .dash-nav-card href="/search" {
-                        div .dnc-icon { "🚆" }
-                        h3 { "Departure Board" }
-                        p { "Live departures from any UK station. Name or CRS autocomplete." }
-                    }
-                    a .dash-nav-card href="/predictions" {
-                        div .dnc-icon { "📊" }
-                        h3 { "ML Analytics" }
-                        p {
-                            "24-hour accuracy stats, station leaderboard, and biggest recent errors."
-                        }
-                    }
-                    a .dash-nav-card href="/demo" {
-                        div .dnc-icon { "⚙" }
-                        h3 { "Dev Console" }
-                        p { "Ingest GTFS data, probe the train registry, and simulate checkout." }
-                    }
-                    a .dash-nav-card href="/report" target="_blank" {
-                        div .dnc-icon { "📄" }
-                        h3 { "Delay Report (7d)" }
-                        p { "Generate a self-contained HTML snapshot of the last 7 days of delay and prediction data." }
-                    }
-                    a .dash-nav-card href="/report?days=1" target="_blank" {
-                        div .dnc-icon { "⚡" }
-                        h3 { "Live Report (24h)" }
-                        p { "Same report scoped to the last 24 hours — most recent delay and accuracy data." }
+                    a .dash-nav-card href="/demo" target="_blank" rel="noopener" {
+                        span .dnc-icon { (ICON_DEMO) }
+                        h3 { "RailPredict OS ↗" }
+                        p { "Full desktop showcase — replay a day across the network, the operator league, predicted-vs-actual & station reliability. Opens in a new tab." }
                     }
                 }
             }
 
-            // ── API reference (collapsed) ─────────────────────────────────────
-            details .dash-api-details {
-                summary .dash-api-summary { "REST API reference" }
-                table .api-table {
-                    thead {
-                        tr {
-                            th { "Method" }
-                            th { "Endpoint" }
-                            th { "Returns" }
-                        }
-                    }
-                    tbody {
-                        tr {
-                            td { span .method-badge { "GET" } }
-                            td { code { "/stations/{crs}/departures" } }
-                            td { "JSON departure board" }
-                        }
-                        tr {
-                            td { span .method-badge { "GET" } }
-                            td { code { "/trains/{rid}" } }
-                            td { "JSON train summary" }
-                        }
-                        tr {
-                            td { span .method-badge { "GET" } }
-                            td { code { "/trains/{rid}/live" } }
-                            td { "SSE live updates" }
-                        }
-                        tr {
-                            td { span .method-badge { "GET" } }
-                            td { code { "/journeys?from=XXX&to=YYY" } }
-                            td { "JSON direct services" }
-                        }
-                        tr {
-                            td { span .method-badge { "GET" } }
-                            td { code { "/stations/search?q=..." } }
-                            td { "JSON station autocomplete" }
-                        }
-                        tr {
-                            td { span .method-badge { "GET" } }
-                            td { code { "/health" } }
-                            td { "DB health probe" }
-                        }
-                    }
+            section .dash-section {
+                p .dash-section-label { "Explore" }
+                div .dash-nav-grid {
+                    (nav_card("/search", ICON_BOARD, "Departure Board", "Live departures from any UK station."))
+                    (nav_card("/predictions", ICON_CHART, "Prediction analytics", "Accuracy, calibration & biggest errors."))
+                    (nav_card("/operators", ICON_TROPHY, "Operators", "Per-operator punctuality league & drill-down."))
+                    (nav_card("/explore", ICON_EXPLORE, "Query Explorer", "Build your own delay & prediction queries."))
                 }
+            }
+
+            div .coverage-strip {
+                (coverage_chip("Stations", compact_count(coverage.stations, 1)))
+                (coverage_chip("Delay records", compact_count(coverage.real_records, 1)))
+                (coverage_chip("Predictions scored", compact_count(coverage.predictions_scored, 1)))
             }
         }
     }
 }
 
-fn fmt_big(n: i64) -> String {
-    if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
-    else if n >= 1_000 { format!("{:.0}k", n as f64 / 1_000.0) }
-    else { n.to_string() }
+fn net_stat(label: &str, value: usize, cls: &str) -> Markup {
+    html! {
+        div .net-stat {
+            span class=(format!("net-value {cls}")) { (value) }
+            span .net-label { (label) }
+        }
+    }
 }
+
+fn coverage_chip(label: &str, value: String) -> Markup {
+    html! {
+        div .cov-chip {
+            span .cov-value { (value) }
+            span .cov-label { (label) }
+        }
+    }
+}
+
+fn nav_card(href: &str, icon: PreEscaped<&'static str>, title: &str, sub: &str) -> Markup {
+    html! {
+        a .dash-nav-card href=(href) {
+            span .dnc-icon { (icon) }
+            h3 { (title) }
+            p { (sub) }
+        }
+    }
+}
+
+// 20×20 Lucide-style line icons (stroke=currentColor). Decorative → aria-hidden.
+const ICON_BOARD: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18M8 18v3M16 18v3"/></svg>"#);
+const ICON_CHART: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 14l3-4 3 2 4-6"/></svg>"#);
+const ICON_TROPHY: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12v3a6 6 0 0 1-12 0V4z"/><path d="M6 6H4v1a3 3 0 0 0 3 3M18 6h2v1a3 3 0 0 1-3 3M9 17h6M10 21h4M12 13v4"/></svg>"#);
+const ICON_EXPLORE: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>"#);
+const ICON_DEMO: PreEscaped<&'static str> = PreEscaped(r#"<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M10 8l4 2.5L10 13z"/></svg>"#);

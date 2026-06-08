@@ -1,6 +1,6 @@
 # RailPredict
 
-**v1.12.0 — May 2026**
+**v1.19.0 — June 2026**
 
 A UK rail data engine written in Rust. RailPredict subscribes directly to the **Darwin Push Port** — National Rail's STOMP-based firehose of every train movement in the country — and uses that stream to build an intelligent buffer between users and the Great British Railways API. The vast majority of queries are answered from local state, in-memory cache, and statistical prediction; the only call that ever hits GBR directly is the one that genuinely requires it: final ticket purchase.
 
@@ -87,6 +87,10 @@ Per-service delay history is stored in Postgres and loaded into memory at startu
 | Rate limiting (`tower_governor`, 60 req/s per IP)                       | Complete |
 | Weather volatility promotions (Open-Meteo, configurable anchors)        | Complete |
 | Push notifications (ntfy.sh, fires on Critical state promotions)        | Complete |
+| Full-journey capture (`journeys` + `journey_calls`, cancellation capture)| Complete |
+| Operator league + drill-down (`/operators`, real per-TOC coverage)      | Complete |
+| Journey reliability surfaces (detail trajectory, station reliability, arrival/recovery KPIs) | Complete |
+| Live Board + server-free Replay (`/live`, `static/replay.html`)         | Complete |
 | Tier C wiring (live GBR purchase API)                                   | Pending  |
 
 ---
@@ -142,7 +146,7 @@ The server starts on `0.0.0.0:3000` by default. Visit:
 |:-----------|:----------------------------------------------------------------|
 | `/`        | Dashboard — live system health, navigation                      |
 | `/search`  | Departure board — station autocomplete, live trains             |
-| `/demo`    | Developer Console — registry probe, event monitor, booking demo |
+| `/dev`     | Diagnostics — registry probe, event monitor, ingest UI          |
 | `/metrics` | Prometheus metrics endpoint                                     |
 | `/health`  | DB health probe                                                 |
 
@@ -155,7 +159,7 @@ src/
 ├── api/            REST handlers, SSE endpoint, response types
 ├── cache/          TrainRegistry (DashMap-backed, concurrent)
 ├── db/             sqlx queries — history flush, static data, timetables
-├── frontend/       maud page handlers (dashboard, search, detail, demo)
+├── frontend/       maud page handlers (dashboard, search, detail, dev)
 ├── ingestion/      Darwin STOMP client, XML parser, GTFS ingest
 ├── networking/     Coalescer, circuit breaker, rate limiter, GBR client
 ├── prediction/     Tier B engine — delay probability, confidence scoring
@@ -177,15 +181,14 @@ scripts/            Python ML training, data export, and DB seeding utilities
 | [`docs/improvements.md`](docs/improvements.md) | Full index of architectural decisions made across all epics. Treat as constraints before touching any module. |
 | [`docs/model-performance.md`](docs/model-performance.md) | ML model accuracy breakdown — MAE, tier distribution, feature importance. |
 | [`docs/model-improvement-plan.md`](docs/model-improvement-plan.md) | Rationale behind the v1.12.0 LightGBM improvements (bias correction, feature fixes, hyperparameter scaling). |
-| [`CLAUDE.md`](CLAUDE.md) | AI session seed — full architecture reference, module map, and key patterns. Useful as a human reference too. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup guide, code conventions, PR process, and notes on AI-assisted development. |
+| [`CLAUDE.md`](CLAUDE.md) | Architecture reference — full module map, key patterns, and engineering conventions. |
 | [`SECURITY.md`](SECURITY.md) | Secrets inventory and rotation procedure. |
 
 ---
 
 ## What Isn't Here Yet
 
-**Live ticket purchase (Tier C).** The GBR Retail API purchase endpoint (`POST /bookings`) is not wired. The full booking UI exists — search, select, checkout, payment confirmation — and the `/demo` page simulates the complete flow, including the exact request body and idempotency key that would be sent. The blocker is API tier access: the GBR sandbox grants read access freely, but write (purchase) access requires a separate commercial agreement. The circuit breaker, idempotency layer, and `purchase_attempts` table are already built and ready to connect.
+**Live ticket purchase (Tier C).** The GBR Retail API purchase endpoint (`POST /bookings`) is not wired; the product surfaces a "Ticketing — coming soon" stub in its place. The blocker is API tier access: the GBR sandbox grants read access freely, but write (purchase) access requires a separate commercial agreement. The circuit breaker, idempotency layer, and `purchase_attempts` table are already built and ready to connect.
 
 ---
 
@@ -197,23 +200,19 @@ scripts/            Python ML training, data export, and DB seeding utilities
 
 **No JavaScript frameworks.** The frontend is `maud` (server-side HTML) + `htmx` for partial updates + a small amount of vanilla JS for the autocomplete event delegation and SSE event feed. No build step, no bundler, no hydration.
 
-**Predictability over cleverness.** The state machine, circuit breaker, and coalescer all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/demo`, `/metrics`, and the live event monitor.
+**Predictability over cleverness.** The state machine, circuit breaker, and coalescer all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/dev`, `/metrics`, and the live event monitor.
 
 **Dependency hygiene.** `cargo deny` enforces licence compatibility and blocks known-vulnerable crate versions on every build. Secrets are documented with rotation cadence in `SECURITY.md`; none are committed or logged.
 
 ---
 
-## AI-Assisted Development
+## License
 
-RailPredict was built with [Claude Code](https://claude.ai/code) — Anthropic's CLI for agentic software development. The bulk of the implementation, from the Darwin ingestion pipeline to the LightGBM ONNX inference layer, was written in pair with Claude Sonnet.
+**Proprietary — © 2026 Mikolaj Mikuliszyn. All rights reserved.**
 
-**`CLAUDE.md`** is the session seed that gives Claude full architectural context before it writes any code — module map, key patterns, concurrency model, versioning protocol. It is the single most important file for understanding the project's design decisions in one place, and doubles as a human architecture reference.
+RailPredict is closed-source commercial software. The source code, models, and
+datasets are confidential and may not be used, copied, modified, or distributed
+without prior written permission. See [`LICENSE`](LICENSE) for the full terms.
 
-If you want to contribute using Claude Code:
-
-```bash
-# Claude Code reads CLAUDE.md automatically at session start
-claude   # from the repo root
-```
-
-The warm-up order in `CLAUDE.md` tells Claude what to read first. For significant new features, use `/plan` before implementation — Claude will propose and seek approval on a design before writing anything. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for more detail.
+Underlying UK rail data is sourced from the National Rail Darwin Push Port feed
+under Network Rail's data-feed terms and remains subject to its own licence.

@@ -15,10 +15,18 @@
 //! | Constant                  | Method | Path                                          | Purpose                        |
 //! |---------------------------|--------|-----------------------------------------------|--------------------------------|
 //! | `ENDPOINT_TRAIN_STATUS`   | GET    | `/v1/train/{rid}/status`                      | Live status for one service    |
-//! | `ENDPOINT_DEPARTURES`     | GET    | `/v1/station/{crs}/departures`                | Departure board for a station  |
 //!
 //! Response shapes are defined as `serde` structs below. If GBR changes its schema,
 //! update here; nothing else in the codebase should parse raw GBR JSON.
+//!
+//! ## NOTE — Tier C contract must be reconciled before enabling
+//! The endpoint/auth/key shape described above (`x-apikey` header, RID-keyed
+//! `/v1/train/{rid}/status`) does NOT match the real Realtime Trains API, which
+//! uses HTTP Basic auth and a UID-keyed `/json/service/{uid}/{date}` path. Tier C
+//! is deferred to production handoff. Before Tier C is enabled, this client's
+//! endpoint constants, auth header, and the RID-vs-UID lookup contract MUST be
+//! reconciled against the real upstream — do not wire this into a live poll path
+//! until that reconciliation is done.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -34,7 +42,6 @@ use crate::types::{TrainId, TrainStatus};
 pub const GBR_API_BASE_URL: &str = "https://api.rtt.io/api";
 
 pub const ENDPOINT_TRAIN_STATUS: &str = "/v1/train/{rid}/status";
-pub const ENDPOINT_DEPARTURES: &str = "/v1/station/{crs}/departures";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -56,6 +63,50 @@ pub enum GbrClientError {
 
     #[error("Train {0} not found in GBR response")]
     NotFound(TrainId),
+}
+
+/// Cloneable classification of a [`GbrClientError`], preserved after the typed error
+/// is fanned out to many coalescer waiters (the error itself isn't `Clone` because of
+/// `reqwest::Error`). The circuit breaker routes on this, never on message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GbrErrorKind {
+    /// 503 — upstream unavailable; counts toward the breaker.
+    Unavailable,
+    /// 429 — rate limited; back off, do NOT trip the breaker.
+    RateLimited,
+    /// Transport failure (timeout, connection refused, DNS, TLS); counts toward the breaker.
+    Transport,
+    /// 5xx other than 503 (500/502/504); counts toward the breaker.
+    ServerError,
+    /// An unexpected non-5xx status that isn't 429.
+    ClientError,
+    /// Train not present in the GBR response.
+    NotFound,
+}
+
+impl GbrErrorKind {
+    /// Whether a failure of this kind should increment the circuit breaker. Only
+    /// genuine upstream brownouts (503 / transport / 5xx) do — rate-limiting and
+    /// client/not-found errors are not breaker failures.
+    pub fn is_breaker_failure(self) -> bool {
+        matches!(self, Self::Unavailable | Self::Transport | Self::ServerError)
+    }
+}
+
+impl GbrClientError {
+    /// Classify this error for circuit-breaker / rate-limit routing.
+    pub fn kind(&self) -> GbrErrorKind {
+        match self {
+            GbrClientError::ServiceUnavailable => GbrErrorKind::Unavailable,
+            GbrClientError::RateLimited => GbrErrorKind::RateLimited,
+            GbrClientError::Http(_) => GbrErrorKind::Transport,
+            GbrClientError::UnexpectedStatus { status, .. } if *status >= 500 => {
+                GbrErrorKind::ServerError
+            }
+            GbrClientError::UnexpectedStatus { .. } => GbrErrorKind::ClientError,
+            GbrClientError::NotFound(_) => GbrErrorKind::NotFound,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -202,9 +253,17 @@ impl GbrClient for LiveGbrClient {
                     .await
                     .map_err(GbrClientError::Http)?;
 
+                // A malformed run_date must NOT silently fall back to today: that
+                // would anchor every parsed departure to the wrong date and fabricate
+                // plausible-but-wrong times on the live poll path. Fail instead so the
+                // caller skips the update rather than trusting a bad date.
                 let run_date =
-                    chrono::NaiveDate::parse_from_str(&body.run_date, "%Y-%m-%d")
-                        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+                    chrono::NaiveDate::parse_from_str(&body.run_date, "%Y-%m-%d").map_err(
+                        |e| GbrClientError::UnexpectedStatus {
+                            status: status_code,
+                            body: format!("invalid run_date {:?}: {}", body.run_date, e),
+                        },
+                    )?;
 
                 // Use the first location as the origin for departure-time purposes.
                 let origin = body
@@ -264,33 +323,27 @@ impl GbrClient for LiveGbrClient {
 pub mod mock {
     use super::*;
     use chrono::Utc;
-    use std::sync::{Arc, Mutex};
 
     /// Configurable mock: returns a preset response or error for each call.
     pub struct MockGbrClient {
         /// If `Some`, returns this error on every call. If `None`, returns a stub status.
-        pub force_error: Arc<Mutex<Option<GbrClientError>>>,
+        pub force_error: Option<GbrClientError>,
     }
 
     impl MockGbrClient {
         pub fn ok() -> Self {
-            Self { force_error: Arc::new(Mutex::new(None)) }
+            Self { force_error: None }
         }
 
         pub fn failing(err: GbrClientError) -> Self {
-            Self { force_error: Arc::new(Mutex::new(Some(err))) }
-        }
-
-        /// Replace the preset error (allows tests to change behaviour mid-run).
-        pub fn set_error(&self, err: Option<GbrClientError>) {
-            *self.force_error.lock().unwrap() = err;
+            Self { force_error: Some(err) }
         }
     }
 
     #[async_trait]
     impl GbrClient for MockGbrClient {
         async fn get_train_status(&self, rid: &TrainId) -> Result<TrainStatus, GbrClientError> {
-            if let Some(ref e) = *self.force_error.lock().unwrap() {
+            if let Some(ref e) = self.force_error {
                 return Err(match e {
                     GbrClientError::ServiceUnavailable => GbrClientError::ServiceUnavailable,
                     GbrClientError::RateLimited => GbrClientError::RateLimited,

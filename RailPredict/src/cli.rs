@@ -46,10 +46,47 @@ pub enum Commands {
         #[arg(long, default_value = "7")]
         days: u32,
     },
+
+    /// Export the self-contained exec demo site (scrollytelling + baked replay).
+    ///
+    /// Single offline HTML file — no server needed to view it.
+    ExportDemo {
+        /// Output file path.
+        #[arg(long, default_value = "docs/demo.html")]
+        output: PathBuf,
+
+        /// How many days of history to include.
+        #[arg(long, default_value = "7")]
+        days: u32,
+    },
+
+    /// Export the self-contained offline command-centre map (GB delay map).
+    ExportMap {
+        /// Output file path.
+        #[arg(long, default_value = "docs/map.html")]
+        output: PathBuf,
+
+        /// How many days of history to include.
+        #[arg(long, default_value = "7")]
+        days: u32,
+    },
+
+    /// Export the self-contained offline "RailPredict OS" desktop (map flagship).
+    ExportOs {
+        /// Output file path.
+        #[arg(long, default_value = "docs/os.html")]
+        output: PathBuf,
+
+        /// How many days of history to include.
+        #[arg(long, default_value = "7")]
+        days: u32,
+    },
 }
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum IngestSource {
     Gtfs,
     Cif,
+    /// Rail Settlement Plan reference CSVs (stations + operators); `--file` is the directory.
+    Rds,
 }

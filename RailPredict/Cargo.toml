@@ -1,8 +1,9 @@
 [package]
 name = "RailPredict"
-version = "1.12.0"
+version = "1.19.0"
 edition = "2024"
-license = "Apache-2.0"
+license = "LicenseRef-Proprietary"
+publish = false
 
 [lib]
 name = "railpredict"
@@ -34,7 +35,7 @@ futures-core = "0.3"
 serde_json = "1"
 maud = { version = "0.26", features = ["axum"] }
 rust-embed = "8"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "migrate", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "migrate", "chrono", "json"] }
 clap = { version = "4", features = ["derive"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 csv = "1"

@@ -9,7 +9,7 @@ use crate::api::types::DepartureBoardEntry;
 use crate::api::AppState;
 
 use super::components::{delay_badge, platform_chip, prediction_chip};
-use super::layout::base;
+use super::layout::{base, NavPage};
 
 /// Shared JS injected on the search page.
 ///
@@ -143,6 +143,7 @@ const PRED_FILTER_JS: &str = r#"
 pub async fn search_page() -> Markup {
     base(
         "Search",
+        NavPage::Departures,
         html! {
             div .search-container {
                 div .search-hero {
@@ -396,11 +397,6 @@ pub fn render_suggestion_list(
                 {
                     span .suggestion-name { (result.name) }
                     span .suggestion-crs { (result.crs) }
-                    @if result.trains_today > 0 {
-                        span .suggestion-trains { (result.trains_today) " today" }
-                    } @else {
-                        span .suggestion-trains .suggestion-no-service { "no service" }
-                    }
                 }
             }
         }
@@ -437,7 +433,7 @@ pub async fn station_suggestions_fragment(
     let hits = state.station_index.search(&q, 10);
     let results: Vec<StationResult> = hits
         .into_iter()
-        .map(|h| StationResult { crs: h.crs, name: h.name, trains_today: 0 })
+        .map(|h| StationResult { crs: h.crs, name: h.name })
         .collect();
 
     render_suggestion_list(&results, &crs_id, &q_id, &suggestions_id)
@@ -479,26 +475,9 @@ pub async fn journeys_fragment(
         .and_then(|s| s.parse::<chrono::NaiveDate>().ok())
         .unwrap_or_else(|| chrono::Utc::now().date_naive());
 
-    let rows = sqlx::query_as::<_, (String, chrono::NaiveTime, Option<String>)>(
-        "SELECT tc_from.uid, \
-                tc_from.scheduled_departure, \
-                tc_from.platform \
-         FROM timetable_calls tc_from \
-         JOIN timetable_calls tc_to \
-             ON tc_to.uid            = tc_from.uid \
-            AND tc_to.operating_date = tc_from.operating_date \
-            AND tc_to.location_crs   = $2 \
-            AND tc_to.call_order     > tc_from.call_order \
-         WHERE tc_from.location_crs  = $1 \
-           AND tc_from.operating_date = $3 \
-         ORDER BY tc_from.scheduled_departure",
-    )
-    .bind(&from)
-    .bind(&to)
-    .bind(date)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let rows = crate::db::static_data::direct_journeys(&state.db, &from, &to, date, None)
+        .await
+        .unwrap_or_default();
 
     let entries: Vec<DepartureBoardEntry> = rows
         .into_iter()
@@ -560,7 +539,7 @@ mod tests {
     }
 
     fn make_station(crs: &str, name: &str) -> StationResult {
-        StationResult { crs: crs.to_string(), name: name.to_string(), trains_today: 0 }
+        StationResult { crs: crs.to_string(), name: name.to_string() }
     }
 
     // ── departure_board_fragment ────────────────────────────────────────────

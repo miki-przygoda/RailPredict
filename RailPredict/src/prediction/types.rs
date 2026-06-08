@@ -20,7 +20,7 @@ use dashmap::DashMap;
 
 pub const MAX_SAMPLES: usize = 90;
 
-/// Rolling 7-day statistics for a service pattern.
+/// Rolling statistics for a service pattern, computed over both 7-day and 14-day windows.
 ///
 /// All fields default to 0.0 when no recent history exists — this maps cleanly to
 /// "no prior signal" in the ML feature vector without Option unwrapping at call sites.
@@ -34,10 +34,14 @@ pub struct RollingStats {
     pub on_time_pct: f32,
     /// log1p(n) where n = number of observations in the last 7 days.
     pub sample_count_log: f32,
+    /// Mean delay in minutes over the last 14 days.
+    pub mean_delay_14d: f32,
+    /// Standard deviation of delay in minutes over the last 14 days.
+    pub std_delay_14d: f32,
 }
 
 /// Live Darwin / weather signals available when a train is in Active or Critical state.
-/// Used as the 5 extra features for the real-time ONNX model.
+/// Used as the 8 extra features for the real-time ONNX model.
 #[derive(Debug, Clone, Default)]
 pub struct LiveFeatures {
     /// Latest reported delay from Darwin (0.0 if unknown).
@@ -50,6 +54,14 @@ pub struct LiveFeatures {
     pub volatility_score: f32,
     /// Minutes until scheduled departure (negative = en-route).
     pub mins_until_departure: f32,
+    /// Mean delay of all other trains at the same origin CRS in the last 30 min (0.0 if unknown).
+    pub station_congestion_30m: f32,
+    /// Mean delay of all other trains from the same operator (UID prefix) in the last 60 min.
+    /// Zero if fewer than 3 other trains are in the window.
+    pub operator_cascade_delay: f32,
+    /// Delay of the predecessor service (same physical train set, previous trip).
+    /// Sourced from Darwin `Association` messages (category NP).  Zero if unknown.
+    pub predecessor_train_delay: f32,
 }
 
 /// The stable identity of a recurring rail service — independent of the daily RID.
@@ -131,33 +143,53 @@ impl HistoricalStore {
         entry.back().map(|r| (r.delay_mins, r.recorded_at))
     }
 
-    /// Rolling statistics for `pattern` over the last 7 days.
+    /// Rolling statistics for `pattern` over the last 7 and 14 days, computed in one pass.
     ///
-    /// Returns `RollingStats::default()` (all zeros) when no recent data exists, so
+    /// Returns `RollingStats::default()` (all zeros) when no 7-day data exists, so
     /// callers can always build a complete ML feature vector without Option handling.
+    /// The 14d fields will be zero only if no records exist in the 14-day window.
     pub fn rolling_stats_7d(&self, pattern: &ServicePattern) -> RollingStats {
         let Some(entry) = self.inner.get(pattern) else {
             return RollingStats::default();
         };
-        let cutoff = Utc::now() - Duration::days(7);
-        let recent: Vec<i32> = entry
-            .iter()
-            .filter(|r| r.recorded_at >= cutoff)
-            .map(|r| r.delay_mins)
-            .collect();
-        let n = recent.len();
-        if n == 0 {
+        let now = Utc::now();
+        let cutoff_7d  = now - Duration::days(7);
+        let cutoff_14d = now - Duration::days(14);
+
+        let mut v7: Vec<i32> = Vec::new();
+        let mut v14: Vec<i32> = Vec::new();
+        for r in entry.iter() {
+            if r.recorded_at >= cutoff_7d {
+                v7.push(r.delay_mins);
+                v14.push(r.delay_mins);
+            } else if r.recorded_at >= cutoff_14d {
+                v14.push(r.delay_mins);
+            }
+        }
+
+        if v7.is_empty() {
             return RollingStats::default();
         }
-        let n_f = n as f64;
-        let mean = recent.iter().map(|&x| x as f64).sum::<f64>() / n_f;
-        let variance = recent.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>() / n_f;
-        let on_time = recent.iter().filter(|&&x| x <= 0).count() as f64 / n_f * 100.0;
+
+        let stats = |v: &[i32]| -> (f32, f32) {
+            let n = v.len() as f64;
+            let mean = v.iter().map(|&x| x as f64).sum::<f64>() / n;
+            let var  = v.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>() / n;
+            (mean as f32, var.sqrt() as f32)
+        };
+
+        let n7 = v7.len() as f64;
+        let (mean_7d, std_7d)   = stats(&v7);
+        let (mean_14d, std_14d) = stats(&v14);
+        let on_time = v7.iter().filter(|&&x| x <= 0).count() as f64 / n7 * 100.0;
+
         RollingStats {
-            mean_delay:      mean as f32,
-            std_delay:       variance.sqrt() as f32,
-            on_time_pct:     on_time as f32,
-            sample_count_log: (n_f + 1.0).ln() as f32,
+            mean_delay:       mean_7d,
+            std_delay:        std_7d,
+            on_time_pct:      on_time as f32,
+            sample_count_log: (n7 + 1.0).ln() as f32,
+            mean_delay_14d:   mean_14d,
+            std_delay_14d:    std_14d,
         }
     }
 

@@ -47,6 +47,7 @@
 use std::sync::Arc;
 
 use chrono::{Datelike, Timelike, Utc};
+use serde_json::Value as JsonValue;
 
 use crate::types::train_status::Stamped;
 use crate::types::volatility::CorrelationSignal;
@@ -124,21 +125,10 @@ impl PredictionEngine {
         }
     }
 
-    /// Construct with an existing store (used when pre-loading from the DB on startup).
-    /// Uses the default no-op ONNX engine — call `with_store_and_onnx` to enable ML.
-    pub fn with_store(store: Arc<HistoricalStore>) -> Self {
-        Self { store, onnx: Arc::new(OnnxEngine::default()) }
-    }
-
     /// Construct with pre-loaded history AND an ONNX engine.
     /// This is the production path: `OnnxEngine::load("models")` at startup.
     pub fn with_store_and_onnx(store: Arc<HistoricalStore>, onnx: Arc<OnnxEngine>) -> Self {
         Self { store, onnx }
-    }
-
-    /// Returns a cheap `Arc` clone of the store — used by the background DB flush task.
-    pub fn arc_store(&self) -> Arc<HistoricalStore> {
-        Arc::clone(&self.store)
     }
 
     /// Compute a prediction from historical data and write it into `status.predicted_delay_mins`
@@ -190,8 +180,13 @@ impl PredictionEngine {
         // -----------------------------------------------------------------------
         let dep = &status.scheduled_departure.value;
 
-        let ml_prediction: Option<i32> = if let Some(reported) = status.reported_delay_mins.value {
-            // Real-time: we have a live Darwin delay signal — use the 15-feature model.
+        // Station congestion: mean delay of all other trains at the same origin in the last 30 min.
+        let station_congestion_30m = station_congestion(status, registry_snapshot);
+        // Operator cascade: mean delay of all other trains from the same operator in the last 60 min.
+        let operator_cascade_delay = operator_cascade(status, registry_snapshot);
+
+        let ml_result: Option<(i32, JsonValue)> = if let Some(reported) = status.reported_delay_mins.value {
+            // Real-time: we have a live Darwin delay signal — use the 22-feature model.
             let preceding = status
                 .volatility
                 .correlation_signal
@@ -205,12 +200,19 @@ impl PredictionEngine {
                 (false, false) => 0.0,
             };
             let mins_until = (dep.timestamp() - Utc::now().timestamp()) as f32 / 60.0;
+            let predecessor_train_delay = status
+                .volatility
+                .predecessor_train_delay_mins
+                .unwrap_or(0) as f32;
             let live = LiveFeatures {
-                current_delay_mins:   reported as f32,
-                preceding_delay_mins: preceding,
-                wind_mph:             wind,
+                current_delay_mins:      reported as f32,
+                preceding_delay_mins:    preceding,
+                wind_mph:                wind,
                 volatility_score,
-                mins_until_departure: mins_until,
+                mins_until_departure:    mins_until,
+                station_congestion_30m,
+                operator_cascade_delay,
+                predecessor_train_delay,
             };
             self.onnx.predict_realtime(&pattern, &rolling, dep, &live)
                 .or_else(|| self.onnx.predict_day_ahead(&pattern, &rolling, dep))
@@ -219,11 +221,14 @@ impl PredictionEngine {
             self.onnx.predict_day_ahead(&pattern, &rolling, dep)
         };
 
-        if let Some(pred) = ml_prediction {
+        if let Some((pred, features)) = ml_result {
             status.predicted_delay_mins = Stamped::new(Some(pred));
+            status.volatility.prediction_features = Some(features);
             // Confidence for ML path: use rolling sample coverage as proxy.
+            // Divisor ≈ ln(54): reaches full confidence near 54 accumulated samples.
+            const ML_CONFIDENCE_DIVISOR: f32 = 4.0;
             status.volatility.historical_reliability = Some(
-                (rolling.sample_count_log / 4.0_f32).min(1.0),
+                (rolling.sample_count_log / ML_CONFIDENCE_DIVISOR).min(1.0),
             );
             // Still run correlation scan to populate the signal for UI auditability.
             let (_, correlation_signal) = if let Some(snapshot) = registry_snapshot {
@@ -327,6 +332,54 @@ impl PredictionEngine {
         let predicted_delay_mins = status.predicted_delay_mins.value;
         self.store.insert(pattern, DelayRecord { delay_mins, predicted_delay_mins, recorded_at: now });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Station congestion helper
+// ---------------------------------------------------------------------------
+
+/// Mean `reported_delay_mins` of trains whose `key_of(t)` matches `target`, excluding
+/// `self_id`, that reported within the last `window_mins`. Returns 0.0 unless at least
+/// `min_count` qualifying trains exist (so the feature doesn't fire on thin evidence).
+fn mean_recent_delay(
+    snapshot: &[TrainStatus],
+    self_id: &crate::types::TrainId,
+    target: &str,
+    window_mins: i64,
+    min_count: u32,
+    key_of: impl Fn(&TrainStatus) -> Option<String>,
+) -> f32 {
+    let cutoff = Utc::now() - chrono::Duration::minutes(window_mins);
+    let mut sum = 0i64;
+    let mut count = 0u32;
+    for t in snapshot {
+        if t.id == *self_id { continue; }
+        if key_of(t).as_deref() != Some(target) { continue; }
+        if t.reported_delay_mins.last_updated < cutoff { continue; }
+        if let Some(d) = t.reported_delay_mins.value {
+            sum += d as i64;
+            count += 1;
+        }
+    }
+    if count < min_count { 0.0 } else { sum as f32 / count as f32 }
+}
+
+/// Mean delay of other trains at the same origin CRS reported in the last 30 minutes.
+fn station_congestion(status: &TrainStatus, snapshot: Option<&[TrainStatus]>) -> f32 {
+    let Some(snapshot) = snapshot else { return 0.0 };
+    let Some(ref origin) = status.origin_crs else { return 0.0 };
+    mean_recent_delay(snapshot, &status.id, origin, 30, 1, |t| t.origin_crs.clone())
+}
+
+/// Mean delay of other trains sharing this operator (UID prefix) reported in the last
+/// 60 minutes; needs ≥3 qualifying trains so it doesn't fire on thin evidence.
+fn operator_cascade(status: &TrainStatus, snapshot: Option<&[TrainStatus]>) -> f32 {
+    let Some(snapshot) = snapshot else { return 0.0 };
+    let Some(ref uid) = status.uid else { return 0.0 };
+    let prefix = uid.chars().next().unwrap_or('_').to_string();
+    mean_recent_delay(snapshot, &status.id, &prefix, 60, 3, |t| {
+        t.uid.as_deref().and_then(|u| u.chars().next()).map(|c| c.to_string())
+    })
 }
 
 // ---------------------------------------------------------------------------
