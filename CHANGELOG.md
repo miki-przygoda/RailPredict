@@ -2,9 +2,36 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.18.1" -- 08/06/2026**
+**version = "1.19.0" -- 08/06/2026**
 
 ---
+
+## v1.19.0 — 08/06/2026
+
+**Live map** — `/map` now shows the network *live* instead of replaying yesterday.
+
+- **Live, route-positioned services** (`cache::TrainRegistry::live_services`):
+  every running train becomes a `[lon,lat]` route + real timing from its
+  accumulated `journey`, and the renderer glides a node along it by the wall
+  clock. The offline OS demo keeps the baked replay (the renderer falls back when
+  no live feed is present).
+- **Whole-journey retention**: trains are retained in the registry until ~their
+  destination arrival (6 h safety cap) instead of 5 min after departure, so the
+  map can follow them across the country; the `/live` board still shows upcoming
+  departures.
+- **One "running now" definition** (`TrainStatus::is_en_route`): the map count and
+  the dashboard's "Live network" tally now agree (departed, not yet arrived) and
+  no longer count far-future retained trains.
+- **Rail-network routing** (`cache::rail_graph`): live paths snap to the baked GB
+  rail graph by shortest path, so express services follow real track instead of
+  cutting straight across land/sea; node/path lookups are memoised.
+- **Pruned network** (`scripts/build_map_data.py` + `edges.json`): redundant
+  skip-edges overlapping the same line are dropped (6022 → 2720 links,
+  connectivity preserved), and the backdrop is drawn as one flat 1 px layer.
+- **Map UI**: full-bleed page fitting all of GB, a cleaned heading + rounded live
+  pill with a glowing dot and a live train count.
+- **Demo refresh**: `make os` / `make map` regenerate the offline demo with the
+  new map.
 
 ## v1.18.1 — 08/06/2026
 

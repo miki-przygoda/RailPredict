@@ -19,8 +19,8 @@ use serde::Serialize;
 
 use crate::api::types::ApiError;
 use crate::api::AppState;
-use crate::cache::{location_coords, location_names};
-use crate::db::{overview, predictions};
+use crate::cache::{location_coords, location_names, LiveService};
+use crate::db::overview;
 use crate::export::map::MapTrain;
 use crate::frontend::layout::{base, NavPage};
 
@@ -44,8 +44,8 @@ const MAP_JS: &str = include_str!("../export/map_render.js");
 pub struct MapSnapshot {
     /// Unix timestamp (seconds) at which this snapshot was assembled.
     t: i64,
-    /// Placeable trains (tracking + recently settled), each with resolved coords.
-    trains: Vec<MapTrain>,
+    /// Live, route-positioned services currently running on the network.
+    trains: Vec<LiveService>,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,66 +92,14 @@ pub fn tracking_to_map_train(
 // Snapshot handler
 // ---------------------------------------------------------------------------
 
-/// `GET /ui/map/snapshot` — coordinate-attached trains from the live feed.
+/// `GET /ui/map/snapshot` — live, route-positioned services for the map.
 ///
-/// Combines the in-memory tracking registry (active, predicted) with the most
-/// recent settled outcomes from the DB. Trains whose TIPLOCs cannot be resolved
-/// to coordinates are silently dropped — never faked.
+/// Each currently-running service is turned into a route of `[lon,lat]` calling
+/// points plus origin-departure / destination-arrival timing, so the renderer can
+/// glide a node along it in real time. Stops without known coordinates are
+/// dropped — never faked. See [`crate::cache::TrainRegistry::live_services`].
 pub async fn map_snapshot(State(state): State<AppState>) -> Json<MapSnapshot> {
-    let tracking = state.registry.tracking_board(24).await;
-    let settled = predictions::recent_settled(&state.db, 24)
-        .await
-        .unwrap_or_default();
-
-    let mut trains: Vec<MapTrain> = Vec::new();
-
-    // --- active tracking trains ---
-    for t in tracking {
-        let (Some(o_tip), Some(d_tip)) = (
-            t.origin_crs.as_deref(),
-            t.destination_crs.as_deref(),
-        ) else {
-            continue;
-        };
-        if let Some(mt) = tracking_to_map_train(
-            &t.rid,
-            t.uid.as_deref(),
-            o_tip,
-            d_tip,
-            &t.scheduled_departure.format("%H:%M").to_string(),
-            t.predicted_delay_mins,
-        ) {
-            trains.push(mt);
-        }
-    }
-
-    // --- recently settled trains (predicted vs actual) ---
-    for s in settled {
-        let Some(d_tip) = s.destination_crs.as_deref() else {
-            continue;
-        };
-        let (Some((olat, olon)), Some((dlat, dlon))) = (
-            location_coords::coords(&s.origin_crs),
-            location_coords::coords(d_tip),
-        ) else {
-            continue;
-        };
-        let operator = s.operator.unwrap_or_else(|| "—".to_string());
-        trains.push(MapTrain {
-            brand: crate::ingestion::operators::brand_color(&operator).to_string(),
-            label: s.uid,
-            operator,
-            origin: location_names::name_or_code(&s.origin_crs).to_string(),
-            dest: location_names::name_or_code(d_tip).to_string(),
-            scheduled: String::new(),
-            predicted: s.predicted_delay_mins,
-            actual: s.final_delay_mins,
-            delta: (s.final_delay_mins - s.predicted_delay_mins).abs(),
-            o: [olon, olat],
-            d: [dlon, dlat],
-        });
-    }
-
+    let trains = state.registry.live_services().await;
     Json(MapSnapshot {
         t: chrono::Utc::now().timestamp(),
         trains,
@@ -178,10 +126,14 @@ pub async fn map_page(State(state): State<AppState>) -> Markup {
         style {
 r#"
 .map-page { display:flex; flex-direction:column; gap:0; }
-.map-heading { display:flex; align-items:center; gap:12px; padding:18px 0 14px; border-bottom:1px solid var(--border); margin-bottom:0; }
-.map-heading h1 { font:700 18px var(--font-mono); letter-spacing:.01em; }
-.map-heading .live-pill { display:flex; align-items:center; gap:6px; font:600 10px var(--font-mono); color:var(--ok); text-transform:uppercase; letter-spacing:.06em; }
-.map-heading .live-pill .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); animation:live-pulse 2s infinite; }
+.map-heading { display:flex; align-items:center; gap:10px; padding:18px 0 14px; border-bottom:1px solid var(--border); margin-bottom:0; }
+.map-heading h1 { font:700 16px var(--font-mono); letter-spacing:.01em; color:var(--text); }
+.map-heading .map-sub { font:600 11px var(--font-mono); color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em; }
+.map-heading .map-sub::before { content:"·"; margin-right:8px; color:var(--border); }
+.map-heading .live-pill { display:inline-flex; align-items:center; gap:7px; padding:4px 11px 4px 9px; border-radius:999px; background:rgba(52,211,153,.12); border:1px solid rgba(52,211,153,.34); font:700 10.5px var(--font-mono); color:var(--ok); text-transform:uppercase; letter-spacing:.08em; }
+.map-heading .live-pill .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); animation:live-pulse 2s infinite; }
+.map-heading .live-pill .lp-count { color:var(--text); opacity:.92; letter-spacing:.02em; }
+.map-heading .live-pill .lp-count:not(:empty)::before { content:"·"; margin:0 6px 0 1px; color:rgba(52,211,153,.55); }
 .cc-body { display:grid; grid-template-columns:230px 1fr 220px; gap:0; flex:1; min-height:580px; margin-top:0; border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; }
 @media (max-width:960px) { .cc-body { grid-template-columns:1fr; } }
 .cc-rail { padding:14px; overflow:auto; background:var(--surface); }
@@ -220,6 +172,11 @@ main:has(.map-page) { max-width:none; margin:0; padding:0; }
 .map-page { height:calc(100dvh - 54px); }
 .map-heading { padding:14px 20px 12px; }
 .cc-body { border-left:none; border-right:none; border-radius:0; min-height:0; }
+/* The map cell is a <div> (not <main>), but reset defensively: the global
+   `main { max-width:860px; margin:0 auto; padding:… }` rule must never reach it.
+   With all of its children absolutely positioned, auto side-margins would
+   otherwise shrink it to just its padding — the "tiny centre strip" bug. */
+.cc-map { max-width:none; margin:0; padding:0; min-width:0; }
 .map-legend { padding-left:20px; padding-right:20px; }
 @media (max-width:960px) { .map-page { height:auto; } .cc-body { min-height:560px; } }
 "#
@@ -228,10 +185,12 @@ main:has(.map-page) { max-width:none; margin:0; padding:0; }
         div .map-page {
             // ── Heading row ──────────────────────────────────────────────
             div .map-heading {
-                h1 { "Live delay map · Great Britain" }
+                h1 { "Live delay map" }
+                span .map-sub { "Great Britain" }
                 div .live-pill {
                     span .dot {}
-                    span { "live" }
+                    "Live"
+                    span # "map-count" .lp-count {}
                 }
             }
 
@@ -246,10 +205,10 @@ main:has(.map-page) { max-width:none; margin:0; padding:0; }
                 }
 
                 // Centre — map canvas + controls
-                main .cc-map {
+                div .cc-map {
                     svg # "map-svg" {}
                     div .map-clock-wrap {
-                        span .lbl { "Replaying yesterday" }
+                        span .lbl { "Live · now" }
                         b # "map-clock" { "--:--" }
                     }
                     button # "map-fs" .map-fs title="Fullscreen" aria-label="Fullscreen" { "⛶" }
@@ -269,10 +228,10 @@ main:has(.map-page) { max-width:none; margin:0; padding:0; }
                     }
                     div .map-info {
                         b { "What you're seeing: " }
-                        "a replay of yesterday's full day on the GB network (clock = time of day). "
-                        "Grey shows the network, brighter where busier; each bright node is a "
-                        "real service running its route, coloured by delay (green/amber/red). Watch "
-                        "the morning peak build and the network quieten overnight. Scroll to zoom; ⛶ fullscreen."
+                        "every train currently running on the GB network, live. Grey shows the "
+                        "network, brighter where busier; each bright node is a real service gliding "
+                        "along its route in real time, coloured by its delay (green/amber/red). "
+                        "Busy through the day, quiet overnight. Scroll to zoom; drag to pan; ⛶ fullscreen."
                     }
                     div .map-info style="margin-top:16px;font-size:10.5px;" {
                         "Map © OpenStreetMap contributors © CARTO"

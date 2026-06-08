@@ -37,6 +37,9 @@ MIN_STOPS = 5        # journeys: minimum resolved calling points
 MIN_TOTAL_KM = 42    # journeys: minimum total length
 EDGE_MAX_KM = 40     # edges: drop links longer than this (data-gap artifacts)
 EDGE_MIN_SAMPLES = 2 # edges: minimum observations to colour a link
+EDGE_PRUNE_RATIO = 1.4  # edges: drop a link when an alternative path <= this x its
+                        # length already exists — kills skip-edges (an express's
+                        # direct link) that overlap the stopping route on the same line
 
 
 def psql(db, sql):
@@ -88,6 +91,54 @@ def write(path, obj):
     return round(os.path.getsize(path) / 1024)
 
 
+def prune_redundant_edges(edges, coords):
+    """Drop skip-edges that overlap an existing path on the same line.
+
+    An edge A-C is removed when a path A-..-C of length <= EDGE_PRUNE_RATIO x the
+    direct edge already exists in the network — i.e. an express's direct link
+    duplicating the stopping route. Processed longest-first against the
+    progressively-pruned graph, so every removed edge keeps an alternative and the
+    network stays connected. Returns (kept_edges, n_pruned).
+    """
+    import heapq
+    adj = {}
+    for e in edges:
+        a, b = e[0], e[1]
+        w = km(coords, a, b)
+        adj.setdefault(a, {})[b] = w
+        adj.setdefault(b, {})[a] = w
+
+    def alt_within(a, b, limit):
+        pq, best = [(0.0, a)], {a: 0.0}
+        while pq:
+            d, u = heapq.heappop(pq)
+            if u == b:
+                return True
+            if d > limit or d > best.get(u, 1e18):
+                continue
+            for v, w in adj[u].items():
+                if u == a and v == b:
+                    continue  # ignore the direct edge under test
+                nd = d + w
+                if nd <= limit and nd < best.get(v, 1e18):
+                    best[v] = nd
+                    heapq.heappush(pq, (nd, v))
+        return False
+
+    order = sorted(range(len(edges)),
+                   key=lambda i: km(coords, edges[i][0], edges[i][1]), reverse=True)
+    kept, pruned = [], 0
+    for i in order:
+        a, b = edges[i][0], edges[i][1]
+        if b in adj.get(a, {}) and alt_within(a, b, km(coords, a, b) * EDGE_PRUNE_RATIO):
+            del adj[a][b]
+            del adj[b][a]
+            pruned += 1
+        else:
+            kept.append(edges[i])
+    return kept, pruned
+
+
 def build(db, d_from, d_to, max_journeys, max_replay):
     idx, coords, names = load_stations()
     rev = {v: k for k, v in idx.items()}
@@ -132,8 +183,10 @@ def build(db, d_from, d_to, max_journeys, max_replay):
         if n < EDGE_MIN_SAMPLES or km(coords, a, b) >= EDGE_MAX_KM:
             continue
         edges.append([a, b, bucket(s / n), min(n, 999)])
+    edges, pruned = prune_redundant_edges(edges, coords)
     kb = write(os.path.join(ASSETS, "edges.json"), edges)
-    print(f"  edges.json      {len(edges):>6} links              ({kb} KB)")
+    print(f"  edges.json      {len(edges):>6} links              ({kb} KB)  "
+          f"({pruned} redundant skip-edges pruned)")
 
     # 3) journey meta for the window: toc, operator name, arrival delay
     meta = {}
