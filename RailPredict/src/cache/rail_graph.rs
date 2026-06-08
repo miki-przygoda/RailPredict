@@ -163,10 +163,10 @@ pub fn snap_route(calls: &[[f64; 2]]) -> Vec<[f64; 2]> {
     }
     let mut nodes: Vec<u32> = Vec::with_capacity(calls.len());
     for c in calls {
-        if let Some(node) = nearest_node(g, *c) {
-            if nodes.last() != Some(&node) {
-                nodes.push(node);
-            }
+        if let Some(node) = nearest_node(g, *c)
+            && nodes.last() != Some(&node)
+        {
+            nodes.push(node);
         }
     }
     if nodes.len() < 2 {
