@@ -15,7 +15,27 @@ window.RailPredictMap = { init: function () {
   var IMG = window.MAP_IMG;
   var stations = window.MAP_STATIONS || [];   // [[lon,lat],...]
   var edges = window.MAP_EDGES || [];          // [[i,j,bucket,count],...]
-  var journeys = window.MAP_JOURNEYS || [];    // [{p:[idx...],lbl,o,d,dly,b},...]
+  // Live services (from /ui/map/snapshot) take over when present; otherwise fall
+  // back to the baked yesterday-replay (used by the offline OS demo).
+  var replayJourneys = window.MAP_JOURNEYS || [];   // [{p:[idx...],lbl,o,d,dly,b},...]
+  // Only the live snapshot's services carry a `route`; the offline demo bakes a
+  // routeless trains list, so require `route` to enter live mode (else replay).
+  var liveTrains = (M && Array.isArray(M.trains) && M.trains.length && M.trains[0] && M.trains[0].route) ? M.trains : null;
+  var journeys = liveTrains || replayJourneys;       // live: {route,dep,dur,dly,b,lbl,o,d}
+  var liveMode = !!liveTrains;
+  var clkLbl = document.querySelector(".map-clock-wrap .lbl");
+  if (clkLbl) clkLbl.textContent = liveMode ? "Live · now" : "Replaying yesterday";
+  var cntEl = document.getElementById("map-count");
+  if (cntEl) {
+    if (liveMode) {
+      // Count services running *right now* (en route) — matches the dashboard's
+      // "Live network" tally. Poised/upcoming nodes are shown but not counted.
+      var nm = (function () { var d = new Date(); return d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60; })();
+      var running = 0;
+      for (var ci = 0; ci < journeys.length; ci++) { var cj = journeys[ci]; if (nm >= cj.dep && nm < cj.dep + cj.dur) running++; }
+      cntEl.textContent = running + " trains";
+    } else cntEl.textContent = "";
+  }
   var svg = document.getElementById("map-svg");
   var NS = "http://www.w3.org/2000/svg";
   var XLINK = "http://www.w3.org/1999/xlink";
@@ -39,6 +59,10 @@ window.RailPredictMap = { init: function () {
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 
   svg.setAttribute("viewBox", "0 0 " + B.w + " " + B.h);
+  // "meet" = contain: the whole of GB is visible at once (zoomed out to fit),
+  // centred. Scroll to zoom in, then drag to pan around. (The map cell now
+  // fills the full section — the div/`.cc-map` reset stops it collapsing — so
+  // this fit view is large, just letterboxed left/right because GB is tall.)
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
 
   function el(tag, attrs) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); return e; }
@@ -55,22 +79,28 @@ window.RailPredictMap = { init: function () {
 
   // --- Base network: light grey lines, brighter where more trains run.
   // Each link is drawn once (deduped by station pair), so they don't stack. ---
-  var GREY = [{ c: "#5b657c", o: "0.32", w: "1" }, { c: "#7886a0", o: "0.48", w: "1.15" }, { c: "#9cb1d0", o: "0.66", w: "1.35" }];
-  var gp = ["", "", ""];
+  // Plain track network: every link the same flat 1px line, no weighting by
+  // traffic or anything else. Built as a single path so overlapping segments
+  // never compound into darker or thicker lines — just the track, with trains
+  // running over it.
+  var gp = "";
   for (var ei = 0; ei < edges.length; ei++) {
     var e = edges[ei], s1 = stations[e[0]], s2 = stations[e[1]];
     if (!s1 || !s2) continue;
-    var tier = e[3] < 5 ? 0 : e[3] < 20 ? 1 : 2;
-    gp[tier] += "M" + lon2px(s1[0]).toFixed(1) + " " + lat2px(s1[1]).toFixed(1) + "L" + lon2px(s2[0]).toFixed(1) + " " + lat2px(s2[1]).toFixed(1);
+    gp += "M" + lon2px(s1[0]).toFixed(1) + " " + lat2px(s1[1]).toFixed(1) + "L" + lon2px(s2[0]).toFixed(1) + " " + lat2px(s2[1]).toFixed(1);
   }
-  [0, 1, 2].forEach(function (t) { gZoom.appendChild(el("path", { d: gp[t], stroke: GREY[t].c, "stroke-width": GREY[t].w, "stroke-opacity": GREY[t].o, fill: "none", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" })); });
+  gZoom.appendChild(el("path", { d: gp, stroke: "#7886a0", "stroke-width": "1", "stroke-opacity": "0.5", fill: "none", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
 
   // --- Journeys: a single node travelling along each service's route. The route
   // itself isn't drawn (it lies on the grey network), so nothing overlaps. ---
   var jobjs = [];
   for (var ji = 0; ji < journeys.length; ji++) {
     var j = journeys[ji], pts = [];
-    for (var pk = 0; pk < j.p.length; pk++) { var s = stations[j.p[pk]]; if (s) pts.push([lon2px(s[0]), lat2px(s[1])]); }
+    if (j.route) {
+      for (var pk = 0; pk < j.route.length; pk++) { var c = j.route[pk]; pts.push([lon2px(c[0]), lat2px(c[1])]); }
+    } else {
+      for (var pk = 0; pk < j.p.length; pk++) { var s = stations[j.p[pk]]; if (s) pts.push([lon2px(s[0]), lat2px(s[1])]); }
+    }
     if (pts.length < 2) continue;
     var cum = [0];
     for (var ck = 1; ck < pts.length; ck++) cum[ck] = cum[ck - 1] + Math.hypot(pts[ck][0] - pts[ck - 1][0], pts[ck][1] - pts[ck - 1][1]);
@@ -118,11 +148,19 @@ window.RailPredictMap = { init: function () {
 
   function frame(now) {
     if (RP._t0 == null) RP._t0 = now;
-    var clock = (((now - RP._t0) % RT) / RT) * 1440; // minutes since midnight (replay)
-    var rb = 3.4 / view.k, track = [], settled = [];
+    // Live: real wall-clock minutes since UTC midnight (matches the server's
+    // dep/dur). Replay: sweep the full day on a loop.
+    var clock = liveMode
+      ? (function () { var d = new Date(); return d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60; })()
+      : (((now - RP._t0) % RT) / RT) * 1440;
+    var rb = 3.4 / view.k, LEAD_MIN = 20, track = [], settled = [];
     for (var i = 0; i < jobjs.length; i++) {
       var o = jobjs[i], end = o.depMin + o.durMin;
-      if (clock >= o.depMin && clock < end) {
+      if (liveMode && clock >= o.depMin - LEAD_MIN && clock < o.depMin) {
+        // Poised at the origin in the ~20 min before departure: small + dim,
+        // then it brightens and glides once it actually departs.
+        place(o, o.pts[0][0], o.pts[0][1], rb * 0.8, 0.42);
+      } else if (clock >= o.depMin && clock < end) {
         // node position by arc length along the route (constant speed)
         var tp = (clock - o.depMin) / o.durMin, d = tp * o.total, si = 0;
         while (si < o.pts.length - 2 && o.cum[si + 1] < d) si++;
@@ -138,7 +176,10 @@ window.RailPredictMap = { init: function () {
         o.core.setAttribute("display", "none"); o.halo.setAttribute("display", "none");
       }
     }
-    if (clockEl) clockEl.textContent = pad(Math.floor(clock / 60)) + ":" + pad(Math.floor(clock % 60));
+    if (clockEl) {
+      if (liveMode) { var lt = new Date(); clockEl.textContent = pad(lt.getHours()) + ":" + pad(lt.getMinutes()); }
+      else clockEl.textContent = pad(Math.floor(clock / 60)) + ":" + pad(Math.floor(clock % 60));
+    }
     if (now - lastBanner > 250) {
       lastBanner = now;
       if (trackBox) trackBox.innerHTML = track.slice(0, 8).map(function (j) { return jcard(j, false); }).join("") || '<p class="empty">—</p>';

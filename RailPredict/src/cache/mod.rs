@@ -6,8 +6,9 @@
 
 pub mod location_names;
 pub mod location_coords;
+pub mod rail_graph;
 pub mod station_index;
 pub mod train_registry;
 
-pub use train_registry::TrainRegistry;
+pub use train_registry::{LiveService, TrainRegistry};
 pub use station_index::StationIndex;

@@ -322,6 +322,34 @@ impl TrainStatus {
             .as_deref()
             .or(self.scheduled_platform.value.as_deref())
     }
+
+    /// True when the service is currently *running*: it has departed its origin
+    /// and not yet reached its destination, by the best available times. The live
+    /// map and the dashboard's "Live network" counts both use this so they agree
+    /// — and so far-future trains retained for the map don't inflate either.
+    /// Falls back to the top-level departure when journey times are unknown.
+    pub fn is_en_route(&self, now: DateTime<Utc>) -> bool {
+        let dep = self
+            .journey
+            .values()
+            .next()
+            .and_then(|c| c.act_dep.or(c.est_dep).or(c.sched_dep));
+        let arr = self
+            .journey
+            .values()
+            .next_back()
+            .and_then(|c| c.act_arr.or(c.est_arr).or(c.sched_arr));
+        match (dep, arr) {
+            (Some(d), Some(a)) => d <= now && now <= a,
+            _ => {
+                let d = self
+                    .actual_estimated_departure
+                    .value
+                    .unwrap_or(self.scheduled_departure.value);
+                d <= now
+            }
+        }
+    }
 }
 
 #[cfg(test)]

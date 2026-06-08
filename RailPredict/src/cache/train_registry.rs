@@ -23,6 +23,7 @@ use tokio::sync::RwLock;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use serde::Serialize;
 
 use crate::types::{TrainId, TrainStatus};
 
@@ -46,6 +47,30 @@ pub struct TrackingTrain {
     pub predicted_delay_mins: i32,
 }
 
+/// A currently-running service positioned for the live map: its route as
+/// `[lon,lat]` calling points plus the timing needed to glide a node along it
+/// in real time. Mirrors the baked replay journey shape so the renderer can
+/// animate it with the same arc-length-by-clock logic.
+#[derive(Debug, Clone, Serialize)]
+pub struct LiveService {
+    /// Display label (UID, else RID).
+    pub lbl: String,
+    /// Origin station name.
+    pub o: String,
+    /// Destination station name.
+    pub d: String,
+    /// Delay band: 0 on-time, 1 slight, 2 late.
+    pub b: u8,
+    /// Best delay estimate in minutes.
+    pub dly: i32,
+    /// Ordered calling points with known coordinates, as `[lon,lat]`.
+    pub route: Vec<[f64; 2]>,
+    /// Origin departure, minutes since UTC midnight (best of actual/est/sched).
+    pub dep: f64,
+    /// Journey duration in minutes (origin departure → destination arrival).
+    pub dur: f64,
+}
+
 /// Live network state derived from the registry snapshot.
 #[derive(Debug, Clone, Default)]
 pub struct NetworkSummary {
@@ -56,8 +81,14 @@ pub struct NetworkSummary {
     pub worst: Vec<LiveDelay>,
 }
 
-/// How long after estimated departure a train remains in the registry.
-const EVICTION_BUFFER_SECS: i64 = 300; // 5 minutes post-departure
+/// How long after the relevant time (arrival, else departure) a train remains.
+const EVICTION_BUFFER_SECS: i64 = 300; // 5 minutes
+
+/// Hard cap on how long a train is retained past its departure. A service that
+/// never reports arrival can't pin memory indefinitely; 6 h comfortably covers
+/// the longest GB through services. Trains are normally evicted ~5 min after
+/// their destination arrival — this only catches the pathological tail.
+const MAX_INFLIGHT_SECS: i64 = 6 * 3600;
 
 pub struct TrainRegistry {
     trains: DashMap<TrainId, Arc<RwLock<TrainStatus>>>,
@@ -205,7 +236,21 @@ impl TrainRegistry {
                     .actual_estimated_departure
                     .value
                     .unwrap_or(status.scheduled_departure.value);
-                if departure < cutoff {
+                // Retain a train for its whole journey so the live map can follow
+                // it: keep until its best-known destination arrival, capped at
+                // `departure + MAX_INFLIGHT`. Trains whose journey arrival is
+                // unknown (can't be placed on the map anyway) fall back to the old
+                // evict-shortly-after-departure rule.
+                let arrival = status
+                    .journey
+                    .values()
+                    .next_back()
+                    .and_then(|c| c.act_arr.or(c.est_arr).or(c.sched_arr));
+                let keep_until = match arrival {
+                    Some(a) => a.min(departure + chrono::Duration::seconds(MAX_INFLIGHT_SECS)),
+                    None => departure,
+                };
+                if keep_until < cutoff {
                     ids.push(entry.key().clone());
                 }
             }
@@ -334,10 +379,17 @@ impl TrainRegistry {
     /// train (consistent with `departure_snapshot`); cancelled trains are counted
     /// as cancelled and excluded from the on-time/delayed tallies.
     pub async fn network_summary(&self, worst_n: usize) -> NetworkSummary {
+        let now = Utc::now();
         let mut s = NetworkSummary::default();
         let mut delays: Vec<LiveDelay> = Vec::new();
         for arc in self.snapshot_all() {
             let status = arc.read().await;
+            // Only count services running right now — not the far-future trains
+            // retained in the registry for the live map. Keeps the dashboard's
+            // "Live network" in step with the map's live count.
+            if !status.is_en_route(now) {
+                continue;
+            }
             s.tracked += 1;
             if status.is_cancelled.value == Some(true) {
                 s.cancelled += 1;
@@ -365,10 +417,16 @@ impl TrainRegistry {
     /// Active, non-cancelled trains that carry a prediction, soonest-departing
     /// first, capped at `limit`. Feeds the live board's "tracking" zone.
     pub async fn tracking_board(&self, limit: usize) -> Vec<TrackingTrain> {
+        // Trains are now retained for their whole journey (for the live map), so
+        // restrict this "soonest-departing" board to services around departure —
+        // preserving its pre-retention behaviour for the /live page.
+        let upcoming_cutoff = Utc::now() - chrono::Duration::minutes(5);
         let mut out: Vec<TrackingTrain> = Vec::new();
         for arc in self.snapshot_all() {
             let status = arc.read().await;
-            if status.is_cancelled.value == Some(true) {
+            if status.is_cancelled.value == Some(true)
+                || status.scheduled_departure.value < upcoming_cutoff
+            {
                 continue;
             }
             let Some(predicted) = status.predicted_delay_mins.value else {
@@ -385,6 +443,77 @@ impl TrainRegistry {
         }
         out.sort_by_key(|t| t.scheduled_departure);
         out.truncate(limit);
+        out
+    }
+
+    /// Currently-running services, each positioned for the live map. For every
+    /// non-cancelled train the whole `journey` becomes an ordered route of
+    /// `[lon,lat]` calling points (stops without known coordinates are dropped),
+    /// and the best origin-departure / destination-arrival times give the window
+    /// the renderer glides a node across in real time. Only services that are en
+    /// route *now* (or settled within the last ~10 min) are returned.
+    pub async fn live_services(&self) -> Vec<LiveService> {
+        use crate::cache::{location_coords, location_names, rail_graph};
+        use chrono::Timelike;
+
+        let now_min = Utc::now().time().num_seconds_from_midnight() as f64 / 60.0;
+        let mut out: Vec<LiveService> = Vec::new();
+
+        for arc in self.snapshot_all() {
+            let s = arc.read().await;
+            if s.is_cancelled.value == Some(true) || s.journey.len() < 2 {
+                continue;
+            }
+            let calls: Vec<_> = s.journey.values().collect();
+
+            let mut route: Vec<[f64; 2]> = Vec::with_capacity(calls.len());
+            for c in &calls {
+                if let Some((lat, lon)) = location_coords::coords(&c.tpl) {
+                    route.push([lon, lat]);
+                }
+            }
+            if route.len() < 2 {
+                continue;
+            }
+            // Follow the rail network between calling points, not straight lines.
+            let route = rail_graph::snap_route(&route);
+
+            let first = calls.first().unwrap();
+            let last = calls.last().unwrap();
+            let (Some(dep_dt), Some(arr_dt)) = (
+                first.act_dep.or(first.est_dep).or(first.sched_dep),
+                last.act_arr.or(last.est_arr).or(last.sched_arr),
+            ) else {
+                continue;
+            };
+
+            let dep = dep_dt.time().num_seconds_from_midnight() as f64 / 60.0;
+            let arr = arr_dt.time().num_seconds_from_midnight() as f64 / 60.0;
+            let dur = arr - dep;
+            if dur <= 0.0 || dur > 1440.0 {
+                continue;
+            }
+            // Keep services from `LEAD_MIN` before departure (poised at their
+            // origin) through to ~10 min after arrival. The renderer holds a
+            // pre-departure node at the origin, then glides it as it runs.
+            const LEAD_MIN: f64 = 20.0;
+            if now_min < dep - LEAD_MIN || now_min > arr + 10.0 {
+                continue;
+            }
+
+            let dly = s.best_delay_mins().unwrap_or(0);
+            let b = if dly <= 1 { 0 } else if dly < 6 { 1 } else { 2 };
+            out.push(LiveService {
+                lbl: s.uid.clone().unwrap_or_else(|| s.id.as_str().to_string()),
+                o: location_names::name_or_code(&first.tpl).to_string(),
+                d: location_names::name_or_code(&last.tpl).to_string(),
+                b,
+                dly,
+                route,
+                dep,
+                dur,
+            });
+        }
         out
     }
 }
