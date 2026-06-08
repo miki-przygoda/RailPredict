@@ -214,6 +214,14 @@ r#"
 .mini .pa { grid-column:2; grid-row:1/3; align-self:center; font:700 11px var(--font-mono); text-align:right; }
 .mini .pa small { display:block; font:700 6.5px var(--font-mono); color:var(--text-faint); text-transform:uppercase; }
 .map-empty { color:var(--text-dim); font:600 11px var(--font-mono); padding:8px 0; }
+/* ── Full-bleed: break out of the 860px content column and fill the whole
+   viewport below the 54px sticky nav, edge to edge. ── */
+main:has(.map-page) { max-width:none; margin:0; padding:0; }
+.map-page { height:calc(100dvh - 54px); }
+.map-heading { padding:14px 20px 12px; }
+.cc-body { border-left:none; border-right:none; border-radius:0; min-height:0; }
+.map-legend { padding-left:20px; padding-right:20px; }
+@media (max-width:960px) { .map-page { height:auto; } .cc-body { min-height:560px; } }
 "#
         }
 

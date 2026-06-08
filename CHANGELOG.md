@@ -2,9 +2,20 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.18.0" -- 06/06/2026**
+**version = "1.18.1" -- 08/06/2026**
 
 ---
+
+## v1.18.1 — 08/06/2026
+
+**UI + demo-hosting polish.**
+
+- **Full-bleed live map** (`frontend/map.rs`): the `/map` command-centre breaks
+  out of the 860 px content column and fills the whole viewport below the nav —
+  edge-to-edge basemap, with the side rails and legend stretched to page height.
+- **Shareable OS export** (`export/os_template.html`): the offline RailPredict OS
+  desktop now carries `noindex`/`nofollow` + Open Graph / Twitter share-card meta
+  so it can be hosted unlisted with a clean link unfurl.
 
 ## v1.18.0 — 06/06/2026
 
