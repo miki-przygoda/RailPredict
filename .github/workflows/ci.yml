@@ -8,8 +8,48 @@ on:
   pull_request:
 
 jobs:
-  ci:
-    name: Build, Lint, Test
+  # Dependency / licence audit — no Rust toolchain or database needed.
+  deny:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@latest
+
+      - name: cargo deny check
+        run: cargo deny check
+        working-directory: RailPredict
+
+  # Lint — compiles, but no DB (queries are runtime-checked, not the query! macro).
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Restore build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: RailPredict
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+        working-directory: RailPredict
+
+  # Tests — the only job that needs Postgres (sqlx db-integration tests connect at runtime).
+  test:
+    name: Tests
     runs-on: ubuntu-latest
 
     services:
@@ -34,42 +74,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # cargo-deny runs independently — no Rust toolchain needed.
-      # Install it before the toolchain setup so both can run in parallel conceptually,
-      # but sequentially here for simplicity.
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny@latest
-
-      - name: Dependency audit (cargo deny)
-        run: cargo deny check
-        working-directory: RailPredict
-
-      - name: Install Rust toolchain (stable + clippy)
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
 
       - name: Restore build cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: RailPredict
 
-      - name: Clippy (deny warnings)
-        run: cargo clippy -- -D warnings
-        working-directory: RailPredict
-        env:
-          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
-
       - name: Tests
         run: cargo test
         working-directory: RailPredict
-        env:
-          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
+
+  # Release build — verifies the optimised binary compiles; no DB needed.
+  build:
+    name: Release build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: RailPredict
 
       - name: Release build
         run: cargo build --release
         working-directory: RailPredict
-        env:
-          DATABASE_URL: postgresql://railpredict:railpredict@localhost:5432/railpredict
