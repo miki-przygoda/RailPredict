@@ -166,6 +166,26 @@ r#"
 .mini .pa { grid-column:2; grid-row:1/3; align-self:center; font:700 11px var(--font-mono); text-align:right; }
 .mini .pa small { display:block; font:700 6.5px var(--font-mono); color:var(--text-faint); text-transform:uppercase; }
 .map-empty { color:var(--text-dim); font:600 11px var(--font-mono); padding:8px 0; }
+/* ── Click-to-inspect detail panel (replaces the KPIs on selection) ── */
+.map-detail { display:none; }
+.md-back { background:none; border:none; color:var(--accent); font:600 11px var(--font-sans); cursor:pointer; padding:0 0 10px; }
+.md-back:hover { text-decoration:underline; }
+.md-hc { font:700 9.5px var(--font-mono); color:var(--text-dim); text-transform:uppercase; letter-spacing:.06em; }
+.md-op { font:700 13.5px var(--font-sans); color:var(--text); margin-bottom:9px; }
+.md-route { font:800 21px var(--font-mono); color:var(--accent); letter-spacing:.01em; margin-bottom:7px; }
+.md-route .md-arr { color:var(--text-dim); }
+.md-meta { display:flex; justify-content:space-between; align-items:baseline; font:600 11px var(--font-mono); color:var(--text-dim); margin-bottom:9px; }
+.md-meta .md-status { color:var(--text); }
+.md-prog { height:6px; background:var(--surface-2); border:1px solid var(--border); border-radius:4px; overflow:hidden; margin-bottom:14px; }
+.md-prog-fill { height:100%; width:0; border-radius:4px; transition:width .3s linear; }
+.md-calls-h { font:800 9.5px var(--font-mono); color:var(--text-dim); text-transform:uppercase; letter-spacing:.07em; margin-bottom:6px; }
+.md-calls { list-style:none; margin:0; padding:0; }
+.md-calls .md-call { font:600 11px var(--font-mono); color:var(--text); padding:3px 0 3px 15px; position:relative; }
+.md-calls .md-call::before { content:""; position:absolute; left:2px; top:8px; width:6px; height:6px; border-radius:50%; background:var(--border); }
+.md-calls .md-call.passed { color:var(--text-dim); }
+.md-calls .md-call.passed::before { background:var(--surface-2); }
+.md-calls .md-call.now { color:var(--accent); font-weight:800; }
+.md-calls .md-call.now::before { background:var(--accent); box-shadow:0 0 0 3px rgba(120,170,255,.2); }
 /* ── Full-bleed: break out of the 860px content column and fill the whole
    viewport below the 54px sticky nav, edge to edge. ── */
 main:has(.map-page) { max-width:none; margin:0; padding:0; }
@@ -212,30 +232,34 @@ main:has(.map-page) { max-width:none; margin:0; padding:0; }
                         b # "map-clock" { "--:--" }
                     }
                     button # "map-fs" .map-fs title="Fullscreen" aria-label="Fullscreen" { "⛶" }
-                    span .map-hint { "scroll to zoom · drag to pan" }
+                    span .map-hint { "scroll to zoom · drag to pan · click a train" }
                 }
 
-                // Right rail — server-rendered KPIs + info
+                // Right rail — server-rendered KPIs + info, or a per-train detail
+                // panel when a train is clicked (toggled by map_render.js).
                 aside .cc-rail.right {
-                    div .cc-rail-head { "The numbers" }
-                    div .kcard {
-                        div .kn { (pct(jm.arrival_on_time_pct)) }
-                        div .kl { "arrive ≤5 min · rolling 24 h" }
+                    div # "map-numbers" {
+                        div .cc-rail-head { "The numbers" }
+                        div .kcard {
+                            div .kn { (pct(jm.arrival_on_time_pct)) }
+                            div .kl { "arrive ≤5 min · rolling 24 h" }
+                        }
+                        div .kcard {
+                            div .kn { (pct(jm.recovered_pct)) }
+                            div .kl { "delay recovered en route" }
+                        }
+                        div .map-info {
+                            b { "What you're seeing: " }
+                            "every train currently running on the GB network, live. Grey shows the "
+                            "network, brighter where busier; each bright node is a real service gliding "
+                            "along its route in real time, coloured by its delay (green/amber/red). "
+                            b { "Tip: " } "click any train to trace its route and calling points."
+                        }
+                        div .map-info style="margin-top:16px;font-size:10.5px;" {
+                            "Map © OpenStreetMap contributors © CARTO"
+                        }
                     }
-                    div .kcard {
-                        div .kn { (pct(jm.recovered_pct)) }
-                        div .kl { "delay recovered en route" }
-                    }
-                    div .map-info {
-                        b { "What you're seeing: " }
-                        "every train currently running on the GB network, live. Grey shows the "
-                        "network, brighter where busier; each bright node is a real service gliding "
-                        "along its route in real time, coloured by its delay (green/amber/red). "
-                        "Busy through the day, quiet overnight. Scroll to zoom; drag to pan; ⛶ fullscreen."
-                    }
-                    div .map-info style="margin-top:16px;font-size:10.5px;" {
-                        "Map © OpenStreetMap contributors © CARTO"
-                    }
+                    div # "map-detail" .map-detail {}
                 }
             }
 
