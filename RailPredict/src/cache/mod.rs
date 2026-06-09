@@ -5,6 +5,7 @@
 //! snapshot a train's status without blocking writers on other trains.
 
 pub mod location_names;
+pub mod location_codes;
 pub mod location_coords;
 pub mod rail_graph;
 pub mod station_index;

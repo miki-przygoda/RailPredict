@@ -160,9 +160,10 @@ window.RailPredictMap = { init: function () {
     var t = String(s).toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
     return t.replace(/\bGwr\b/g, "GWR").replace(/\bLner\b/g, "LNER").replace(/\bTfl\b/g, "TfL").replace(/\bScotrail\b/g, "ScotRail").replace(/\bC2c\b/g, "c2c");
   }
+  function selKey(j) { return (j.lbl || "") + "|" + (j.o || "") + "|" + (j.d || "") + "|" + (j.dep || 0); }
   function handleClick(cx, cy) {
     var v = toVB(cx, cy), lx = (v[0] - view.tx) / view.k, ly = (v[1] - view.ty) / view.k;
-    var best = null, bestD = 16 / view.k;
+    var best = null, bestD = 22 / view.k;
     for (var i = 0; i < jobjs.length; i++) {
       var o = jobjs[i];
       if (!o._active) continue;
@@ -173,6 +174,7 @@ window.RailPredictMap = { init: function () {
   }
   function selectJourney(o) {
     sel = o;
+    RP._selId = selKey(o.j);
     selPath.setAttribute("d", "M" + o.pts.map(function (p) { return p[0].toFixed(1) + " " + p[1].toFixed(1); }).join("L"));
     selPath.setAttribute("stroke", BRIGHT[o.j.b]);
     selPath.setAttribute("display", "");
@@ -188,19 +190,21 @@ window.RailPredictMap = { init: function () {
     }
   }
   function deselect() {
-    sel = null; selCalls = selProg = selStatus = null;
+    sel = null; selCalls = selProg = selStatus = null; RP._selId = null;
     selPath.setAttribute("display", "none"); selPath.setAttribute("d", "");
     if (detailEl) detailEl.style.display = "none";
     if (numbersEl) numbersEl.style.display = "";
   }
   function detailHtml(j) {
-    var calls = (j.p || []).map(function (idx) { return stCodes[idx] || "·"; });
+    // Live services carry their calling-point codes inline; the baked OS journeys
+    // carry station indices resolved against the codes table.
+    var calls = j.calls || (j.p || []).map(function (idx) { return stCodes[idx] || "·"; });
     var lis = calls.map(function (c, i) { return '<li class="md-call" data-i="' + i + '">' + esc(c) + '</li>'; }).join("");
-    var op = j.op ? titleOp(j.op) : (j.lbl || "");
+    var op = j.op ? (String(j.op).length > 4 ? titleOp(j.op) : String(j.op).toUpperCase()) : "";
     return (
       '<button class="md-back" type="button">← Back to network</button>' +
       '<div class="md-hc">' + esc(j.lbl || "") + ' · service</div>' +
-      '<div class="md-op">' + esc(op) + '</div>' +
+      (op ? '<div class="md-op">' + esc(op) + '</div>' : '') +
       '<div class="md-route">' + esc(j.o) + '<span class="md-arr"> → </span>' + esc(j.d) + '</div>' +
       '<div class="md-meta"><span>dep ' + hhmm(j.dep) + '</span><span class="md-status"></span></div>' +
       '<div class="md-prog"><div class="md-prog-fill" style="background:' + COL[j.b] + '"></div></div>' +
@@ -214,10 +218,25 @@ window.RailPredictMap = { init: function () {
       var tag = delayTag(sel.j.dly);
       selStatus.textContent = info.state === "track" ? ("running · " + tag) : info.state === "done" ? ("arrived · " + tag) : "departs soon";
     }
-    if (selCalls) for (var k = 0; k < selCalls.length; k++) {
-      selCalls[k].classList.toggle("passed", k < info.si);
-      selCalls[k].classList.toggle("now", k === info.si && info.state === "track");
+    // Highlight the current calling point by journey progress (robust whether the
+    // route is index-based (baked) or a snapped polyline (live)).
+    if (selCalls && selCalls.length) {
+      var cur = info.state === "done" ? selCalls.length - 1 : Math.round(info.tp * (selCalls.length - 1));
+      for (var k = 0; k < selCalls.length; k++) {
+        selCalls[k].classList.toggle("passed", k < cur);
+        selCalls[k].classList.toggle("now", k === cur && info.state !== "poised");
+      }
     }
+  }
+
+  // Restore a prior selection across re-inits — the live /map page re-initialises
+  // the renderer on every 20 s poll, which would otherwise wipe the open panel.
+  if (clickable && RP._selId) {
+    var restoreObj = null;
+    for (var rj = 0; rj < jobjs.length; rj++) {
+      if (selKey(jobjs[rj].j) === RP._selId) { restoreObj = jobjs[rj]; break; }
+    }
+    if (restoreObj) selectJourney(restoreObj); else deselect();
   }
 
   // --- Banner cards (driven by the live journey animation) ---

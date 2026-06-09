@@ -55,9 +55,11 @@ pub struct TrackingTrain {
 pub struct LiveService {
     /// Display label (UID, else RID).
     pub lbl: String,
-    /// Origin station name.
+    /// Operating company code (TOC), if known — else empty.
+    pub op: String,
+    /// Origin CRS code (or TIPLOC if not a station).
     pub o: String,
-    /// Destination station name.
+    /// Destination CRS code (or TIPLOC if not a station).
     pub d: String,
     /// Delay band: 0 on-time, 1 slight, 2 late.
     pub b: u8,
@@ -65,6 +67,8 @@ pub struct LiveService {
     pub dly: i32,
     /// Ordered calling points with known coordinates, as `[lon,lat]`.
     pub route: Vec<[f64; 2]>,
+    /// Ordered calling-point codes (CRS, or TIPLOC for sidings) for the inspect panel.
+    pub calls: Vec<String>,
     /// Origin departure, minutes since UTC midnight (best of actual/est/sched).
     pub dep: f64,
     /// Journey duration in minutes (origin departure → destination arrival).
@@ -453,7 +457,7 @@ impl TrainRegistry {
     /// the renderer glides a node across in real time. Only services that are en
     /// route *now* (or settled within the last ~10 min) are returned.
     pub async fn live_services(&self) -> Vec<LiveService> {
-        use crate::cache::{location_coords, location_names, rail_graph};
+        use crate::cache::{location_codes, location_coords, rail_graph};
         use chrono::Timelike;
 
         let now_min = Utc::now().time().num_seconds_from_midnight() as f64 / 60.0;
@@ -503,13 +507,20 @@ impl TrainRegistry {
 
             let dly = s.best_delay_mins().unwrap_or(0);
             let b = if dly <= 1 { 0 } else if dly < 6 { 1 } else { 2 };
+            // Calling-point codes (CRS, else TIPLOC) for the click-to-inspect panel.
+            let call_codes: Vec<String> = calls
+                .iter()
+                .map(|c| location_codes::code_or_tiploc(&c.tpl).to_string())
+                .collect();
             out.push(LiveService {
                 lbl: s.uid.clone().unwrap_or_else(|| s.id.as_str().to_string()),
-                o: location_names::name_or_code(&first.tpl).to_string(),
-                d: location_names::name_or_code(&last.tpl).to_string(),
+                op: s.toc.clone().unwrap_or_default(),
+                o: location_codes::code_or_tiploc(&first.tpl).to_string(),
+                d: location_codes::code_or_tiploc(&last.tpl).to_string(),
                 b,
                 dly,
                 route,
+                calls: call_codes,
                 dep,
                 dur,
             });
