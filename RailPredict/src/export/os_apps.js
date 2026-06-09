@@ -74,37 +74,130 @@
 
   /* ── Operator row renderer ────────────────────────────────────────── */
 
+  /** On-time-% band colour, shared by the operator bars. */
+  function pctBand(v) { return v >= 90 ? "#34d399" : v >= 80 ? "#f2c14e" : "#f04545"; }
+
   /**
-   * Render an array of operator objects into a container element.
-   * Each row: brand swatch · name · on_time_pct% · journey count.
+   * Render operators as a ranked bar league: rank · name · on-time-% bar · % · journeys,
+   * sorted best-first. Accepts either the day-asset shape ({name, otp, j}) or the
+   * baked OsData shape ({name, on_time_pct, journeys}).
    *
-   * @param {Element} container  - DOM element to populate
-   * @param {Array}   operators  - [{name, brand, on_time_pct, journeys}, …]
+   * @param {Element} container
+   * @param {Array}   operators
    * @param {number}  [maxRows]  - cap rows (default unlimited)
    */
-  function renderOperatorList(container, operators, maxRows) {
+  function renderOperatorLeague(container, operators, maxRows) {
     if (!container) return;
-    if (!operators || operators.length === 0) {
+    var list = (operators || []).map(function (o) {
+      return {
+        name: o.name || "Unknown",
+        otp: (o.otp != null ? o.otp : o.on_time_pct),
+        journeys: (o.journeys != null ? o.journeys : o.j)
+      };
+    }).filter(function (o) { return o.otp != null; });
+    list.sort(function (a, b) { return (b.otp - a.otp) || ((b.journeys || 0) - (a.journeys || 0)); });
+    if (maxRows) list = list.slice(0, maxRows);
+    if (!list.length) {
       container.innerHTML = '<p class="empty">No operator data available.</p>';
       return;
     }
-    var rows = maxRows ? operators.slice(0, maxRows) : operators;
     var html = "";
-    for (var i = 0; i < rows.length; i++) {
-      var op = rows[i];
-      var brand = esc(op.brand || "#94a3b8");
-      var name = esc(op.name || "Unknown");
-      var pct = op.on_time_pct != null ? Math.round(op.on_time_pct * 10) / 10 + "%" : "—";
-      var journeys = op.journeys != null ? Number(op.journeys).toLocaleString() : "—";
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i];
+      var w = Math.max(0, Math.min(100, o.otp));
+      var jn = o.journeys != null ? Number(o.journeys).toLocaleString() : "—";
       html +=
-        '<div class="op-row">' +
-          '<span class="op-swatch" style="background:' + brand + '"></span>' +
-          '<span class="op-name">' + name + '</span>' +
-          '<span class="op-pct">' + esc(pct) + '</span>' +
-          '<span class="op-journeys">' + esc(journeys) + ' journeys</span>' +
+        '<div class="op-lrow' + (i < 3 ? " top" : "") + '">' +
+          '<span class="op-rank">' + (i + 1) + '</span>' +
+          '<span class="op-name">' + esc(o.name) + '</span>' +
+          '<span class="op-bar"><span class="op-bar-fill" style="width:' + w.toFixed(1) + '%;background:' + pctBand(o.otp) + '"></span></span>' +
+          '<span class="op-pct">' + (Math.round(o.otp * 10) / 10) + '%</span>' +
+          '<span class="op-jn">' + esc(jn) + ' jn</span>' +
         '</div>';
     }
     container.innerHTML = html;
+  }
+
+  /* ── Reliability viz helpers ──────────────────────────────────────── */
+
+  /** Fill a gauge bar element to v% with the given colour. */
+  function setGauge(el, v, color) {
+    if (!el) return;
+    var w = Math.max(0, Math.min(100, v == null ? 0 : v));
+    el.style.width = w.toFixed(1) + "%";
+    el.style.background = color;
+  }
+
+  /**
+   * Draw the 24-hour "% of trains 5+ min late" profile. Bars scale to the
+   * busiest-sampled hour; under-sampled hours (n < MIN_N) are dimmed and capped
+   * short so a handful of night services can't dominate the picture.
+   *
+   * @param {Element} barsEl  - the 24-column bar grid
+   * @param {Element} axisEl  - the hour-label axis (labels every 6h)
+   * @param {Array}   hourly  - [{h, late, n}, …]
+   */
+  function renderHourly(barsEl, axisEl, hourly) {
+    if (!barsEl) return;
+    var MIN_N = 40, byH = {};
+    for (var i = 0; i < hourly.length; i++) byH[hourly[i].h] = hourly[i];
+    var maxLate = 1;
+    for (var h = 0; h < 24; h++) { var r = byH[h]; if (r && r.n >= MIN_N && r.late > maxLate) maxLate = r.late; }
+    function band(v) { return v <= 6 ? "#34d399" : v <= 12 ? "#f2c14e" : "#f04545"; }
+    var bars = "", axis = "";
+    for (var hr = 0; hr < 24; hr++) {
+      var rr = byH[hr], late = rr ? rr.late : 0, n = rr ? rr.n : 0, low = n < MIN_N;
+      var px = Math.max(2, Math.round(late / maxLate * 84));
+      if (low) px = Math.min(px, 12);
+      var color = (!rr || n === 0) ? "#e5e7eb" : low ? "#cbd5e1" : band(late);
+      var hh = (hr < 10 ? "0" : "") + hr;
+      var title = rr ? (hh + ":00 · " + late + "% late · " + n + " svc" + (low ? " (low volume)" : "")) : (hh + ":00 · no data");
+      bars += '<span class="hbar" style="height:' + px + 'px;background:' + color + '" title="' + esc(title) + '"></span>';
+      axis += '<span>' + (hr % 6 === 0 ? hh : "") + '</span>';
+    }
+    barsEl.innerHTML = bars;
+    if (axisEl) axisEl.innerHTML = axis;
+  }
+
+  /**
+   * Signed prediction-error histogram (actual − predicted, minutes) from the
+   * day's scored outcomes. Coloured by accuracy: near-zero green, a few minutes
+   * amber, large miss red — so a tight, centred shape reads as accurate.
+   *
+   * @param {Element} el      - the bar container
+   * @param {Array}   replay  - [{p, a}, …] predicted / actual delay
+   */
+  function renderHistogram(el, replay) {
+    if (!el) return;
+    if (!replay || !replay.length) { el.innerHTML = '<p class="empty">No prediction data.</p>'; return; }
+    var buckets = [
+      { lbl: "≤-6",    lo: -1e9, hi: -6,  c: "#f04545" },
+      { lbl: "-5..-2", lo: -5,   hi: -2,  c: "#f2c14e" },
+      { lbl: "-1",     lo: -1,   hi: -1,  c: "#34d399" },
+      { lbl: "0",      lo: 0,    hi: 0,   c: "#16a34a" },
+      { lbl: "+1",     lo: 1,    hi: 1,   c: "#34d399" },
+      { lbl: "+2..+5", lo: 2,    hi: 5,   c: "#f2c14e" },
+      { lbl: "≥+6",    lo: 6,    hi: 1e9, c: "#f04545" }
+    ];
+    var counts = buckets.map(function () { return 0; }), total = replay.length;
+    for (var i = 0; i < replay.length; i++) {
+      var e = replay[i].a - replay[i].p;
+      for (var b = 0; b < buckets.length; b++) {
+        if (e >= buckets[b].lo && e <= buckets[b].hi) { counts[b]++; break; }
+      }
+    }
+    var max = Math.max.apply(null, counts) || 1, html = "";
+    for (var k = 0; k < buckets.length; k++) {
+      var pct = Math.round(1000 * counts[k] / total) / 10;
+      var px = Math.max(3, Math.round(counts[k] / max * 96));
+      html +=
+        '<div class="hcol">' +
+          '<span class="hval">' + pct + '%</span>' +
+          '<span class="hbar2" style="height:' + px + 'px;background:' + buckets[k].c + '"></span>' +
+          '<span class="hlbl">' + esc(buckets[k].lbl) + '</span>' +
+        '</div>';
+    }
+    el.innerHTML = html;
   }
 
   /* ── Replay card builders ─────────────────────────────────────────── */
@@ -149,31 +242,28 @@
     /* ── Operators ──────────────────────────────────────────────────── */
     operators: function (root) {
       fill(root);
-      // Yesterday's per-operator on-time % and journey count; swatch by performance.
-      var ops = (window.MAP_OPS_DAY || []).map(function (o) {
-        var c = o.otp >= 90 ? "#34d399" : o.otp >= 80 ? "#f2c14e" : "#f04545";
-        return { name: o.name, on_time_pct: o.otp, journeys: o.j, brand: c };
-      });
-      renderOperatorList(root.querySelector("#op-list"), ops);
+      // Yesterday's per-operator on-time % + journey count, as a ranked bar league.
+      renderOperatorLeague(root.querySelector("#op-list"), window.MAP_OPS_DAY || []);
     },
 
     /* ── Predictions ────────────────────────────────────────────────── */
     predictions: function (root) {
       fill(root);
-      // Static explanatory content is already in the template; nothing more needed.
+      // Signed prediction-error histogram from the day's scored outcomes.
+      renderHistogram(root.querySelector("#pred-histo"), window.MAP_REPLAY || []);
     },
 
     /* ── Reliability ────────────────────────────────────────────────── */
     reliability: function (root) {
       fill(root);
       var M = window.MAP || {};
-      var container = root.querySelector("#rel-op-list");
-      // Show top 8 operators sorted by on_time_pct (already sorted by generator,
-      // but guard in case the Rust task sorts by journeys instead).
-      var ops = (M.operators || []).slice().sort(function (a, b) {
-        return (b.on_time_pct || 0) - (a.on_time_pct || 0);
-      });
-      renderOperatorList(container, ops, 8);
+      // Gauges: arrival punctuality + delay recovery.
+      setGauge(root.querySelector("#rel-arr"), M.arrival_on_time_pct, "#34d399");
+      setGauge(root.querySelector("#rel-rec"), M.recovered_pct, "#2563eb");
+      // Hourly "when the network runs late" profile (% of trains 5+ min late).
+      renderHourly(root.querySelector("#rel-hours"), root.querySelector("#rel-hours-axis"), window.MAP_HOURLY || []);
+      // Most reliable operators — same ranked-bar league, top 8 by on-time %.
+      renderOperatorLeague(root.querySelector("#rel-op-list"), M.operators || [], 8);
     },
 
     /* ── About ──────────────────────────────────────────────────────── */

@@ -15,6 +15,8 @@ Writes into RailPredict/src/export/assets/:
     journeys.json     [{p,dep,dur,dly,b,lbl,o,d}, ...]     map's moving services (dense-stop, with real dep time + duration)
     replay_day.json   [{t,l,o,d,p,a}, ...]                 Replay app: predicted vs actual outcomes
     ops_day.json      [{name,j,otp}, ...]                  Operators app: per-operator on-time % + journey count
+    hourly.json       [{h,late,n}, ...]                    Reliability app: % of trains 5+ min late, by hour
+    about.json        {date,journeys,...}                  About app: headline engine stats
 
 Only needs `psql` on PATH and DATABASE_URL (no Python DB driver).
 """
@@ -325,6 +327,23 @@ def build(db, d_from, d_to, max_journeys, max_replay):
     kb = write(os.path.join(ASSETS, "about.json"), about)
     print(f"  about.json       headline stats          ({kb} KB)  "
           f"{about['journeys']:,} journeys · {about['predictions']:,} preds · {about['mae']}m MAE")
+
+    # 9) hourly: share of trains arriving 5+ min late, by hour of day
+    #    (Reliability app's "when the network runs late" profile)
+    hourly = []
+    for r in psql(db, f"""
+        SELECT extract(hour from j.scheduled_departure)::int,
+               round(100.0*avg((j.arrival_delay_mins>5)::int))::int, count(*)
+        FROM journeys j
+        WHERE {where} AND j.arrival_delay_mins IS NOT NULL
+        GROUP BY 1 ORDER BY 1;"""):
+        if len(r) >= 3:
+            try:
+                hourly.append({"h": int(r[0]), "late": int(r[1]), "n": int(r[2])})
+            except (ValueError, TypeError):
+                pass
+    kb = write(os.path.join(ASSETS, "hourly.json"), hourly)
+    print(f"  hourly.json     {len(hourly):>6} hours              ({kb} KB)")
 
 
 def main():
