@@ -115,11 +115,11 @@ fn error_band(lower: i32) -> (&'static str, &'static str) {
 /// Label for a confidence band keyed on its lower edge (0.0/0.2/0.4/0.6/0.8).
 fn conf_band(lower: f64) -> &'static str {
     match (lower * 10.0).round() as i64 {
-        0 => "0–.2",
-        2 => ".2–.4",
-        4 => ".4–.6",
-        6 => ".6–.8",
-        _ => ".8–1",
+        0 => "0–20%",
+        2 => "20–40%",
+        4 => "40–60%",
+        6 => "60–80%",
+        _ => "80–100%",
     }
 }
 
@@ -154,8 +154,10 @@ fn render(
         .filter(|s| s.finalised_count > 0)
         .map(|s| s.within_5_count as f64 / s.finalised_count as f64 * 100.0);
     let mae = summary.as_ref().and_then(|s| s.mean_abs_error_mins);
+    // Mean signed error in the same direction as the error-distribution chart
+    // (actual − predicted): positive = trains ran later than forecast on average.
     let bias = summary.as_ref().and_then(|s| match (s.mean_predicted_mins, s.mean_actual_mins) {
-        (Some(p), Some(a)) => Some(p - a),
+        (Some(p), Some(a)) => Some(a - p),
         _ => None,
     });
 
@@ -210,27 +212,27 @@ fn render(
             }
 
             div .kpi-strip {
-                (charts::kpi_card("Scored", &compact_count(scored, 0), None,
-                    Some("finalised this window"), None, None, KpiTone::Neutral))
-                (charts::kpi_card("Within ±5 min", &fmt1(within5), Some("%"),
-                    Some("share of predictions"), None, None, KpiTone::Ok))
-                (charts::kpi_card("MAE", &fmt1(mae), Some("min"),
-                    Some("mean absolute error"), None, None, KpiTone::Info))
-                (charts::kpi_card("Bias", &bias.map(|b| format!("{b:+.1}")).unwrap_or_else(|| "—".into()), Some("min"),
-                    Some("mean predicted − actual"), None, None, KpiTone::Warn))
+                (charts::kpi_card("Forecasts scored", &compact_count(scored, 0), None,
+                    Some("completed & checked vs reality"), None, None, KpiTone::Neutral))
+                (charts::kpi_card("Within 5 min", &fmt1(within5), Some("%"),
+                    Some("forecasts within 5 min of actual"), None, None, KpiTone::Ok))
+                (charts::kpi_card("Average miss", &fmt1(mae), Some("min"),
+                    Some("typical gap, forecast vs actual"), None, None, KpiTone::Info))
+                (charts::kpi_card("Lean", &bias.map(|b| format!("{b:+.1}")).unwrap_or_else(|| "—".into()), Some("min"),
+                    Some("+ ran later, − earlier than forecast"), None, None, KpiTone::Warn))
             }
 
             div .cockpit-grid {
                 section .panel {
-                    div .panel-head { h2 { "Calibration" } span .panel-meta { "predicted vs actual" } }
+                    div .panel-head { h2 { "Calibration" } span .panel-meta { "forecast vs reality" } }
                     div .panel-body {
                         @if calib_pts.len() >= 2 {
                             div .calib-wrap { (charts::calibration_plot(&calib_pts)) }
                             div .legend {
-                                span .ideal { "perfect calibration" }
-                                span .actual { "model" }
+                                span .ideal { "forecast = reality" }
+                                span .actual { "our forecasts" }
                             }
-                            p .chart-note { "Points below the diagonal = under-predicted; above = over-predicted (minutes)." }
+                            p .chart-note { "Each dot groups similar-sized forecasts: the average forecast (across) vs what actually happened (up). On the line = matched reality; above = trains ran later than forecast; below = earlier." }
                         } @else {
                             p .panel-empty { "Not enough scored predictions for a calibration curve yet." }
                         }
@@ -238,11 +240,11 @@ fn render(
                 }
 
                 section .panel {
-                    div .panel-head { h2 { "Accuracy over time" } span .panel-meta { "MAE per day" } }
+                    div .panel-head { h2 { "Accuracy over time" } span .panel-meta { "average miss per day" } }
                     div .panel-body {
                         @if mae_series.len() >= 2 {
                             div .acc-chart.chart-info { (charts::area_spark(&mae_series, "pred-acc")) }
-                            p .chart-note { "Daily mean absolute error · " (range_label(range)) "." }
+                            p .chart-note { "How far off the forecasts were each day — lower is better · " (range_label(range)) "." }
                         } @else {
                             p .panel-empty { "Not enough days in range for a trend." }
                         }
@@ -252,24 +254,24 @@ fn render(
 
             div .pred-grid-3 {
                 section .panel {
-                    div .panel-head { h2 { "Error distribution" } }
+                    div .panel-head { h2 { "How far off" } }
                     div .panel-body {
                         (vbar_chart(&err_bars))
-                        p .chart-note { "Signed error (actual − predicted). Negative = over-predicted; positive = under-predicted. Centre band = accurate." }
+                        p .chart-note { "Each forecast's gap from reality (actual − forecast). Centre = spot on; bars to the right = trains ran later than forecast; left = earlier." }
                     }
                 }
                 section .panel {
-                    div .panel-head { h2 { "Confidence vs error" } }
+                    div .panel-head { h2 { "Confidence vs accuracy" } }
                     div .panel-body {
                         (vbar_chart(&conf_bars))
-                        p .chart-note { "MAE by model confidence — higher confidence should mean lower error." }
+                        p .chart-note { "Average miss grouped by how sure the model was. If confidence is meaningful, the bars should fall left → right — more confident, more accurate." }
                     }
                 }
                 section .panel {
                     div .panel-head { h2 { "Lead-time accuracy" } }
                     div .panel-body {
                         (vbar_chart(&lead_bars))
-                        p .chart-note { "MAE by how far ahead the prediction was made." }
+                        p .chart-note { "Average miss by how far ahead the forecast was made — forecasts made further out naturally drift more." }
                     }
                 }
             }
