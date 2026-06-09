@@ -2,9 +2,35 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.19.0" -- 08/06/2026**
+**version = "1.20.0" -- 09/06/2026**
 
 ---
+
+## v1.20.0 — 09/06/2026
+
+**RailPredict OS — premium polish pass.** Lifts the offline `docs/os.html` sales
+demo from "impressive prototype" toward "shipped product" across every surface.
+Fully offline, no new dependencies.
+
+- **Crafted icon set** — the dock, desktop, and fallback emoji are replaced by an
+  inline-SVG set: gradient app tiles + white line-glyphs, defined once as a
+  `<symbol>` sprite. No emoji, no font/platform dependency.
+- **Window lifecycle animation** — windows scale/fade in on open, animate out on
+  close, and minimise/restore toward the dock (pure CSS transitions;
+  `prefers-reduced-motion` honoured).
+- **Per-app data-viz** (all real data, client-side SVG/CSS):
+  - **Operators** — a ranked on-time-% bar league (top-3 emphasis), best-first.
+  - **Reliability** — now visually distinct: arrival/recovery gauges + a 24-hour
+    "when the network runs late" profile (% of trains 5+ min late, low-volume
+    hours dimmed) + the most-reliable league. New baked asset `hourly.json`
+    (`build_map_data.py` → `__HOURLY__` → `os.rs`).
+  - **Predictions** — a signed prediction-error histogram (actual − predicted),
+    coloured by accuracy.
+- **Shell chrome** — removed the dead `File / View / Help` menu; added a live
+  "● Replaying &lt;date&gt;" status chip and a self-dismissing boot cue toward the
+  Live Map; brand now reads "RailPredict OS".
+
+Design spec: `docs/superpowers/specs/2026-06-08-os-demo-premium-polish-design.md`.
 
 ## v1.19.0 — 08/06/2026
 
