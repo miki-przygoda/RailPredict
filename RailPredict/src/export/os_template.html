@@ -90,6 +90,48 @@
     color: rgba(255,255,255,.82);
   }
   #os-clock { font-variant-numeric: tabular-nums; }
+  #menubar .brand-os { font-weight: 400; opacity: .55; margin-left: 1px; }
+  .mb-status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11.5px; font-weight: 500; color: rgba(255,255,255,.72);
+    padding-right: 4px;
+  }
+  .mb-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #34d399; box-shadow: 0 0 6px #34d399;
+    animation: mbpulse 2.4s ease-in-out infinite;
+  }
+  @keyframes mbpulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* ── Boot cue: pulse the Map dock tile + a fading hint pill ────── */
+  .dock-item.cue .app-ico { animation: cueGlow 1.8s ease-out infinite; }
+  @keyframes cueGlow {
+    0%   { box-shadow: 0 2px 7px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.28), 0 0 0 0 rgba(96,165,250,.7); }
+    70%  { box-shadow: 0 2px 7px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.28), 0 0 0 11px rgba(96,165,250,0); }
+    100% { box-shadow: 0 2px 7px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.28), 0 0 0 0 rgba(96,165,250,0); }
+  }
+  .boot-hint {
+    position: absolute; left: 50%; bottom: calc(var(--dock-h) + 4px);
+    transform: translateX(-50%);
+    display: flex; align-items: center; gap: 7px;
+    background: rgba(8,20,36,.82);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(127,178,232,.34);
+    color: #cfe6ff; font-size: 12px; font-weight: 600;
+    padding: 7px 15px; border-radius: 20px;
+    box-shadow: 0 6px 22px rgba(0,0,0,.45);
+    z-index: 8500; pointer-events: none;
+    opacity: 0; animation: hintIn .5s ease .7s forwards;
+  }
+  .boot-hint .hl { color: #9ec3ef; }
+  .boot-hint .arr { font-weight: 800; }
+  .boot-hint.gone { opacity: 0; transform: translateX(-50%) translateY(6px); transition: opacity .4s, transform .4s; animation: none; }
+  @keyframes hintIn { to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .mb-dot { animation: none; }
+    .dock-item.cue .app-ico { animation: none; }
+    .boot-hint { animation: none; opacity: 1; }
+  }
 
   /* ── Desktop icon grid ─────────────────────────────────────────── */
   #desktop-icons {
@@ -151,9 +193,18 @@
     overflow: hidden;
     min-width: 320px;
     min-height: 200px;
-    transition: box-shadow .15s;
+    transition: box-shadow .15s, transform .19s cubic-bezier(.2,.8,.25,1), opacity .19s ease;
+    transform-origin: center center;
   }
   .win:focus-within { box-shadow: 0 28px 90px rgba(0,0,0,.65), 0 6px 20px rgba(0,0,0,.4); }
+  /* Lifecycle animation states (toggled by os_shell.js). */
+  .win.opening     { transform: scale(.92) translateY(8px); opacity: 0; }
+  .win.closing     { transform: scale(.94) translateY(4px); opacity: 0; pointer-events: none; }
+  .win.minimising  { transform: scale(.42) translateY(42vh); opacity: 0; pointer-events: none; transform-origin: bottom center; }
+  @media (prefers-reduced-motion: reduce) {
+    .win { transition: box-shadow .15s; }
+    .win.opening, .win.closing, .win.minimising { transform: none; opacity: 1; }
+  }
   .win.min { display: none; }
   .win.max {
     top: 0 !important;
@@ -272,6 +323,35 @@
     margin: 0 4px;
   }
 
+  /* ── App icon tiles (crafted SVG, replaces emoji) ─────────────── */
+  .app-ico {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 7px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.28);
+    flex-shrink: 0;
+  }
+  .app-ico svg {
+    width: 18px; height: 18px;
+    color: #fff;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    overflow: visible;
+  }
+  .app-ico.lg { width: 36px; height: 36px; border-radius: 9px; }
+  .app-ico.lg svg { width: 22px; height: 22px; }
+  .app-ico.xl { width: 52px; height: 52px; border-radius: 13px; }
+  .app-ico.xl svg { width: 30px; height: 30px; }
+  /* Per-app gradient — cohesive cool palette + one warm accent + neutral. */
+  .tile-map         { background: linear-gradient(160deg, #4f9dff, #1d4ed8); }
+  .tile-operators   { background: linear-gradient(160deg, #25c8d6, #0e7490); }
+  .tile-predictions { background: linear-gradient(160deg, #7f86ff, #4338ca); }
+  .tile-reliability { background: linear-gradient(160deg, #34d39a, #0f9d63); }
+  .tile-replay      { background: linear-gradient(160deg, #fbbf3b, #e08507); }
+  .tile-about       { background: linear-gradient(160deg, #8e9bb0, #475569); }
+
   /* ── "Coming soon" placeholder ────────────────────────────────── */
   .soon-body {
     display: flex;
@@ -373,6 +453,51 @@
     text-align: right;
     padding-left: 4px;
   }
+
+  /* ── Operator league rows (ranked bar chart) ───────────────────── */
+  .win-body .op-lrow {
+    display: grid;
+    grid-template-columns: 20px minmax(96px, 168px) 1fr 42px 60px;
+    align-items: center; gap: 0 11px;
+    padding: 7px 4px;
+    border-bottom: 1px solid var(--line);
+  }
+  .win-body .op-lrow:last-child { border-bottom: none; }
+  .win-body .op-lrow .op-rank { font: 700 11px var(--mono); color: var(--dim); text-align: right; padding: 0; }
+  .win-body .op-lrow.top .op-rank { color: var(--accent); }
+  .win-body .op-lrow .op-name { font: 600 12.5px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .win-body .op-bar { height: 8px; background: #eef1f5; border-radius: 5px; overflow: hidden; }
+  .win-body .op-bar-fill { display: block; height: 100%; border-radius: 5px; transition: width .3s ease; }
+  .win-body .op-lrow .op-pct { font: 700 12px var(--mono); color: var(--ink); text-align: right; white-space: nowrap; }
+  .win-body .op-jn { font: 500 10.5px var(--mono); color: var(--dim); text-align: right; white-space: nowrap; }
+
+  /* ── Reliability: recovery/punctuality gauges + hourly profile ─── */
+  .win-body .gauge-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 6px; }
+  .win-body .gauge { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
+  .win-body .gauge .g-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 7px; }
+  .win-body .gauge .g-lbl { font: 600 10.5px var(--sans); color: var(--muted); }
+  .win-body .gauge .g-val { font: 800 18px var(--sans); color: var(--accent-ink); letter-spacing: -.02em; }
+  .win-body .gauge .g-track { height: 8px; background: #eef1f5; border-radius: 5px; overflow: hidden; }
+  .win-body .gauge .g-fill { height: 100%; border-radius: 5px; transition: width .35s ease; }
+  .win-body .hourly { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 14px 14px 10px; margin-bottom: 6px; }
+  .win-body .hourly .hh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+  .win-body .hourly .hh b { font: 800 11px var(--sans); color: var(--ink); }
+  .win-body .hourly .hh span { font: 500 10.5px var(--sans); color: var(--dim); }
+  .win-body .hours { display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 2px; height: 88px; }
+  .win-body .hours .hbar { width: 100%; border-radius: 2px 2px 0 0; min-height: 2px; align-self: end; }
+  .win-body .hours-axis { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; margin-top: 5px; }
+  .win-body .hours-axis span { font: 600 7px var(--mono); color: var(--dim); text-align: center; }
+
+  /* ── Predictions: signed-error histogram ───────────────────────── */
+  .win-body .histo { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 14px 14px 12px; margin-bottom: 16px; }
+  .win-body .histo .hh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .win-body .histo .hh b { font: 800 11px var(--sans); color: var(--ink); }
+  .win-body .histo .hh span { font: 500 10.5px var(--sans); color: var(--dim); }
+  .win-body .histo-bars { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: end; gap: 10px; height: 132px; }
+  .win-body .hcol { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .win-body .hcol .hval { font: 700 9.5px var(--mono); color: var(--muted); margin-bottom: 4px; }
+  .win-body .hcol .hbar2 { width: 100%; max-width: 38px; border-radius: 3px 3px 0 0; min-height: 3px; }
+  .win-body .hcol .hlbl { font: 600 8.5px var(--mono); color: var(--dim); white-space: nowrap; margin-top: 5px; }
   .win-body .section-label {
     font: 800 9.5px var(--mono);
     color: #94a3b8;
@@ -563,17 +688,52 @@
 </style>
 </head>
 <body>
+
+<!-- ── App icon glyph sprite (referenced by <use> in dock/desktop/fallback) ── -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="ic-map" viewBox="0 0 24 24">
+    <polyline points="5 18 11 7 19 14" fill="none" stroke="currentColor"/>
+    <circle cx="5" cy="18" r="1.8" fill="currentColor" stroke="none"/>
+    <circle cx="11" cy="7" r="1.8" fill="currentColor" stroke="none"/>
+    <circle cx="19" cy="14" r="1.8" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="ic-operators" viewBox="0 0 24 24">
+    <rect x="6" y="3.5" width="12" height="13" rx="3.2" fill="none" stroke="currentColor"/>
+    <line x1="6.6" y1="10" x2="17.4" y2="10" stroke="currentColor"/>
+    <circle cx="9" cy="13.3" r="1" fill="currentColor" stroke="none"/>
+    <circle cx="15" cy="13.3" r="1" fill="currentColor" stroke="none"/>
+    <path d="M9.2 16.5 L7.2 20" fill="none" stroke="currentColor"/>
+    <path d="M14.8 16.5 L16.8 20" fill="none" stroke="currentColor"/>
+  </symbol>
+  <symbol id="ic-predictions" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor"/>
+    <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor"/>
+    <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="ic-reliability" viewBox="0 0 24 24">
+    <line x1="3.5" y1="19" x2="21.5" y2="19" stroke="currentColor" opacity="0.55"/>
+    <line x1="6.5" y1="19" x2="6.5" y2="13" stroke="currentColor"/>
+    <line x1="11" y1="19" x2="11" y2="8.5" stroke="currentColor"/>
+    <line x1="15.5" y1="19" x2="15.5" y2="11" stroke="currentColor"/>
+    <line x1="20" y1="19" x2="20" y2="6" stroke="currentColor"/>
+  </symbol>
+  <symbol id="ic-replay" viewBox="0 0 24 24">
+    <path d="M8.5 6.4 L17.6 12 L8.5 17.6 Z" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ic-about" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor"/>
+    <line x1="12" y1="11" x2="12" y2="16.5" stroke="currentColor"/>
+    <circle cx="12" cy="7.8" r="1.15" fill="currentColor" stroke="none"/>
+  </symbol>
+</svg>
+
 <div id="desktop">
 
   <!-- ── Menu bar ─────────────────────────────────────────────── -->
   <div id="menubar">
-    <span class="brand"><span class="dot">●</span> RailPredict</span>
-    <div class="menu-items">
-      <span>File</span>
-      <span>View</span>
-      <span>Help</span>
-    </div>
+    <span class="brand"><span class="dot">●</span> RailPredict <span class="brand-os">OS</span></span>
     <div class="menu-right">
+      <span class="mb-status"><span class="mb-dot"></span><span id="os-status">Network replay</span></span>
       <span id="os-clock">00:00:00</span>
     </div>
   </div>
@@ -648,6 +808,10 @@
       <div class="kcard-sm"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
       <div class="kcard-sm"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">on time (≤5 min)</div></div>
     </div>
+    <div class="histo">
+      <div class="hh"><b>Prediction error distribution</b><span>predicted minus actual delay (min) — clustered on zero is accurate &amp; unbiased</span></div>
+      <div class="histo-bars" id="pred-histo"></div>
+    </div>
     <div class="about-section">
       <h3>How predictions work</h3>
       <p>Two models run in tandem: a <b>day-ahead</b> model that forecasts delay from timetable features and historical patterns, and a <b>real-time</b> model that updates as live Darwin messages arrive. Both export to ONNX and run locally — no round-trips to an external inference server.</p>
@@ -661,15 +825,25 @@
 <template id="app-reliability">
   <div class="applet">
     <div class="applet-h">Journey reliability</div>
-    <div class="applet-sub">Arrival punctuality and delay-recovery rates across all observed services — a measure of how consistently trains complete their journey close to schedule.</div>
-    <div class="applet-row">
-      <div class="kcard-sm"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
-      <div class="kcard-sm"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
-      <div class="kcard-sm"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
+    <div class="applet-sub">How consistently trains finish close to schedule — arrival punctuality, delay recovery, and when the network runs late. <b data-fill="services_label">—</b> distinct services analysed.</div>
+    <div class="gauge-row">
+      <div class="gauge">
+        <div class="g-top"><span class="g-lbl">Arrive within 5 min</span><span class="g-val" data-fill="arrival_on_time_pct" data-suffix="%">—</span></div>
+        <div class="g-track"><div class="g-fill" id="rel-arr"></div></div>
+      </div>
+      <div class="gauge">
+        <div class="g-top"><span class="g-lbl">Recover delay en route</span><span class="g-val" data-fill="recovered_pct" data-suffix="%">—</span></div>
+        <div class="g-track"><div class="g-fill" id="rel-rec"></div></div>
+      </div>
+    </div>
+    <div class="hourly">
+      <div class="hh"><b>When the network runs late</b><span>share of trains arriving 5+ min late, by hour</span></div>
+      <div class="hours" id="rel-hours"></div>
+      <div class="hours-axis" id="rel-hours-axis"></div>
     </div>
     <div class="section-label">Most reliable operators</div>
     <div id="rel-op-list"></div>
-    <div class="applet-note">Recovery rate counts services that departed late but arrived within 5 minutes of schedule. Reliability scores are derived from Darwin real-time messages ingested continuously.</div>
+    <div class="applet-note">Recovery counts services that departed late but still arrived within 5 minutes. Low-volume hours are dimmed. Derived from Darwin real-time messages.</div>
   </div>
 </template>
 
@@ -752,7 +926,7 @@
 </template>
 
 <!-- ── Script injection points (generator replaces these) ─────────── -->
-<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP_ABOUT=__ABOUT__;window.MAP=__MAP_DATA__;</script>
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP_HOURLY=__HOURLY__;window.MAP_ABOUT=__ABOUT__;window.MAP=__MAP_DATA__;</script>
 <script>/* __MAP_JS__ */</script>
 <script>/* __APPS_JS__ */</script>
 <script>/* __OS_JS__ */</script>
