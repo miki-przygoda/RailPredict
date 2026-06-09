@@ -11,8 +11,9 @@ date range, straight from the database. After running it, regenerate the HTML:
 
 Writes into RailPredict/src/export/assets/:
     stations.json     [[lon,lat], ...]                     every GB station (static; from tiploc_coords.tsv)
+    station_codes.json["CRS"|"TIPLOC", ...]                per-station display code, parallel to stations.json
     edges.json        [[i,j,bucket,count], ...]            network links coloured by avg delay (from journey_calls)
-    journeys.json     [{p,dep,dur,dly,b,lbl,o,d}, ...]     map's moving services (dense-stop, with real dep time + duration)
+    journeys.json     [{p,dep,dur,dly,b,lbl,op,o,d}, ...]  map's moving services (o/d as CRS codes, with operator)
     replay_day.json   [{t,l,o,d,p,a}, ...]                 Replay app: predicted vs actual outcomes
     ops_day.json      [{name,j,otp}, ...]                  Operators app: per-operator on-time % + journey count
     hourly.json       [{h,late,n}, ...]                    Reliability app: % of trains 5+ min late, by hour
@@ -71,7 +72,13 @@ def load_stations():
             p = ln.rstrip("\n").split("\t")
             if len(p) >= 2:
                 names[p[0]] = p[1]
-    return idx, coords, names
+    crs = {}
+    with open(os.path.join(CACHE, "tiploc_crs.tsv")) as f:
+        for ln in f:
+            p = ln.rstrip("\n").split("\t")
+            if len(p) >= 2:
+                crs[p[0]] = p[1]
+    return idx, coords, names, crs
 
 
 def km(coords, a, b):
@@ -142,13 +149,24 @@ def prune_redundant_edges(edges, coords):
 
 
 def build(db, d_from, d_to, max_journeys, max_replay):
-    idx, coords, names = load_stations()
+    idx, coords, names, crs = load_stations()
     rev = {v: k for k, v in idx.items()}
+
+    def code(t):
+        # CRS (the 3-letter code rail staff use) where the location is a real
+        # station; the raw TIPLOC otherwise (sidings, depots, junctions).
+        return crs.get(t, t)
+
     where = "j.scheduled_departure::date BETWEEN '%s' AND '%s'" % (d_from, d_to)
 
     # 1) stations (static, but emit for a self-contained run)
     kb = write(os.path.join(ASSETS, "stations.json"), coords)
     print(f"  stations.json   {len(coords):>6} stations           ({kb} KB)")
+    # 1b) per-station display codes, parallel to stations.json (for the map's
+    #     click-to-inspect calling-point list).
+    station_codes = [code(rev[i]) for i in range(len(coords))]
+    kb = write(os.path.join(ASSETS, "station_codes.json"), station_codes)
+    print(f"  station_codes.json {len(station_codes):>4} codes            ({kb} KB)")
 
     def bucket(delay):
         return 0 if delay <= 1 else 1 if delay <= 4 else 2
@@ -230,8 +248,8 @@ def build(db, d_from, d_to, max_journeys, max_replay):
             return
         toc, _op, dly = meta[rid]
         journeys.append({"p": path, "dep": dep, "dur": dur, "dly": dly, "b": bucket(dly),
-                         "lbl": toc or "—", "o": names.get(rev[path[0]], rev[path[0]]),
-                         "d": names.get(rev[path[-1]], rev[path[-1]])})
+                         "lbl": toc or "—", "op": _op or "",
+                         "o": code(rev[path[0]]), "d": code(rev[path[-1]])})
 
     cur, rws = None, []
     for c in psql(db, f"""
@@ -289,7 +307,7 @@ def build(db, d_from, d_to, max_journeys, max_replay):
             continue
         try:
             replay.append({"t": t, "l": r[1].strip() or "—",
-                           "o": names.get(r[2], r[2]), "d": names.get(r[3], r[3]),
+                           "o": code(r[2]), "d": code(r[3]),
                            "p": int(r[4]), "a": int(r[5])})
         except ValueError:
             pass
