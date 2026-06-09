@@ -78,6 +78,29 @@
   function pctBand(v) { return v >= 90 ? "#34d399" : v >= 80 ? "#f2c14e" : "#f04545"; }
 
   /**
+   * Tidy raw operator names from the feed (which arrive title-cased and
+   * abbreviated, e.g. "Gwr", "Tfl Rail", "London South Eastern Railwy") into
+   * recognisable brand names. Unmapped names pass through unchanged.
+   */
+  var OP_NAMES = {
+    "scotrail": "ScotRail",
+    "gwr": "GWR",
+    "transport for wales rail": "Transport for Wales",
+    "thameslink and gt northern tl": "Thameslink & Great Northern",
+    "london south eastern railwy": "Southeastern",
+    "tfl rail": "Elizabeth line",
+    "lner": "LNER",
+    "crosscountry": "CrossCountry",
+    "c2c": "c2c",
+    "emr": "East Midlands Railway",
+    "tfl": "Transport for London"
+  };
+  function displayOperator(name) {
+    if (name == null) return "Unknown";
+    return OP_NAMES[String(name).toLowerCase().trim()] || name;
+  }
+
+  /**
    * Render operators as a ranked bar league: rank · name · on-time-% bar · % · journeys,
    * sorted best-first. Accepts either the day-asset shape ({name, otp, j}) or the
    * baked OsData shape ({name, on_time_pct, journeys}).
@@ -90,7 +113,7 @@
     if (!container) return;
     var list = (operators || []).map(function (o) {
       return {
-        name: o.name || "Unknown",
+        name: displayOperator(o.name),
         otp: (o.otp != null ? o.otp : o.on_time_pct),
         journeys: (o.journeys != null ? o.journeys : o.j)
       };
@@ -112,7 +135,7 @@
           '<span class="op-name">' + esc(o.name) + '</span>' +
           '<span class="op-bar"><span class="op-bar-fill" style="width:' + w.toFixed(1) + '%;background:' + pctBand(o.otp) + '"></span></span>' +
           '<span class="op-pct">' + (Math.round(o.otp * 10) / 10) + '%</span>' +
-          '<span class="op-jn">' + esc(jn) + ' jn</span>' +
+          '<span class="op-jn">' + esc(jn) + '</span>' +
         '</div>';
     }
     container.innerHTML = html;
@@ -137,12 +160,19 @@
    * @param {Element} axisEl  - the hour-label axis (labels every 6h)
    * @param {Array}   hourly  - [{h, late, n}, …]
    */
-  function renderHourly(barsEl, axisEl, hourly) {
+  function renderHourly(barsEl, axisEl, peakEl, hourly) {
     if (!barsEl) return;
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    if (!hourly || !hourly.length) {
+      barsEl.innerHTML = '<p class="empty">Not enough data yet.</p>';
+      if (axisEl) axisEl.innerHTML = "";
+      if (peakEl) peakEl.textContent = "";
+      return;
+    }
     var MIN_N = 40, byH = {};
     for (var i = 0; i < hourly.length; i++) byH[hourly[i].h] = hourly[i];
-    var maxLate = 1;
-    for (var h = 0; h < 24; h++) { var r = byH[h]; if (r && r.n >= MIN_N && r.late > maxLate) maxLate = r.late; }
+    var maxLate = 1, peakHour = -1;
+    for (var h = 0; h < 24; h++) { var r = byH[h]; if (r && r.n >= MIN_N && r.late > maxLate) { maxLate = r.late; peakHour = h; } }
     function band(v) { return v <= 6 ? "#34d399" : v <= 12 ? "#f2c14e" : "#f04545"; }
     var bars = "", axis = "";
     for (var hr = 0; hr < 24; hr++) {
@@ -150,13 +180,14 @@
       var px = Math.max(2, Math.round(late / maxLate * 84));
       if (low) px = Math.min(px, 12);
       var color = (!rr || n === 0) ? "#e5e7eb" : low ? "#cbd5e1" : band(late);
-      var hh = (hr < 10 ? "0" : "") + hr;
+      var hh = pad(hr);
       var title = rr ? (hh + ":00 · " + late + "% late · " + n + " svc" + (low ? " (low volume)" : "")) : (hh + ":00 · no data");
       bars += '<span class="hbar" style="height:' + px + 'px;background:' + color + '" title="' + esc(title) + '"></span>';
       axis += '<span>' + (hr % 6 === 0 ? hh : "") + '</span>';
     }
     barsEl.innerHTML = bars;
     if (axisEl) axisEl.innerHTML = axis;
+    if (peakEl) peakEl.textContent = peakHour >= 0 ? ("peak " + pad(peakHour) + ":00 · " + maxLate + "% late") : "";
   }
 
   /**
@@ -249,7 +280,11 @@
     /* ── Predictions ────────────────────────────────────────────────── */
     predictions: function (root) {
       fill(root);
-      // Signed prediction-error histogram from the day's scored outcomes.
+      // "Forecasts scored" — the full-day count from the About headline.
+      var A = window.MAP_ABOUT || {};
+      var cEl = root.querySelector("#pred-count");
+      if (cEl) cEl.textContent = A.predictions != null ? Number(A.predictions).toLocaleString() : "—";
+      // Signed forecast-error histogram (actual − predicted) from the day's outcomes.
       renderHistogram(root.querySelector("#pred-histo"), window.MAP_REPLAY || []);
     },
 
@@ -257,12 +292,14 @@
     reliability: function (root) {
       fill(root);
       var M = window.MAP || {};
-      // Gauges: arrival punctuality + delay recovery.
-      setGauge(root.querySelector("#rel-arr"), M.arrival_on_time_pct, "#34d399");
+      // Gauges: arrival punctuality (band-coloured so the fill itself signals
+      // quality) + delay recovery (a "more is better" rate, neutral accent).
+      var arr = M.arrival_on_time_pct;
+      setGauge(root.querySelector("#rel-arr"), arr, pctBand(arr == null ? 0 : arr));
       setGauge(root.querySelector("#rel-rec"), M.recovered_pct, "#2563eb");
-      // Hourly "when the network runs late" profile (% of trains 5+ min late).
-      renderHourly(root.querySelector("#rel-hours"), root.querySelector("#rel-hours-axis"), window.MAP_HOURLY || []);
-      // Most reliable operators — same ranked-bar league, top 8 by on-time %.
+      // Hourly "when the network runs late" profile (% of trains 5+ min late) + peak.
+      renderHourly(root.querySelector("#rel-hours"), root.querySelector("#rel-hours-axis"), root.querySelector("#rel-peak"), window.MAP_HOURLY || []);
+      // Most reliable operators — top 8 by on-time %.
       renderOperatorLeague(root.querySelector("#rel-op-list"), M.operators || [], 8);
     },
 
@@ -291,9 +328,9 @@
     /* ── Replay ─────────────────────────────────────────────────────── */
     replay: function (root) {
       fill(root);
-      // Replay yesterday's full day of real predictions: each service appears in
-      // "Tracking" at its departure (showing the predicted delay), then moves to
-      // "Just settled" with predicted → actual once it's run. Driven by a clock.
+      // Replay yesterday's full day of real forecasts: each service appears in
+      // "Tracking" at its departure (showing the forecast), then moves to "Just
+      // settled" with forecast → actual once it's run. Driven by a shared clock.
       var R = window.MAP_REPLAY || [];
       var clockEl = root.querySelector("#rp-frame");
       var trackEl = root.querySelector("#rp-track");
@@ -303,21 +340,36 @@
         if (settledEl) settledEl.innerHTML = '<p class="empty">—</p>';
         return;
       }
+      // Full-day accuracy scoreboard — computed once over every scored service,
+      // so Replay shows the verdict the Map can't: how the forecasts actually did.
+      var scoreEl = root.querySelector("#rp-score");
+      if (scoreEl) {
+        var spot = 0, w2 = 0, sum = 0, n = R.length, i0;
+        for (i0 = 0; i0 < n; i0++) { var e0 = Math.abs(R[i0].a - R[i0].p); sum += e0; if (e0 === 0) spot++; if (e0 <= 2) w2++; }
+        scoreEl.innerHTML =
+          '<div class="rs"><b>' + Math.round(100 * spot / n) + '%</b><span>spot on</span></div>' +
+          '<div class="rs"><b>' + Math.round(100 * w2 / n) + '%</b><span>within 2 min</span></div>' +
+          '<div class="rs"><b>' + (Math.round(sum / n * 10) / 10) + ' min</b><span>average miss</span></div>' +
+          '<div class="rs"><b>' + Number(n).toLocaleString() + '</b><span>services replayed</span></div>';
+      }
       var RT = 210000, RUN = 30, SETTLE = 12; // ms/day, replay-min running / settled
-      function pad(n) { return (n < 10 ? "0" : "") + n; }
+      function pad(x) { return (x < 10 ? "0" : "") + x; }
       function hhmm(m) { m = ((m % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + ":" + pad(Math.floor(m % 60)); }
       function dcol(v) { return v <= 1 ? "#34d399" : v <= 5 ? "#f2c14e" : "#f04545"; }
+      // Tracking cards colour by the FORECAST (the actual isn't known yet); settled
+      // cards colour by the actual outcome.
       function runCard(r) {
-        return '<div class="mini" style="--c:' + dcol(r.a) + '"><span class="hc">' + esc(r.l) + '</span><span class="rt">' + esc(r.o) + ' → ' + esc(r.d) + '</span><span class="pa">' + delayVal(r.p) + '<small>pred</small></span></div>';
+        return '<div class="mini" style="--c:' + dcol(r.p) + '"><span class="hc">' + esc(r.l) + '</span><span class="rt">' + esc(r.o) + ' → ' + esc(r.d) + '</span><span class="pa">' + delayVal(r.p) + '<small>forecast</small></span></div>';
       }
       function setCard(r) {
         return '<div class="mini" style="--c:' + dcol(r.a) + '"><span class="hc">' + esc(r.l) + '</span><span class="rt">' + esc(r.o) + ' → ' + esc(r.d) + '</span><span class="pa">' + delayVal(r.p) + '→' + delayVal(r.a) + '<small>' + esc(accTxt(r.a - r.p)) + '</small></span></div>';
       }
-      var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+      // Shared replay epoch so this clock stays in lockstep with the Live Map's.
+      if (window.__rpT0 == null) window.__rpT0 = (window.performance && performance.now) ? performance.now() : Date.now();
       function tick() {
         var now = (window.performance && performance.now) ? performance.now() : Date.now();
-        var clock = (((now - t0) % RT) / RT) * 1440;
-        if (clockEl) clockEl.textContent = hhmm(clock);
+        var clock = (((now - window.__rpT0) % RT) / RT) * 1440;
+        if (clockEl) clockEl.textContent = "Yesterday · " + hhmm(clock);
         var run = [], set = [];
         for (var i = 0; i < R.length; i++) {
           var r = R[i], end = r.t + RUN;
@@ -325,8 +377,8 @@
           else if (clock >= end && clock < end + SETTLE) set.push(r);
         }
         run.sort(function (a, b) { return b.t - a.t; });
-        if (trackEl) trackEl.innerHTML = run.slice(0, 9).map(runCard).join("") || '<p class="empty">—</p>';
-        if (settledEl) settledEl.innerHTML = set.slice(0, 7).map(setCard).join("") || '<p class="empty">—</p>';
+        if (trackEl) trackEl.innerHTML = run.slice(0, 9).map(runCard).join("") || '<p class="empty">No services running at this moment.</p>';
+        if (settledEl) settledEl.innerHTML = set.slice(0, 7).map(setCard).join("") || '<p class="empty">Nothing settled in the last few minutes.</p>';
       }
       tick();
       var timer = setInterval(tick, 300);

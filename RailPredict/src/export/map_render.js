@@ -23,8 +23,17 @@ window.RailPredictMap = { init: function () {
   var liveTrains = (M && Array.isArray(M.trains) && M.trains.length && M.trains[0] && M.trains[0].route) ? M.trains : null;
   var journeys = liveTrains || replayJourneys;       // live: {route,dep,dur,dly,b,lbl,o,d}
   var liveMode = !!liveTrains;
+  function fmtReplayDate(s) {
+    var p = String(s).split("-");
+    if (p.length !== 3) return "yesterday";
+    var mo = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return Number(p[2]) + " " + (mo[Number(p[1]) - 1] || "") + " " + p[0];
+  }
   var clkLbl = document.querySelector(".map-clock-wrap .lbl");
-  if (clkLbl) clkLbl.textContent = liveMode ? "Live · now" : "Replaying yesterday";
+  if (clkLbl) {
+    var rDate = window.MAP_ABOUT && window.MAP_ABOUT.date;
+    clkLbl.textContent = liveMode ? "Live · now" : ("Replaying " + (rDate ? fmtReplayDate(rDate) : "yesterday"));
+  }
   var cntEl = document.getElementById("map-count");
   if (cntEl) {
     if (liveMode) {
@@ -91,6 +100,17 @@ window.RailPredictMap = { init: function () {
   }
   gZoom.appendChild(el("path", { d: gp, stroke: "#7886a0", "stroke-width": "1", "stroke-opacity": "0.5", fill: "none", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
 
+  // --- Click-to-inspect: a highlighted route for the selected train (drawn under
+  // the moving nodes) + a right-rail detail panel that replaces the KPIs. The full
+  // feature is gated on the panel existing (the OS demo); elsewhere it no-ops. ---
+  var selPath = el("path", { d: "", fill: "none", stroke: "#fff", "stroke-width": "3.2", "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke", "stroke-opacity": "0.95", display: "none" });
+  gZoom.appendChild(selPath);
+  var detailEl = document.getElementById("map-detail");
+  var numbersEl = document.getElementById("map-numbers");
+  var clickable = !!detailEl;
+  var stCodes = window.MAP_STATION_CODES || [];
+  var sel = null, selCalls = null, selProg = null, selStatus = null;
+
   // --- Journeys: a single node travelling along each service's route. The route
   // itself isn't drawn (it lies on the grey network), so nothing overlaps. ---
   var jobjs = [];
@@ -123,12 +143,82 @@ window.RailPredictMap = { init: function () {
     view.k = Math.max(1, Math.min(9, view.k * (ev.deltaY < 0 ? 1.16 : 1 / 1.16)));
     view.tx = v[0] - view.k * lx; view.ty = v[1] - view.k * ly; applyT();
   }, { passive: false, signal: sig });
-  var drag = null;
-  svg.addEventListener("mousedown", function (ev) { drag = toVB(ev.clientX, ev.clientY); ev.preventDefault(); }, { signal: sig });
-  window.addEventListener("mousemove", function (ev) { if (!drag) return; var v = toVB(ev.clientX, ev.clientY); view.tx += v[0] - drag[0]; view.ty += v[1] - drag[1]; drag = v; applyT(); }, { signal: sig });
-  window.addEventListener("mouseup", function () { drag = null; }, { signal: sig });
+  // Distinguish a click (select a train) from a drag (pan): a click is a
+  // mouseup with negligible movement since mousedown.
+  var drag = null, downXY = null, movedFar = false;
+  svg.addEventListener("mousedown", function (ev) { drag = toVB(ev.clientX, ev.clientY); downXY = [ev.clientX, ev.clientY]; movedFar = false; ev.preventDefault(); }, { signal: sig });
+  window.addEventListener("mousemove", function (ev) { if (!drag) return; if (downXY && Math.hypot(ev.clientX - downXY[0], ev.clientY - downXY[1]) > 4) movedFar = true; var v = toVB(ev.clientX, ev.clientY); view.tx += v[0] - drag[0]; view.ty += v[1] - drag[1]; drag = v; applyT(); }, { signal: sig });
+  window.addEventListener("mouseup", function (ev) { if (drag && !movedFar && clickable) handleClick(ev.clientX, ev.clientY); drag = null; }, { signal: sig });
   var fsBtn = document.getElementById("map-fs"), fsTarget = svg.parentNode;
   if (fsBtn && fsTarget) fsBtn.onclick = function () { if (document.fullscreenElement) { if (document.exitFullscreen) document.exitFullscreen(); } else if (fsTarget.requestFullscreen) fsTarget.requestFullscreen(); };
+
+  // --- Click-to-inspect helpers (all function declarations — hoisted) ---
+  function hhmm(m) { m = ((m % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + ":" + pad(Math.floor(m % 60)); }
+  function delayTag(v) { return v > 0 ? "+" + v + "m" : v < 0 ? v + "m" : "on time"; }
+  function titleOp(s) {
+    if (!s) return "";
+    var t = String(s).toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    return t.replace(/\bGwr\b/g, "GWR").replace(/\bLner\b/g, "LNER").replace(/\bTfl\b/g, "TfL").replace(/\bScotrail\b/g, "ScotRail").replace(/\bC2c\b/g, "c2c");
+  }
+  function handleClick(cx, cy) {
+    var v = toVB(cx, cy), lx = (v[0] - view.tx) / view.k, ly = (v[1] - view.ty) / view.k;
+    var best = null, bestD = 16 / view.k;
+    for (var i = 0; i < jobjs.length; i++) {
+      var o = jobjs[i];
+      if (!o._active) continue;
+      var d = Math.hypot(o._cx - lx, o._cy - ly);
+      if (d < bestD) { bestD = d; best = o; }
+    }
+    if (best) selectJourney(best); else deselect();
+  }
+  function selectJourney(o) {
+    sel = o;
+    selPath.setAttribute("d", "M" + o.pts.map(function (p) { return p[0].toFixed(1) + " " + p[1].toFixed(1); }).join("L"));
+    selPath.setAttribute("stroke", BRIGHT[o.j.b]);
+    selPath.setAttribute("display", "");
+    if (numbersEl) numbersEl.style.display = "none";
+    if (detailEl) {
+      detailEl.style.display = "";
+      detailEl.innerHTML = detailHtml(o.j);
+      var back = detailEl.querySelector(".md-back");
+      if (back) back.addEventListener("click", deselect);
+      selCalls = detailEl.querySelectorAll(".md-call");
+      selProg = detailEl.querySelector(".md-prog-fill");
+      selStatus = detailEl.querySelector(".md-status");
+    }
+  }
+  function deselect() {
+    sel = null; selCalls = selProg = selStatus = null;
+    selPath.setAttribute("display", "none"); selPath.setAttribute("d", "");
+    if (detailEl) detailEl.style.display = "none";
+    if (numbersEl) numbersEl.style.display = "";
+  }
+  function detailHtml(j) {
+    var calls = (j.p || []).map(function (idx) { return stCodes[idx] || "·"; });
+    var lis = calls.map(function (c, i) { return '<li class="md-call" data-i="' + i + '">' + esc(c) + '</li>'; }).join("");
+    var op = j.op ? titleOp(j.op) : (j.lbl || "");
+    return (
+      '<button class="md-back" type="button">← Back to network</button>' +
+      '<div class="md-hc">' + esc(j.lbl || "") + ' · service</div>' +
+      '<div class="md-op">' + esc(op) + '</div>' +
+      '<div class="md-route">' + esc(j.o) + '<span class="md-arr"> → </span>' + esc(j.d) + '</div>' +
+      '<div class="md-meta"><span>dep ' + hhmm(j.dep) + '</span><span class="md-status"></span></div>' +
+      '<div class="md-prog"><div class="md-prog-fill" style="background:' + COL[j.b] + '"></div></div>' +
+      '<div class="md-calls-h">' + calls.length + ' calling points</div>' +
+      '<ol class="md-calls">' + lis + '</ol>'
+    );
+  }
+  function updateDetail(info) {
+    if (selProg) selProg.style.width = Math.round(info.tp * 100) + "%";
+    if (selStatus) {
+      var tag = delayTag(sel.j.dly);
+      selStatus.textContent = info.state === "track" ? ("running · " + tag) : info.state === "done" ? ("arrived · " + tag) : "departs soon";
+    }
+    if (selCalls) for (var k = 0; k < selCalls.length; k++) {
+      selCalls[k].classList.toggle("passed", k < info.si);
+      selCalls[k].classList.toggle("now", k === info.si && info.state === "track");
+    }
+  }
 
   // --- Banner cards (driven by the live journey animation) ---
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
@@ -136,6 +226,13 @@ window.RailPredictMap = { init: function () {
   function jcard(j, settled) {
     var right = settled ? delayVal(j.dly) : "en route", sub = settled ? (j.b === 0 ? "on time" : j.b === 1 ? "slight" : "late") : "live";
     return '<div class="mini" style="--c:' + COL[j.b] + '"><span class="hc">' + esc(j.lbl) + '</span><span class="rt">' + esc(j.o) + ' → ' + esc(j.d) + '</span><span class="pa">' + right + '<small>' + sub + '</small></span></div>';
+  }
+  // Render a rail list, capped, with a "+N more" line when there's overflow.
+  function railHtml(arr, cap, settled, moreWord) {
+    if (!arr.length) return '<p class="empty">—</p>';
+    var h = arr.slice(0, cap).map(function (j) { return jcard(j, settled); }).join("");
+    if (arr.length > cap) h += '<p style="font:600 9.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:#94a3b8;padding:5px 2px 1px">+' + (arr.length - cap) + ' more ' + moreWord + '</p>';
+    return h;
   }
   var trackBox = document.getElementById("rail-track"), settleBox = document.getElementById("rail-settled"), clockEl = document.getElementById("map-clock"), lastBanner = 0;
   var RT = 210000;     // ms to replay the full day
@@ -147,33 +244,45 @@ window.RailPredictMap = { init: function () {
   }
 
   function frame(now) {
-    if (RP._t0 == null) RP._t0 = now;
+    // Shared replay epoch (also used by the Replay app) so every "Replaying
+    // yesterday" surface sweeps the day in lockstep.
+    if (window.__rpT0 == null) window.__rpT0 = now;
     // Live: real wall-clock minutes since UTC midnight (matches the server's
     // dep/dur). Replay: sweep the full day on a loop.
     var clock = liveMode
       ? (function () { var d = new Date(); return d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60; })()
-      : (((now - RP._t0) % RT) / RT) * 1440;
+      : (((now - window.__rpT0) % RT) / RT) * 1440;
     var rb = 3.4 / view.k, LEAD_MIN = 20, track = [], settled = [];
+    // If a train is selected but no longer animating, keep its panel on "arrived".
+    var selInfo = sel ? { state: "done", tp: 1, si: sel.pts.length - 1 } : null;
     for (var i = 0; i < jobjs.length; i++) {
       var o = jobjs[i], end = o.depMin + o.durMin;
       if (liveMode && clock >= o.depMin - LEAD_MIN && clock < o.depMin) {
         // Poised at the origin in the ~20 min before departure: small + dim,
         // then it brightens and glides once it actually departs.
         place(o, o.pts[0][0], o.pts[0][1], rb * 0.8, 0.42);
+        o._cx = o.pts[0][0]; o._cy = o.pts[0][1]; o._active = true;
+        if (o === sel) selInfo = { state: "poised", tp: 0, si: 0 };
       } else if (clock >= o.depMin && clock < end) {
         // node position by arc length along the route (constant speed)
         var tp = (clock - o.depMin) / o.durMin, d = tp * o.total, si = 0;
         while (si < o.pts.length - 2 && o.cum[si + 1] < d) si++;
         var segLen = o.cum[si + 1] - o.cum[si], f = segLen > 0 ? (d - o.cum[si]) / segLen : 0;
         var a = o.pts[si], b = o.pts[si + 1];
-        place(o, a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, rb, 1);
+        var nx = a[0] + (b[0] - a[0]) * f, ny = a[1] + (b[1] - a[1]) * f;
+        place(o, nx, ny, rb, 1);
+        o._cx = nx; o._cy = ny; o._active = true;
         track.push(o.j);
+        if (o === sel) selInfo = { state: "track", tp: tp, si: si };
       } else if (clock >= end && clock < end + SETTLE_MIN) {
         var sf = (clock - end) / SETTLE_MIN;
         place(o, o.lx, o.ly, rb * (1 + 0.8 * (1 - sf)), 1 - sf); // small pop on arrival
+        o._cx = o.lx; o._cy = o.ly; o._active = true;
         settled.push(o.j);
+        if (o === sel) selInfo = { state: "done", tp: 1, si: o.pts.length - 1 };
       } else {
         o.core.setAttribute("display", "none"); o.halo.setAttribute("display", "none");
+        o._active = false;
       }
     }
     if (clockEl) {
@@ -182,8 +291,9 @@ window.RailPredictMap = { init: function () {
     }
     if (now - lastBanner > 250) {
       lastBanner = now;
-      if (trackBox) trackBox.innerHTML = track.slice(0, 8).map(function (j) { return jcard(j, false); }).join("") || '<p class="empty">—</p>';
-      if (settleBox) settleBox.innerHTML = settled.slice(0, 6).map(function (j) { return jcard(j, true); }).join("") || '<p class="empty">—</p>';
+      if (trackBox) trackBox.innerHTML = railHtml(track, 8, false, "running");
+      if (settleBox) settleBox.innerHTML = railHtml(settled, 6, true, "settled");
+      if (sel && detailEl && selInfo) updateDetail(selInfo);
     }
     RP._raf = requestAnimationFrame(frame);
   }

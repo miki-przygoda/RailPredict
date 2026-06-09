@@ -455,9 +455,13 @@
   }
 
   /* ── Operator league rows (ranked bar chart) ───────────────────── */
+  .win-body .op-legend {
+    font: 500 11px var(--sans); color: var(--muted); line-height: 1.55;
+    margin: 0 0 14px; max-width: 560px;
+  }
   .win-body .op-lrow {
     display: grid;
-    grid-template-columns: 20px minmax(96px, 168px) 1fr 42px 60px;
+    grid-template-columns: 22px minmax(110px, 200px) 1fr 44px 58px;
     align-items: center; gap: 0 11px;
     padding: 7px 4px;
     border-bottom: 1px solid var(--line);
@@ -479,8 +483,10 @@
   .win-body .gauge .g-val { font: 800 18px var(--sans); color: var(--accent-ink); letter-spacing: -.02em; }
   .win-body .gauge .g-track { height: 8px; background: #eef1f5; border-radius: 5px; overflow: hidden; }
   .win-body .gauge .g-fill { height: 100%; border-radius: 5px; transition: width .35s ease; }
+  .win-body .gauge .g-sub { font: 500 9.5px var(--sans); color: var(--dim); margin-top: 8px; line-height: 1.4; }
   .win-body .hourly { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 14px 14px 10px; margin-bottom: 6px; }
-  .win-body .hourly .hh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+  .win-body .hourly .hh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .win-body .hourly .hh #rel-peak { margin-left: auto; font: 700 10px var(--mono); color: var(--muted); }
   .win-body .hourly .hh b { font: 800 11px var(--sans); color: var(--ink); }
   .win-body .hourly .hh span { font: 500 10.5px var(--sans); color: var(--dim); }
   .win-body .hours { display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 2px; height: 88px; }
@@ -490,9 +496,10 @@
 
   /* ── Predictions: signed-error histogram ───────────────────────── */
   .win-body .histo { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 14px 14px 12px; margin-bottom: 16px; }
-  .win-body .histo .hh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .win-body .histo .hh { margin-bottom: 4px; }
   .win-body .histo .hh b { font: 800 11px var(--sans); color: var(--ink); }
-  .win-body .histo .hh span { font: 500 10.5px var(--sans); color: var(--dim); }
+  .win-body .histo-cap { font: 500 10.5px var(--sans); color: var(--muted); line-height: 1.5; margin-bottom: 14px; max-width: 560px; }
+  .win-body .histo-cap b { color: var(--ink); font-weight: 700; }
   .win-body .histo-bars { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: end; gap: 10px; height: 132px; }
   .win-body .hcol { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
   .win-body .hcol .hval { font: 700 9.5px var(--mono); color: var(--muted); margin-bottom: 4px; }
@@ -541,6 +548,11 @@
     color: var(--dim);
     margin-left: auto;
   }
+  /* Replay full-day accuracy scoreboard */
+  .win-body .rp-score { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .win-body .rp-score .rs { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+  .win-body .rp-score .rs b { display: block; font: 800 17px var(--sans); color: var(--accent-ink); letter-spacing: -.02em; line-height: 1.15; }
+  .win-body .rp-score .rs span { font: 600 8.5px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .03em; }
 
   /* ── About page ────────────────────────────────────────────────── */
   .win-body .about-section {
@@ -635,14 +647,14 @@
   .win-body .rail-h.t::before { background: var(--accent); }
   .win-body .rail-h.s::before { background: var(--good); }
   .win-body .mini {
-    display: grid; grid-template-columns: 1fr auto; gap: 1px 8px;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 8px;
     border: 1px solid var(--line); border-left: 3px solid var(--c, #94a3b8);
     border-radius: 6px; padding: 6px 9px; margin-bottom: 6px;
   }
-  .win-body .mini .hc { font: 700 11px var(--mono); }
-  .win-body .mini .rt { grid-column: 1; font: 600 9.5px var(--mono); color: #64748b; }
+  .win-body .mini .hc { font: 700 11px var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .win-body .mini .rt { grid-column: 1; font: 600 9.5px var(--mono); color: #64748b; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .win-body .mini .pa { grid-column: 2; grid-row: 1/3; align-self: center; font: 700 11px var(--mono); text-align: right; }
-  .win-body .mini .pa small { display: block; font: 700 6.5px var(--mono); color: var(--dim); text-transform: uppercase; }
+  .win-body .mini .pa small { display: block; font: 700 8px var(--mono); color: var(--dim); text-transform: uppercase; }
   .win-body .empty { color: var(--dim); font: 600 11px var(--mono); padding: 8px 0; }
   .win-body .cc-map {
     position: relative;
@@ -659,12 +671,33 @@
   .win-body #map-clock { font: 800 18px var(--mono); color: #cfe6ff; letter-spacing: .03em; line-height: 1.1; }
   .win-body .kcard {
     background: #fff; border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px 11px; margin-bottom: 8px;
+    padding: 8px 11px; margin-bottom: 6px;
   }
   .win-body .kcard .n { font: 800 20px var(--sans); color: var(--accent-ink); }
   .win-body .kcard .l { font: 600 9px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-top: 1px; }
-  .win-body .info { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 10px; }
+  .win-body .info { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 0 0 12px; }
   .win-body .info b { color: var(--ink); }
+
+  /* ── Map click-to-inspect detail panel ─────────────────────────── */
+  .win-body .map-detail { display: none; }
+  .win-body .md-back { background: none; border: none; color: var(--accent); font: 600 11px var(--sans); cursor: pointer; padding: 0 0 10px; }
+  .win-body .md-back:hover { text-decoration: underline; }
+  .win-body .md-hc { font: 700 9.5px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  .win-body .md-op { font: 700 13.5px var(--sans); color: var(--ink); margin-bottom: 9px; }
+  .win-body .md-route { font: 800 21px var(--mono); color: var(--accent-ink); letter-spacing: .01em; margin-bottom: 7px; }
+  .win-body .md-route .md-arr { color: var(--dim); }
+  .win-body .md-meta { display: flex; justify-content: space-between; align-items: baseline; font: 600 11px var(--mono); color: var(--muted); margin-bottom: 9px; }
+  .win-body .md-meta .md-status { color: var(--ink); }
+  .win-body .md-prog { height: 6px; background: #eef1f5; border-radius: 4px; overflow: hidden; margin-bottom: 14px; }
+  .win-body .md-prog-fill { height: 100%; width: 0; border-radius: 4px; transition: width .3s linear; }
+  .win-body .md-calls-h { font: 800 9.5px var(--mono); color: #94a3b8; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 6px; }
+  .win-body .md-calls { list-style: none; margin: 0; padding: 0; }
+  .win-body .md-calls .md-call { font: 600 11px var(--mono); color: var(--ink); padding: 3px 0 3px 15px; position: relative; }
+  .win-body .md-calls .md-call::before { content: ""; position: absolute; left: 2px; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: #cbd5e1; }
+  .win-body .md-calls .md-call.passed { color: var(--dim); }
+  .win-body .md-calls .md-call.passed::before { background: #e5e7eb; }
+  .win-body .md-calls .md-call.now { color: var(--accent-ink); font-weight: 800; }
+  .win-body .md-calls .md-call.now::before { background: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.18); }
   .win-body .cc-foot {
     display: flex; align-items: center; gap: 16px;
     padding: 9px 20px; border-top: 1px solid var(--line); background: var(--soft);
@@ -766,25 +799,28 @@
       <main class="cc-map"><svg id="map-svg"></svg>
         <div class="map-clock-wrap"><span class="lbl">Replaying yesterday</span><b id="map-clock">--:--</b></div>
         <button id="map-fs" class="map-fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
-        <span class="map-hint">scroll to zoom · drag to pan</span>
+        <span class="map-hint">scroll to zoom · drag to pan · click a train</span>
       </main>
       <aside class="rail r">
+        <div id="map-numbers">
         <div class="rail-h">The numbers</div>
+        <div class="info"><b>What you're seeing:</b> each dot is a real train, coloured by its forecast delay, gliding from origin to destination. When it arrives, the left rail reveals the actual outcome beside the forecast. The figures below are yesterday's network-wide totals. <b>Tip:</b> click any train to trace its route and calling points.</div>
         <div class="kcard"><div class="n" data-fill="hero_number">—</div><div class="l">departures analysed</div></div>
         <div class="kcard"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">on time (≤5 min)</div></div>
-        <div class="kcard"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean prediction error</div></div>
-        <div class="kcard"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
-        <div class="kcard"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrive within 5 min</div></div>
-        <div class="kcard"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">recover delay en route</div></div>
+        <div class="kcard"><div class="n" data-fill="mae_mins" data-suffix=" min">—</div><div class="l">average forecast miss</div></div>
+        <div class="kcard"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">forecasts within 5 min</div></div>
+        <div class="kcard"><div class="n" data-fill="arrival_on_time_pct" data-suffix="%">—</div><div class="l">arrived within 5 min</div></div>
+        <div class="kcard"><div class="n" data-fill="recovered_pct" data-suffix="%">—</div><div class="l">made up lost time</div></div>
         <div class="kcard"><div class="n" data-fill="services_label">—</div><div class="l">distinct services</div></div>
-        <div class="info"><b>What you're seeing:</b> every dot is a real train, coloured by predicted delay, gliding origin→destination; it flips to the actual as it arrives. The left rail shows the same predicted→actual outcomes.</div>
+        </div>
+        <div id="map-detail" class="map-detail"></div>
       </aside>
     </div>
     <div class="cc-foot">
       <span class="lg"><b style="background:#34d399"></b>on time</span>
       <span class="lg"><b style="background:#f2c14e"></b>slight</span>
       <span class="lg"><b style="background:#f04545"></b>late</span>
-      <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · © OpenStreetMap contributors © CARTO · fully offline</span>
+      <span style="margin-left:auto">Generated <span data-fill="generated_at">—</span> · © OpenStreetMap contributors © CARTO</span>
     </div>
   </div>
 </template>
@@ -793,7 +829,8 @@
 <template id="app-operators">
   <div class="applet">
     <div class="applet-h">Operator league</div>
-    <div class="applet-sub">Yesterday's performance — on-time % (arrivals within 5 min) and journeys run, per operator. Swatch coloured by performance.</div>
+    <div class="applet-sub">Yesterday's on-time performance by operator, ranked best first.</div>
+    <div class="op-legend">Each bar is the share of that operator's trains arriving within 5 minutes — <b style="color:#16a34a">green ≥ 90%</b>, <b style="color:#c08800">amber 80–89%</b>, <b style="color:#dc2626">red below 80%</b>. The figure on the right is journeys run.</div>
     <div id="op-list"></div>
   </div>
 </template>
@@ -801,23 +838,24 @@
 <!-- ── Predictions app ────────────────────────────────────────────── -->
 <template id="app-predictions">
   <div class="applet">
-    <div class="applet-h">Prediction accuracy</div>
-    <div class="applet-sub">How well the LightGBM models forecast arrival delay — measured against every finalised service where a prediction was made and the actual outcome was recorded.</div>
+    <div class="applet-h">Forecast accuracy</div>
+    <div class="applet-sub">How close our delay forecasts come to what actually happens — scored against every completed service where we made a forecast and then recorded the real outcome.</div>
     <div class="applet-row">
-      <div class="kcard-sm"><div class="n" data-fill="mae_mins" data-suffix="m">—</div><div class="l">mean abs. error</div></div>
-      <div class="kcard-sm"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">predictions within 5 min</div></div>
-      <div class="kcard-sm"><div class="n" data-fill="on_time_pct" data-suffix="%">—</div><div class="l">on time (≤5 min)</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="mae_mins" data-suffix=" min">—</div><div class="l">average miss</div></div>
+      <div class="kcard-sm"><div class="n" data-fill="within_5_pct" data-suffix="%">—</div><div class="l">forecasts within 5 min</div></div>
+      <div class="kcard-sm"><div class="n" id="pred-count">—</div><div class="l">forecasts scored</div></div>
     </div>
     <div class="histo">
-      <div class="hh"><b>Prediction error distribution</b><span>predicted minus actual delay (min) — clustered on zero is accurate &amp; unbiased</span></div>
+      <div class="hh"><b>How close each forecast was</b></div>
+      <div class="histo-cap">The gap between our forecast and what actually happened, in minutes. A tall stack on <b>0</b> means most forecasts were spot-on. Bars to the right of 0 = the train ran <b>later</b> than we forecast; to the left = earlier.</div>
       <div class="histo-bars" id="pred-histo"></div>
     </div>
     <div class="about-section">
-      <h3>How predictions work</h3>
-      <p>Two models run in tandem: a <b>day-ahead</b> model that forecasts delay from timetable features and historical patterns, and a <b>real-time</b> model that updates as live Darwin messages arrive. Both export to ONNX and run locally — no round-trips to an external inference server.</p>
-      <p>The engine blends the model output with preceding-service correlation (when a train on the same origin within ±20 min is delayed, downstream trains inherit a weighted signal) and applies weather-driven volatility from the Open-Meteo wind feed.</p>
+      <h3>How the forecasts are made</h3>
+      <p>Two models work together: a <b>day-ahead</b> model that forecasts each train's delay from the timetable and its history, and a <b>real-time</b> model that sharpens the forecast as live data comes in during the journey. They're the kind of model (gradient-boosted decision trees) that routinely wins industry forecasting contests, and they run on ordinary hardware in under a millisecond — so there's no per-forecast cost.</p>
+      <p>The forecast also accounts for <b>knock-on delay</b> — a late train ahead on the same line drags the next one down — and <b>weather</b> on the route, since high winds raise the risk.</p>
     </div>
-    <div class="applet-note">Accuracy is measured on finalised services only. Services with no recorded actual outcome are excluded from all statistics above.</div>
+    <div class="applet-note">Scored on completed services only: anything still in progress, or without a recorded outcome, is left out of every figure above.</div>
   </div>
 </template>
 
@@ -825,25 +863,29 @@
 <template id="app-reliability">
   <div class="applet">
     <div class="applet-h">Journey reliability</div>
-    <div class="applet-sub">How consistently trains finish close to schedule — arrival punctuality, delay recovery, and when the network runs late. <b data-fill="services_label">—</b> distinct services analysed.</div>
+    <div class="applet-sub">How consistently trains finish close to schedule — punctuality on arrival, how often late-running trains make up the time, and when the network runs late. <b data-fill="services_label">—</b> distinct services analysed.</div>
     <div class="gauge-row">
       <div class="gauge">
-        <div class="g-top"><span class="g-lbl">Arrive within 5 min</span><span class="g-val" data-fill="arrival_on_time_pct" data-suffix="%">—</span></div>
+        <div class="g-top"><span class="g-lbl">Arrived within 5 min</span><span class="g-val" data-fill="arrival_on_time_pct" data-suffix="%">—</span></div>
         <div class="g-track"><div class="g-fill" id="rel-arr"></div></div>
+        <div class="g-sub">share of trains arriving on time — higher is better</div>
       </div>
       <div class="gauge">
-        <div class="g-top"><span class="g-lbl">Recover delay en route</span><span class="g-val" data-fill="recovered_pct" data-suffix="%">—</span></div>
+        <div class="g-top"><span class="g-lbl">Made up lost time</span><span class="g-val" data-fill="recovered_pct" data-suffix="%">—</span></div>
         <div class="g-track"><div class="g-fill" id="rel-rec"></div></div>
+        <div class="g-sub">of trains that left late, the share that still arrived on time</div>
       </div>
     </div>
     <div class="hourly">
-      <div class="hh"><b>When the network runs late</b><span>share of trains arriving 5+ min late, by hour</span></div>
+      <div class="hh"><b>When the network runs late</b><span id="rel-peak"></span></div>
+      <div class="histo-cap" style="margin-bottom:12px">Share of trains arriving 5+ minutes late, by hour of day. Faint bars are quiet, low-traffic hours.</div>
       <div class="hours" id="rel-hours"></div>
       <div class="hours-axis" id="rel-hours-axis"></div>
     </div>
     <div class="section-label">Most reliable operators</div>
+    <div class="op-legend" style="margin-bottom:10px">The most consistent finishers — top 8 by on-time arrivals (within 5 minutes).</div>
     <div id="rel-op-list"></div>
-    <div class="applet-note">Recovery counts services that departed late but still arrived within 5 minutes. Low-volume hours are dimmed. Derived from Darwin real-time messages.</div>
+    <div class="applet-note">Derived from Darwin real-time messages — National Rail's live feed of every train movement.</div>
   </div>
 </template>
 
@@ -854,15 +896,16 @@
       <div class="applet-h" style="margin-bottom:0">Predicted → actual</div>
       <span class="rp-counter" id="rp-frame"></span>
     </div>
-    <div class="applet-sub" style="margin-bottom:10px">Replaying yesterday (clock = time of day). Services show their <b>predicted</b> delay while running, then <b>predicted → actual</b> on arrival.</div>
+    <div class="applet-sub" style="margin-bottom:12px">Yesterday's services, replayed in fast-forward. Each shows its <b>forecast</b> delay while running, then <b>forecast → actual</b> when it arrives — so you can watch the forecasts being graded against reality.</div>
+    <div class="rp-score" id="rp-score"></div>
     <div class="replay-wrap">
       <div>
         <div class="replay-zone-h t">Tracking now</div>
-        <div id="rp-track"><p class="empty">—</p></div>
+        <div id="rp-track"><p class="empty">No services running at this moment.</p></div>
       </div>
       <div>
         <div class="replay-zone-h s">Just settled</div>
-        <div id="rp-settled"><p class="empty">—</p></div>
+        <div id="rp-settled"><p class="empty">Nothing settled yet.</p></div>
       </div>
     </div>
   </div>
@@ -872,13 +915,13 @@
 <template id="app-about">
   <div class="applet">
     <div class="applet-h">About RailPredict</div>
-    <div class="applet-sub">A prediction engine for UK rail delays — it turns the live Darwin firehose into accurate, measured delay intelligence, and surfaces it instantly.</div>
+    <div class="applet-sub">A forecasting engine for UK rail delays — it turns National Rail's live data feed into accurate, measured delay intelligence, and surfaces it instantly.</div>
 
     <div class="about-stats">
-      <div class="stat"><b id="ab-journeys">—</b><span>journeys shadowed</span></div>
+      <div class="stat"><b id="ab-journeys">—</b><span>journeys tracked</span></div>
       <div class="stat"><b id="ab-calls">—</b><span>calling points</span></div>
-      <div class="stat"><b id="ab-preds">—</b><span>predictions scored</span></div>
-      <div class="stat"><b id="ab-mae">—</b><span>mean error</span></div>
+      <div class="stat"><b id="ab-preds">—</b><span>forecasts scored</span></div>
+      <div class="stat"><b id="ab-mae">—</b><span>average miss</span></div>
       <div class="stat"><b id="ab-within5">—</b><span>within 5 min</span></div>
       <div class="stat"><b id="ab-ontime">—</b><span>on time</span></div>
     </div>
@@ -890,7 +933,7 @@
 
     <div class="about-section">
       <h3>What we capture — and why</h3>
-      <p>RailPredict shadows National Rail's Darwin push-port: every movement message for every train, live. From those fragmentary messages it reconstructs each service's <b>full journey</b> — every calling point, scheduled vs actual time, platform, and cancellation — and enriches it with weather on the route. The timetable says what <em>should</em> happen; this records what actually <em>does</em>. That record is the corpus the model learns from.</p>
+      <p>RailPredict shadows <b>Darwin</b> — National Rail's live feed of every train movement across the country. From those fragmentary messages it reconstructs each service's <b>full journey</b> — every calling point, scheduled vs actual time, platform, and cancellation — and enriches it with weather on the route. The timetable says what <em>should</em> happen; this records what actually <em>does</em>. That record is the history the models learn from.</p>
     </div>
 
     <div class="about-section">
@@ -899,19 +942,19 @@
       <ul class="about-rel">
         <li><b>Service identity</b> — it tracks the <em>recurring</em> service (same working timetable, weekday, origin, hour), not the one-off daily train, so it learns each service's true character.</li>
         <li><b>Knock-on</b> — a late preceding service on the same route shifts the next one's forecast, blended within a ±20-minute window.</li>
-        <li><b>Cascade</b> — delay propagates along shared track, tracked through a live location index.</li>
+        <li><b>Cascade</b> — when one train falls behind, the trains sharing its track inherit the risk, traced in real time.</li>
         <li><b>Volatility</b> — high winds on a corridor raise the alert level for every service on it.</li>
       </ul>
     </div>
 
     <div class="about-highlight">
       <h3>The model — the core of the IP</h3>
-      <p>Two gradient-boosted models (LightGBM, compiled to ONNX): a <b>day-ahead</b> model for planning and a <b>real-time</b> model that folds in eight live signals as a service runs. Both are trained on the captured delay corpus and sample-weighted so the rare, costly severe delays aren't drowned out by the on-time majority. Inference is local and sub-millisecond — no per-query API cost.</p>
+      <p>Two machine-learning models — gradient-boosted decision trees (the LightGBM/ONNX stack), the kind that routinely win industry forecasting contests: a <b>day-ahead</b> model for planning and a <b>real-time</b> model that folds in eight live signals as a service runs. Both learn from the captured delay history, deliberately weighted so the rare, costly severe delays aren't drowned out by the on-time majority. They run on ordinary hardware in under a millisecond — so there's no per-forecast cost.</p>
     </div>
 
     <div class="about-section">
-      <h3>Predictions, scored against reality</h3>
-      <p>Every service gets a predicted delay and a confidence that decays as its data ages. Crucially, each prediction is <b>logged and later matched to the real outcome</b> — so accuracy is measured, not asserted. The numbers above are yesterday's, straight from that ledger.</p>
+      <h3>Forecasts, scored against reality</h3>
+      <p>Every service gets a forecast delay and a confidence score — and that score automatically lowers itself when the underlying history is stale, so a shaky forecast never poses as a sure thing. Crucially, each forecast is <b>logged and later matched to the real outcome</b> — so accuracy is measured, not asserted. The numbers above are yesterday's, straight from that ledger.</p>
     </div>
 
     <div class="about-section">
@@ -920,13 +963,13 @@
     </div>
 
     <div class="about-footer">
-      Generated <span data-fill="generated_at">—</span> · the model, the engine, and this dashboard — one Rust + Docker appliance · Darwin data © Network Rail
+      Generated <span data-fill="generated_at">—</span> · the model, the engine, and this dashboard — one self-contained Rust + Docker service · Darwin data © Network Rail
     </div>
   </div>
 </template>
 
 <!-- ── Script injection points (generator replaces these) ─────────── -->
-<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP_HOURLY=__HOURLY__;window.MAP_ABOUT=__ABOUT__;window.MAP=__MAP_DATA__;</script>
+<script>window.MAP_IMG="data:image/png;base64,__MAP_B64__";window.MAP_BOUNDS=__MAP_BOUNDS__;window.MAP_STATIONS=__STATIONS__;window.MAP_STATION_CODES=__STATION_CODES__;window.MAP_EDGES=__EDGES__;window.MAP_JOURNEYS=__JOURNEYS__;window.MAP_OPS_DAY=__OPS_DAY__;window.MAP_REPLAY=__REPLAY_DAY__;window.MAP_HOURLY=__HOURLY__;window.MAP_ABOUT=__ABOUT__;window.MAP=__MAP_DATA__;</script>
 <script>/* __MAP_JS__ */</script>
 <script>/* __APPS_JS__ */</script>
 <script>/* __OS_JS__ */</script>
