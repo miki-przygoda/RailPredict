@@ -2,11 +2,11 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.20.0" -- 09/06/2026**
+**version = "1.20.0" -- 10/06/2026**
 
 ---
 
-## v1.20.0 — 09/06/2026
+## v1.20.0 — 10/06/2026
 
 **RailPredict OS — premium polish pass.** Lifts the offline `docs/os.html` sales
 demo from "impressive prototype" toward "shipped product" across every surface.
@@ -31,6 +31,30 @@ Fully offline, no new dependencies.
   Live Map; brand now reads "RailPredict OS".
 
 Design spec: `docs/superpowers/specs/2026-06-08-os-demo-premium-polish-design.md`.
+
+**Content-clarity audit + CRS codes + map click-to-inspect.** A six-app audit of
+the demo drove a clarity pass across every surface; the demo focus then moved to
+the live dashboard (a static export of it), with the OS desktop kept as an Easter
+egg.
+
+- **CRS station codes on the map** — origins/destinations and calling points now
+  show the 3-letter CRS code rail staff read day to day, replacing long names.
+  New `cache::location_codes` + committed `cache/tiploc_crs.tsv` (built from the
+  fasteroute dataset like the name/coord refs); sidings/depots with no CRS fall
+  back to their TIPLOC. Both the baked map data (`build_map_data.py`) and the live
+  `live_services()` emit codes.
+- **Map click-to-inspect** — click a train and its full route lights up while the
+  right rail swaps from KPIs to a per-train detail panel (operator, O→D in CRS,
+  departure, live progress, calling points with the current stop). Works on the
+  offline OS demo and the live `/map` page, where the selection persists across
+  the 20 s snapshot poll.
+- **Per-app clarity fixes** — corrected an inverted Predictions histogram caption,
+  real operator brand names + a colour-band legend, a band-coloured Reliability
+  gauge + an hourly "peak" annotation, a Replay full-day accuracy scoreboard, and
+  About jargon glosses.
+- **`/predictions` de-jargoned** — "Average miss" (was MAE), "How far off",
+  "Confidence vs accuracy", confidence bands as %, a corrected calibration note,
+  and Bias aligned to the error-distribution direction (both `actual − predicted`).
 
 ## v1.19.0 — 08/06/2026
 
