@@ -10,14 +10,24 @@
   "use strict";
 
   /* ── App registry ─────────────────────────────────────────────── */
+  // `icon` is the glyph id of a <symbol> in the os_template sprite; the matching
+  // gradient tile class is `tile-<id>`. Both render via iconMarkup() below.
   var APPS = [
-    { id: "map",         title: "Live Map",          icon: "🗺️",  kind: "map"  },
-    { id: "operators",   title: "Operators",          icon: "🚆",  kind: "view" },
-    { id: "predictions", title: "Predictions",        icon: "🎯",  kind: "view" },
-    { id: "reliability", title: "Reliability",        icon: "📊",  kind: "view" },
-    { id: "replay",      title: "Replay",             icon: "▶️",  kind: "view" },
-    { id: "about",       title: "About RailPredict",  icon: "ⓘ",  kind: "view" }
+    { id: "map",         title: "Live Map",          kind: "map"  },
+    { id: "operators",   title: "Operators",          kind: "view" },
+    { id: "predictions", title: "Predictions",        kind: "view" },
+    { id: "reliability", title: "Reliability",        kind: "view" },
+    { id: "replay",      title: "Replay",             kind: "view" },
+    { id: "about",       title: "About RailPredict",  kind: "view" }
   ];
+
+  /* ── Crafted app icon: gradient tile + line-glyph (no emoji) ──── */
+  function iconMarkup(app, size) {
+    var cls = "app-ico tile-" + app.id + (size ? " " + size : "");
+    return '<span class="' + cls + '">' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-' + app.id + '"/></svg>' +
+      '</span>';
+  }
 
   /* ── State ────────────────────────────────────────────────────── */
   var zTop = 100;             // z-index counter for focus management
@@ -97,12 +107,28 @@
     focusWin(id);
   }
 
+  /* ── Run `fn` once, on the element's transitionend or a timeout fallback ── */
+  function onSettle(el, prop, fallbackMs, fn) {
+    var fired = false;
+    function done() { if (fired) return; fired = true; fn(); }
+    el.addEventListener("transitionend", function h(e) {
+      if (e.target === el && e.propertyName === prop) { el.removeEventListener("transitionend", h); done(); }
+    });
+    setTimeout(done, fallbackMs);
+  }
+
   /* ── Minimise ─────────────────────────────────────────────────── */
   function minimiseWin(id) {
     var w = windows[id];
     if (!w) return;
-    w.el.classList.add("min");
     w.isMin = true;
+    var el = w.el;
+    // Animate down toward the dock, then hide with `min` (display:none).
+    el.classList.add("minimising");
+    onSettle(el, "transform", 280, function () {
+      el.classList.add("min");
+      el.classList.remove("minimising");
+    });
     // Keep running dot — window still "open"
   }
 
@@ -110,8 +136,15 @@
   function restoreWin(id) {
     var w = windows[id];
     if (!w) return;
-    w.el.classList.remove("min");
     w.isMin = false;
+    var el = w.el;
+    // Jump to the minimised visual *before* un-hiding (no full-size flash),
+    // then strip it on the next frame so it animates back up.
+    el.classList.add("minimising");
+    el.classList.remove("min");
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { el.classList.remove("minimising"); });
+    });
     focusWin(id);
   }
 
@@ -122,9 +155,15 @@
     if (w.dragAbort) w.dragAbort.abort(); // remove this window's document drag listeners
     if (w.resizeAbort) w.resizeAbort.abort(); // ...and its resize listeners
     if (w.body && w.body._replayTimer) clearInterval(w.body._replayTimer); // stop replay cycling
-    w.el.parentNode && w.el.parentNode.removeChild(w.el);
+    var el = w.el;
+    // Drop registry state immediately so re-opening makes a fresh window…
     delete windows[id];
     updateDockDot(id);
+    // …then animate the old element out and remove it.
+    el.classList.add("closing");
+    onSettle(el, "transform", 280, function () {
+      el.parentNode && el.parentNode.removeChild(el);
+    });
   }
 
   /* ── Drag logic ───────────────────────────────────────────────── */
@@ -209,9 +248,10 @@
     var layer = document.getElementById("windows");
     if (!layer) return;
 
-    // Build DOM
+    // Build DOM — start in the `opening` state (small + transparent); the open
+    // transition plays once we strip the class on the next frame.
     var win = document.createElement("div");
-    win.className = "win";
+    win.className = "win opening";
     win.setAttribute("data-win-id", id);
 
     // Title bar
@@ -280,6 +320,11 @@
     win.style.zIndex = ++zTop;
 
     layer.appendChild(win);
+    // Play the open animation: paint the `opening` start state, then remove it
+    // so the window scales/fades up to rest.
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { win.classList.remove("opening"); });
+    });
 
     windows[id] = {
       el: win, bar: bar, body: body,
@@ -372,7 +417,7 @@
         // Fallback: coming soon placeholder (template or OsApps entry missing)
         w.body.innerHTML =
           '<div class="soon-body">' +
-            '<div class="soon-icon">' + def.icon + '</div>' +
+            iconMarkup(def, "xl") +
             '<div class="soon-title">' + def.title + '</div>' +
             '<div class="soon-sub">Coming soon — part of the RailPredict suite</div>' +
             '<div class="soon-tag">Stage 4</div>' +
@@ -399,7 +444,7 @@
       icon.className = "desk-icon";
       icon.setAttribute("data-app", app.id);
       icon.innerHTML =
-        '<span class="icon-glyph">' + app.icon + '</span>' +
+        iconMarkup(app, "lg") +
         '<span class="icon-label">' + app.title + '</span>';
       icon.addEventListener("click",    function () { openApp(app.id); });
       icon.addEventListener("dblclick", function () { openApp(app.id); });
@@ -422,7 +467,7 @@
       item.className = "dock-item";
       item.setAttribute("data-app", app.id);
       item.innerHTML =
-        '<span class="d-glyph">' + app.icon + '</span>' +
+        iconMarkup(app, "") +
         '<div class="d-dot"></div>';
       item.setAttribute("title", app.title);
       item.addEventListener("click", function () {
@@ -452,12 +497,58 @@
     setInterval(tick, 1000);
   }
 
+  /* ── Menu-bar replay-status chip ──────────────────────────────── */
+  function setStatus() {
+    var el = document.getElementById("os-status");
+    if (!el) return;
+    var A = window.MAP_ABOUT || {};
+    var p = String(A.date || "").split("-");
+    if (p.length === 3) {
+      var mo = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      el.textContent = "Replaying " + Number(p[2]) + " " + (mo[Number(p[1]) - 1] || "") + " " + p[0];
+    } else {
+      el.textContent = "Network replay";
+    }
+  }
+
+  /* ── Boot cue: gently point a first-time viewer at the flagship ── */
+  function bootCue() {
+    var mapDock = document.querySelector("#dock .dock-item[data-app='map']");
+    if (mapDock) mapDock.classList.add("cue");
+
+    var hint = document.createElement("div");
+    hint.className = "boot-hint";
+    hint.innerHTML = 'Start with <span class="hl">Live Map</span> <span class="arr">↓</span>';
+    var desktop = document.getElementById("desktop");
+    if (desktop) desktop.appendChild(hint);
+
+    var dismissed = false;
+    function dismissCue() {
+      if (dismissed) return;
+      dismissed = true;
+      if (mapDock) mapDock.classList.remove("cue");
+      hint.classList.add("gone");
+      setTimeout(function () { hint.parentNode && hint.parentNode.removeChild(hint); }, 450);
+      document.removeEventListener("click", onClick, true);
+    }
+    function onClick(e) {
+      if (e.target.closest && e.target.closest(".dock-item, .desk-icon")) dismissCue();
+    }
+    // Dismiss on the first dock/desktop interaction (which also opens an app),
+    // or fall back to auto-dismiss so the cue never lingers.
+    document.addEventListener("click", onClick, true);
+    setTimeout(dismissCue, 9000);
+  }
+
   /* ── Boot ─────────────────────────────────────────────────────── */
   function boot() {
     buildDesktopIcons();
     buildDock();
     startClock();
+    setStatus();
     // Boot to the bare desktop — the user opens an app from the dock or icons.
+    // A soft, self-dismissing cue points first-time viewers at the Live Map.
+    bootCue();
   }
 
   if (document.readyState === "loading") {
