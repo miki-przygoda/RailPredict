@@ -1,4 +1,4 @@
-.PHONY: up down build rebuild logs db ingest export demo map os train seed-stations seed-history
+.PHONY: up down build rebuild logs db ingest export map os train seed-stations seed-history
 
 # Start all services, rebuilding the app image from current source.
 up:
@@ -32,13 +32,6 @@ ingest:
 DAYS ?= 7
 export:
 	cd RailPredict && cargo run --release -- export-site --output ../docs/index.html --days $(DAYS)
-
-# Export the self-contained exec demo site (scrollytelling + baked replay).
-# Output: docs/demo.html (an internal sales/handover artefact — open in any browser).
-# Requires a running DB with delay history — start the server first with `make up`.
-demo:
-	cd RailPredict && cargo run --release -- export-demo --output ../docs/demo.html --days $(DAYS)
-
 
 # Export the self-contained offline command-centre map (GB delay map).
 # Output: docs/map.html (open in any browser — fully offline). Needs a running DB.

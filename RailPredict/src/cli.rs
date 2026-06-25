@@ -47,19 +47,6 @@ pub enum Commands {
         days: u32,
     },
 
-    /// Export the self-contained exec demo site (scrollytelling + baked replay).
-    ///
-    /// Single offline HTML file — no server needed to view it.
-    ExportDemo {
-        /// Output file path.
-        #[arg(long, default_value = "docs/demo.html")]
-        output: PathBuf,
-
-        /// How many days of history to include.
-        #[arg(long, default_value = "7")]
-        days: u32,
-    },
-
     /// Export the self-contained offline command-centre map (GB delay map).
     ExportMap {
         /// Output file path.

@@ -1,12 +1,10 @@
-//! Self-contained exec demo site (`export-demo` CLI subcommand).
+//! Showcase data layer — KPIs and a DB-reconstructed predicted→actual replay.
 //!
-//! Bakes real KPIs and a DB-reconstructed predicted→actual replay into one
-//! offline HTML file for a CEO sales demo. The replay frames match the
-//! `static/board.js` renderer contract exactly so the same renderer (inlined,
-//! light-themed) drives them. Real data is shown as real; the "with your
-//! ticketing data" figures are clearly labelled projected.
-
-use std::path::Path;
+//! Gathers real KPIs and a predicted→actual replay timeline from the database
+//! and exposes them as plain data (`gather_demo` → `DemoData`). The replay
+//! frames match the `static/board.js` renderer contract exactly. The
+//! `RailPredict OS` and map exports (`export::os`, `export::map`) reuse this
+//! data; nothing here renders or writes HTML.
 
 use chrono::Utc;
 use serde::Serialize;
@@ -102,9 +100,6 @@ pub fn build_frames(
     frames
 }
 
-const DEMO_TEMPLATE: &str = include_str!("demo_template.html");
-const DEMO_JS: &str = include_str!("demo.js");
-
 #[derive(Serialize, Clone, Debug)]
 pub struct OperatorHighlight {
     pub name: String,
@@ -141,17 +136,6 @@ pub fn human_count(n: i64) -> String {
     } else {
         n.to_string()
     }
-}
-
-/// Inject the data as a JSON literal into the template. Pure — no DB.
-/// Escapes `</` so a stray `</script>` in a string field can't break out of the
-/// host <script> (mirrors `export::render_html`).
-pub fn render_demo_html(data: &DemoData) -> anyhow::Result<String> {
-    let json = serde_json::to_string(data)?.replace("</", "<\\/");
-    let html = DEMO_TEMPLATE
-        .replace("__DEMO_DATA__", &json)
-        .replace("/* __DEMO_JS__ */", DEMO_JS);
-    Ok(html)
 }
 
 use sqlx::FromRow;
@@ -332,27 +316,6 @@ pub async fn gather_demo(db: &Db, days: u32) -> anyhow::Result<DemoData> {
     })
 }
 
-/// Query the DB, render the demo page, and write it to `output_path`.
-pub async fn export_demo(db: &Db, output_path: &Path, days: u32) -> anyhow::Result<()> {
-    let data = gather_demo(db, days).await?;
-    let html = render_demo_html(&data)?;
-
-    if let Some(parent) = output_path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(output_path, &html)?;
-
-    println!(
-        "Demo site exported: {} observations, {} replay frames → {}",
-        data.hero_observations,
-        data.frames.len(),
-        output_path.display()
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,33 +379,6 @@ mod tests {
     #[test]
     fn empty_input_yields_no_frames() {
         assert!(build_frames(&[], 4, 4).is_empty());
-    }
-
-    fn demo_fixture() -> DemoData {
-        DemoData {
-            generated_at: "06 Jun 2026 10:00 UTC".into(),
-            hero_number: "2.5M+".into(),
-            hero_observations: 2_546_226,
-            services_count: 74_000,
-            services_label: "74K+".into(),
-            on_time_pct: Some(91.4),
-            mae_mins: Some(3.2),
-            within_5_pct: Some(78.0),
-            arrival_on_time_pct: Some(88.0),
-            recovered_pct: Some(41.0),
-            operators: vec![],
-            frames: build_frames(&sample(2), 2, 2),
-        }
-    }
-
-    #[test]
-    fn render_replaces_placeholder_and_keeps_anchors() {
-        let html = render_demo_html(&demo_fixture()).unwrap();
-        assert!(!html.contains("__DEMO_DATA__"), "placeholder must be replaced");
-        assert!(html.contains(r#"id="beat-replay""#));
-        assert!(html.contains("2.5M+") || html.contains("2546226"));
-        assert!(!html.contains("/* __DEMO_JS__ */"), "JS marker must be replaced");
-        assert!(html.contains("IntersectionObserver"), "inlined JS must be present");
     }
 
     #[test]

@@ -19,8 +19,9 @@ ignore = [
 ]
 
 # The allow-list governs THIRD-PARTY DEPENDENCY licences only. RailPredict itself
-# is proprietary (LicenseRef-Proprietary, publish = false); `private.ignore` keeps
-# cargo-deny from evaluating the workspace crate against this permissive list.
+# is MIT-licensed (publish = false as it is a binary application, not a published
+# crate); `private.ignore` keeps cargo-deny from evaluating the workspace crate
+# against this permissive list.
 [licenses]
 version = 2
 private = { ignore = true }

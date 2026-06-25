@@ -208,11 +208,11 @@ scripts/            Python ML training, data export, and DB seeding utilities
 
 ## License
 
-**Proprietary — © 2026 Mikolaj Mikuliszyn. All rights reserved.**
+Released under the [MIT License](LICENSE) — © 2026 Mikolaj Mikuliszyn.
 
-RailPredict is closed-source commercial software. The source code, models, and
-datasets are confidential and may not be used, copied, modified, or distributed
-without prior written permission. See [`LICENSE`](LICENSE) for the full terms.
-
-Underlying UK rail data is sourced from the National Rail Darwin Push Port feed
-under Network Rail's data-feed terms and remains subject to its own licence.
+The MIT licence covers RailPredict's own source code. Third-party data shipped
+with or consumed by the project remains under its own terms — see
+[`NOTICE`](NOTICE). In particular, Rail Delivery Group reference data (the
+`imports/rds_*.csv` files) and the National Rail Darwin Push Port feed are
+sourced under their respective data-feed terms and are **not** relicensed by
+the MIT grant above.

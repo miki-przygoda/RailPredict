@@ -207,9 +207,6 @@ async fn main() -> anyhow::Result<()> {
             Commands::ExportSite { output, days } => {
                 export::export_site(&db_pool, &output, days).await?;
             }
-            Commands::ExportDemo { output, days } => {
-                export::demo::export_demo(&db_pool, &output, days).await?;
-            }
             Commands::ExportMap { output, days } => {
                 export::map::export_map(&db_pool, &output, days).await?;
             }

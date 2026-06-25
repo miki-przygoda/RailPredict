@@ -1,0 +1,38 @@
+RailPredict
+Copyright (c) 2026 Mikolaj Mikuliszyn
+
+RailPredict's own source code is licensed under the MIT License (see LICENSE).
+
+The MIT grant covers the original source code in this repository only. It does
+NOT relicense the third-party data described below, which remains subject to its
+own terms. If you reuse this project, you are responsible for obtaining the data
+under its respective licence.
+
+------------------------------------------------------------------------------
+Third-party data
+------------------------------------------------------------------------------
+
+1. Rail Delivery Group / Rail Settlement Plan (RDG/RSP) reference data
+   Files: imports/rds_*.csv (stations, TOCs, ticket types, railcards, coords).
+   These are derived from UK rail industry reference data and remain subject to
+   the Rail Delivery Group's data-feed / open-data terms. They are included here
+   for convenience and are not relicensed under MIT.
+
+2. National Rail Darwin Push Port feed
+   Consumed at runtime via the ingestion pipeline (not redistributed in this
+   repo). The live data is provided under Network Rail's / National Rail's
+   data-feed terms and remains subject to its own licence.
+
+3. Station geodata
+   Where station coordinates are sourced via the OpenStreetMap Overpass API
+   (see scripts/seed_stations.py), that data is © OpenStreetMap contributors and
+   licensed under the Open Database License (ODbL).
+
+4. Trained model artefacts
+   The ONNX model files under models/ are derived from operational UK rail delay
+   data. They are distributed under MIT alongside the code, but the upstream data
+   they were trained on remains subject to the terms in items 1–2 above.
+
+------------------------------------------------------------------------------
+
+For licensing enquiries, contact mikolaj.mikuliszyn@gmail.com.

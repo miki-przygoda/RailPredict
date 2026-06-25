@@ -7,8 +7,7 @@
 //! (`hx-select`), and pushes the URL — so any composed query is bookmarkable.
 //! `?format=csv` returns the same result as a downloadable CSV.
 //!
-//! NOTE: functional, minimally-styled markup — slated for reskin in the UI overhaul
-//! (see `docs/superpowers/specs/2026-06-04-visual-changes-plan.md`).
+//! NOTE: functional, minimally-styled markup — slated for reskin in the UI overhaul.
 
 use axum::extract::{Query, RawQuery, State};
 use axum::http::header;

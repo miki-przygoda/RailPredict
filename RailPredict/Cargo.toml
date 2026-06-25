@@ -2,7 +2,7 @@
 name = "RailPredict"
 version = "1.20.0"
 edition = "2024"
-license = "LicenseRef-Proprietary"
+license = "MIT"
 publish = false
 
 [lib]
