@@ -2,7 +2,31 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.20.0" -- 10/06/2026**
+**version = "1.21.0" -- 25/06/2026**
+
+---
+
+## v1.21.0 — 25/06/2026
+
+**Public release prep — relicensed to MIT.** Opens RailPredict as public,
+permissively-licensed source and removes the internal IP-sale material ahead of
+making the repository public.
+
+- **Licence: proprietary → MIT.** `LICENSE` replaced with the standard MIT text;
+  `Cargo.toml` `license = "MIT"`; README §License and `deny.toml` comments
+  updated. New `NOTICE` records that third-party data (RDG/RSP reference CSVs,
+  the National Rail Darwin feed, OSM station geodata) remains under its own
+  terms — MIT covers the project's own source only.
+- **Removed the `export-demo` feature.** Deleted the exec sales-demo generator
+  (`demo_template.html`, `demo.js`) and unwired `export-demo` from the CLI,
+  `main.rs`, and the Makefile. `export::demo` is retained as a neutral data
+  layer (`gather_demo` / `build_frames` / `human_count`) that `export::os` and
+  `export::map` reuse; only the HTML renderer was dropped.
+- **Removed internal planning/strategy docs** (`docs/superpowers/`, the baked
+  `docs/demo.html`) and purged them — plus one illustrative projection figure —
+  from the full git history ahead of going public.
+- `export-site`, `export-map`, and `export-os` are unaffected. Verified:
+  `cargo check` + `cargo clippy --all-targets` clean.
 
 ---
 
