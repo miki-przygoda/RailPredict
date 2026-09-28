@@ -2,7 +2,7 @@
 //! Zero new deps: real app on an ephemeral port, driven via reqwest.
 
 mod http_common;
-use http_common::spawn_app_empty;
+use http_common::{spawn_app_empty, spawn_app_with_feed};
 use reqwest::StatusCode;
 
 #[sqlx::test(migrations = "../migrations")]
@@ -109,4 +109,30 @@ async fn pages_and_endpoints_respond(pool: sqlx::PgPool) {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     assert!(ct.contains("text/css"), "static content-type: {ct}");
+}
+
+/// `/health` must not report healthy when the DB is fine but the Darwin feed is dead.
+#[sqlx::test(migrations = "../migrations")]
+async fn health_reports_stale_darwin_feed_as_degraded(pool: sqlx::PgPool) {
+    use std::sync::Arc;
+    use chrono::{Duration, Utc};
+    use railpredict::ingestion::feed_health::FeedHealth;
+
+    // Started an hour ago, last message 10 minutes ago, 5-minute threshold.
+    let feed = Arc::new(FeedHealth::new_at(300, Utc::now() - Duration::hours(1)));
+    feed.record_message_at(Utc::now() - Duration::minutes(10));
+    let app = spawn_app_with_feed(pool.clone(), Vec::new(), Arc::clone(&feed)).await;
+
+    let (s, j) = app.get_json("/health").await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(j["status"], "degraded");
+    assert_eq!(j["db"], "ok");
+    assert_eq!(j["feed"], "stale");
+    assert!(j["feed_lag_secs"].as_f64().unwrap() >= 600.0);
+
+    // A message arrives: the same app is healthy again.
+    feed.record_message();
+    let (s, j) = app.get_json("/health").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(j["feed"], "fresh");
 }

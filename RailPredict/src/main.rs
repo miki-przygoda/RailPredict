@@ -37,6 +37,7 @@ use railpredict::config::{Config, LogFormat};
 use railpredict::db;
 use railpredict::ingestion::gtfs::{self, IngestPhase, IngestStatus, run_ingest_with_watch};
 use railpredict::ingestion::stomp_client::LiveStompClient;
+use railpredict::ingestion::feed_health::FeedHealth;
 use railpredict::ingestion::IngestionPipeline;
 use railpredict::networking::{CircuitBreaker, Coalescer, LiveGbrClient, RateLimiter};
 use railpredict::prediction::{OnnxEngine, PredictionEngine};
@@ -347,6 +348,9 @@ async fn main() -> anyhow::Result<()> {
     let heartbeat_engine   = prediction_engine.clone();
     let heartbeat_registry = Arc::clone(&registry);
 
+    // Darwin feed freshness, shared by the pipeline (writer) and /health + /metrics (readers).
+    let feed_health = Arc::new(FeedHealth::new(config.feed_stale_after_secs));
+
     let initial_pipeline = IngestionPipeline::new(
         initial_stomp,
         config.watched_routes.clone(),
@@ -354,7 +358,8 @@ async fn main() -> anyhow::Result<()> {
         sc_tx.clone(),
         prediction_engine,
         Some(db_pool.clone()),
-    );
+    )
+    .with_feed_health(Arc::clone(&feed_health));
 
     let pipeline_token = token.clone();
     let pipeline_task = tokio::spawn(async move {
@@ -757,6 +762,7 @@ async fn main() -> anyhow::Result<()> {
         &config,
         Arc::clone(&ingest_tx),
         Arc::clone(&station_index),
+        Arc::clone(&feed_health),
     );
     let app = router(app_state);
     let bind_addr: std::net::SocketAddr = config
@@ -837,6 +843,7 @@ fn assemble_app_state(
     config: &Config,
     ingest_status: Arc<watch::Sender<IngestStatus>>,
     station_index: Arc<StationIndex>,
+    feed_health: Arc<FeedHealth>,
 ) -> AppState {
     AppState {
         registry,
@@ -847,6 +854,7 @@ fn assemble_app_state(
         http_rate_limit_per_sec: config.http_rate_limit_per_sec,
         ingest_status,
         station_index,
+        feed_health,
     }
 }
 
@@ -870,6 +878,8 @@ async fn wait_for_shutdown(
         config,
         ingest_tx,
         station_index,
+        // Reached only when Darwin credentials are missing: ingestion is off on purpose.
+        Arc::new(FeedHealth::disabled()),
     );
     let app = router(app_state);
 

@@ -26,6 +26,7 @@
 //! | `NTFY_URL`              | no       | —                                     | ntfy.sh topic URL for push notifications            |
 //! | `NOTIFICATIONS_ENABLED` | no       | false                                 | Set to `true` to enable push notifications          |
 //! | `WEATHER_ANCHORS`       | no       | ""                                    | Comma-separated "route_id:lat:lon" route anchors    |
+//! | `FEED_STALE_AFTER_SECS` | no       | 300                                   | Darwin silence (s) after which `/health` reports degraded |
 
 use std::collections::HashSet;
 use std::fmt;
@@ -107,6 +108,10 @@ pub struct Config {
     /// Comma-separated "route_id:lat:lon" tuples for weather polling.
     /// When empty, weather polling is disabled.
     pub weather_anchors: Vec<(String, f64, f64)>,
+
+    // Health
+    /// Seconds without a Darwin message before `/health` reports the feed stale.
+    pub feed_stale_after_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,6 +209,12 @@ impl Config {
             &std::env::var("WEATHER_ANCHORS").unwrap_or_default()
         );
 
+        let feed_stale_after_secs = std::env::var("FEED_STALE_AFTER_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&v: &u64| v > 0)
+            .unwrap_or(crate::ingestion::feed_health::DEFAULT_FEED_STALE_AFTER_SECS);
+
         Ok(Self {
             database_url,
             gbr_configured,
@@ -218,6 +229,7 @@ impl Config {
             ntfy_url,
             notifications_enabled,
             weather_anchors,
+            feed_stale_after_secs,
         })
     }
 
@@ -239,6 +251,7 @@ impl Config {
             ntfy_url: None,
             notifications_enabled: false,
             weather_anchors: Vec::new(),
+            feed_stale_after_secs: crate::ingestion::feed_health::DEFAULT_FEED_STALE_AFTER_SECS,
         }
     }
 }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use railpredict::api::{router, AppState};
 use railpredict::cache::{StationIndex, TrainRegistry};
 use railpredict::config::Config;
+use railpredict::ingestion::feed_health::FeedHealth;
 use railpredict::ingestion::gtfs::IngestStatus;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -60,6 +61,16 @@ impl TestApp {
 /// Spawn the real app on an ephemeral port using a migrated `pool`. `stations`
 /// seeds the in-memory autocomplete index (`(crs, name)` pairs).
 pub async fn spawn_app(pool: sqlx::PgPool, stations: Vec<(String, String)>) -> TestApp {
+    spawn_app_with_feed(pool, stations, Arc::new(FeedHealth::default())).await
+}
+
+/// Like [`spawn_app`] but with an explicit Darwin feed-freshness tracker, so a
+/// test can simulate a fresh, stale or disabled feed behind `/health`.
+pub async fn spawn_app_with_feed(
+    pool: sqlx::PgPool,
+    stations: Vec<(String, String)>,
+    feed_health: Arc<FeedHealth>,
+) -> TestApp {
     let config = Config::for_testing();
 
     let registry = Arc::new(TrainRegistry::new());
@@ -86,6 +97,7 @@ pub async fn spawn_app(pool: sqlx::PgPool, stations: Vec<(String, String)>) -> T
         http_rate_limit_per_sec: config.http_rate_limit_per_sec,
         ingest_status: Arc::new(ingest_tx),
         station_index,
+        feed_health,
     };
 
     let app = router(state);

@@ -90,6 +90,16 @@ pub struct HealthResponse {
     /// Present only on degraded status — describes the failing component.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<&'static str>,
+    /// Postgres probe result: `"ok"` or `"unreachable"`.
+    pub db: &'static str,
+    /// Darwin feed freshness: `"fresh"`, `"starting"`, `"stale"` or `"disabled"`.
+    pub feed: &'static str,
+    /// Seconds since the last Darwin message (or since startup if none yet).
+    /// Absent when ingestion is disabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feed_lag_secs: Option<f64>,
+    /// Silence threshold after which the feed is reported stale.
+    pub feed_stale_after_secs: u64,
 }
 
 // ---------------------------------------------------------------------------

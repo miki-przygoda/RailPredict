@@ -12,7 +12,7 @@ use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
-use crate::{export, types::TrainId};
+use crate::{export, ingestion::feed_health::FeedState, types::TrainId};
 
 use super::{
     types::{ApiError, DepartureBoardEntry, HealthResponse, TrainSummary},
@@ -39,10 +39,16 @@ fn validate_crs(crs: &str) -> Result<(), ApiError> {
 
 /// `GET /health`
 ///
-/// Probes DB liveness with a 1-second timeout.
-/// Returns 200 `{ "status": "ok" }` when healthy.
-/// Returns 503 `{ "status": "degraded", "detail": "db unreachable" }` when the DB
-/// cannot be reached within 1 second.
+/// Checks the two things the service needs to be useful:
+///   1. Postgres liveness (`SELECT 1`, 1-second timeout).
+///   2. Darwin feed freshness: seconds since the last STOMP message, compared
+///      against `FEED_STALE_AFTER_SECS` (default 300).
+///
+/// Returns 200 `{ "status": "ok", ... }` when both are fine (a feed that is
+/// deliberately disabled, or still inside its startup grace period, counts as fine).
+/// Returns 503 `{ "status": "degraded", "detail": ... }` when the DB is unreachable
+/// or the feed is stale -- a dead Darwin connection is no longer reported healthy.
+/// Also refreshes the `darwin_feed_lag_seconds` gauge.
 pub async fn health_handler(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
@@ -54,27 +60,34 @@ pub async fn health_handler(
     .map(|result| result.is_ok())
     .unwrap_or(false);
 
-    if db_ok {
-        (
-            StatusCode::OK,
-            Json(HealthResponse {
-                status: "ok",
-                version: env!("CARGO_PKG_VERSION"),
-                detail: None,
-            }),
-        )
-            .into_response()
-    } else {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(HealthResponse {
-                status: "degraded",
-                version: env!("CARGO_PKG_VERSION"),
-                detail: Some("db unreachable"),
-            }),
-        )
-            .into_response()
-    }
+    let feed = state.feed_health.publish_gauge(Utc::now());
+    let (code, body) = health_verdict(db_ok, feed, state.feed_health.stale_after_secs());
+    (code, Json(body)).into_response()
+}
+
+/// Pure decision logic behind `/health` (unit-tested without a DB).
+pub fn health_verdict(
+    db_ok: bool,
+    feed: FeedState,
+    feed_stale_after_secs: u64,
+) -> (StatusCode, HealthResponse) {
+    let detail = match (db_ok, feed.is_unhealthy()) {
+        (true, false) => None,
+        (false, false) => Some("db unreachable"),
+        (true, true) => Some("darwin feed stale"),
+        (false, true) => Some("db unreachable; darwin feed stale"),
+    };
+    let code = if detail.is_none() { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    let body = HealthResponse {
+        status: if detail.is_none() { "ok" } else { "degraded" },
+        version: env!("CARGO_PKG_VERSION"),
+        detail,
+        db: if db_ok { "ok" } else { "unreachable" },
+        feed: feed.label(),
+        feed_lag_secs: feed.lag_secs().map(|s| (s * 10.0).round() / 10.0),
+        feed_stale_after_secs,
+    };
+    (code, body)
 }
 
 // ---------------------------------------------------------------------------
@@ -452,5 +465,49 @@ pub async fn report_handler(
             format!("Report generation failed: {e}"),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+
+    #[test]
+    fn healthy_db_and_fresh_feed_is_ok() {
+        let (code, body) = health_verdict(true, FeedState::Fresh { lag_secs: 2.0 }, 300);
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(body.status, "ok");
+        assert_eq!(body.feed, "fresh");
+        assert!(body.detail.is_none());
+    }
+
+    #[test]
+    fn dead_feed_with_healthy_db_is_degraded() {
+        // The case the old SELECT-1-only probe got wrong.
+        let (code, body) = health_verdict(true, FeedState::Stale { lag_secs: 900.0 }, 300);
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body.status, "degraded");
+        assert_eq!(body.db, "ok");
+        assert_eq!(body.feed, "stale");
+        assert_eq!(body.feed_lag_secs, Some(900.0));
+        assert_eq!(body.detail, Some("darwin feed stale"));
+    }
+
+    #[test]
+    fn db_down_is_degraded() {
+        let (code, body) = health_verdict(false, FeedState::Fresh { lag_secs: 1.0 }, 300);
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body.detail, Some("db unreachable"));
+    }
+
+    #[test]
+    fn disabled_or_starting_feed_is_not_a_failure() {
+        let (code, body) = health_verdict(true, FeedState::Disabled, 300);
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(body.feed, "disabled");
+        assert!(body.feed_lag_secs.is_none());
+
+        let (code, _) = health_verdict(true, FeedState::Starting { secs_since_start: 30.0 }, 300);
+        assert_eq!(code, StatusCode::OK);
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! | Method | Path                               | Tier | Returns                     | Notes                             |
 //! |--------|------------------------------------|------|-----------------------------|-----------------------------------|
-//! | GET    | /health                            | —    | `HealthResponse`            | 200 ok / 503 degraded             |
+//! | GET    | /health                            | —    | `HealthResponse`            | 200 ok / 503 degraded (DB down or Darwin feed stale) |
 //! | GET    | /stations/{crs}/departures         | A    | `Vec<DepartureBoardEntry>`  | Registry only, no GBR call        |
 //! | GET    | /trains/{rid}                      | B    | `TrainSummary`              | Registry; 404 if unknown          |
 //! | GET    | /trains/{rid}/live                 | C    | SSE `LiveUpdateEvent` JSON  | Heartbeat 15s; closes on Terminal |
@@ -103,6 +103,9 @@ pub struct AppState {
     pub ingest_status: Arc<tokio::sync::watch::Sender<IngestStatus>>,
     /// In-memory station autocomplete index — loaded at startup, zero DB queries at search time.
     pub station_index: Arc<StationIndex>,
+    /// Darwin feed freshness tracker (shared with the ingestion pipeline) -- read by
+    /// `/health` and published as the `darwin_feed_lag_seconds` gauge on `/metrics`.
+    pub feed_health: Arc<crate::ingestion::feed_health::FeedHealth>,
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +125,9 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     if !enabled {
         return (StatusCode::NOT_FOUND, "Metrics disabled").into_response();
     }
+
+    // Refresh the feed-lag gauge so every scrape sees the current value.
+    state.feed_health.publish_gauge(chrono::Utc::now());
 
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],

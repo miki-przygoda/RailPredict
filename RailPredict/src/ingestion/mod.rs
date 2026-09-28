@@ -34,6 +34,7 @@
 //! Blocking the reader is preferable to unbounded growth — a slow consumer is a
 //! signal to investigate the filter/parser throughput, not to allocate more memory.
 
+pub mod feed_health;
 pub mod filter;
 pub mod gtfs;
 pub mod operators;
@@ -103,6 +104,9 @@ pub struct PipelineContext {
     /// rarely deactivate while tracked (they get evicted) — we persist on schedule-detection,
     /// deduped here so a schedule replay doesn't double-count.
     pub persisted_cancellations: Arc<DashSet<String>>,
+    /// Darwin feed freshness: stamped on every received frame, read by `/health`
+    /// and the `darwin_feed_lag_seconds` gauge. Survives reconnects.
+    pub feed_health: Arc<feed_health::FeedHealth>,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +136,7 @@ impl IngestionPipeline {
             persisted_predictions: Arc::new(DashSet::new()),
             persisted_services: Arc::new(DashSet::new()),
             persisted_cancellations: Arc::new(DashSet::new()),
+            feed_health: Arc::new(feed_health::FeedHealth::default()),
         };
         Self { stomp, ctx }
     }
@@ -142,6 +147,13 @@ impl IngestionPipeline {
         state_change_tx: broadcast::Sender<StateChangeEvent>,
     ) -> Self {
         Self::new(stomp, HashSet::new(), registry, state_change_tx, PredictionEngine::new(), None)
+    }
+
+    /// Share an externally owned feed-freshness tracker (the same `Arc` the HTTP
+    /// layer reads for `/health`). Call before the first `run()`.
+    pub fn with_feed_health(mut self, feed_health: Arc<feed_health::FeedHealth>) -> Self {
+        self.ctx.feed_health = feed_health;
+        self
     }
 
     /// Clone the shared pipeline context (filter state, registry, broadcast channel).
@@ -189,6 +201,8 @@ impl IngestionPipeline {
 
         // Phase 2: count every Darwin message received from the broker.
         metrics::counter!("darwin_messages_received_total").increment(1);
+        // Freshness is about the feed being alive, so stamp before any filtering.
+        self.ctx.feed_health.record_message();
 
         // Decompress gzip body if present (Darwin Push Port sends gzip-compressed XML).
         let decompressed = match decompress_if_gzip(&frame.body) {
