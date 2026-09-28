@@ -1,22 +1,27 @@
 {
-  "trained_at": "2026-06-01",
-  "train_rows": 4269552,
-  "test_rows": 665216,
-  "baseline_mae": 18.69,
-  "day_ahead": {
-    "mae": 14.39,
-    "rmse": 21.52,
-    "bias": -4.85,
-    "within_2min": 12.5,
-    "within_5min": 29.5,
-    "within_10min": 51.6
-  },
-  "realtime": {
-    "mae": 4.41,
-    "rmse": 6.87,
-    "bias": -0.21,
-    "within_2min": 40.3,
-    "within_5min": 69.9,
-    "within_10min": 89.0
+  "status": "withdrawn",
+  "reason": "Produced by the pre-v8 pipeline: real-time current_delay_mins was the label times U(0.7, 1.3) (target leakage), the test set was a random split of time-series data, and the labels predate the v1.15.3 origin-delay fix. Not a valid accuracy estimate. Retrain with scripts/compare_models.py (v8, temporal holdout) to produce valid figures. See docs/model-performance.md.",
+  "withdrawn_at": "2026-09-28",
+  "withdrawn_results": {
+    "trained_at": "2026-06-01",
+    "train_rows": 4269552,
+    "test_rows": 665216,
+    "baseline_mae": 18.69,
+    "day_ahead": {
+      "mae": 14.39,
+      "rmse": 21.52,
+      "bias": -4.85,
+      "within_2min": 12.5,
+      "within_5min": 29.5,
+      "within_10min": 51.6
+    },
+    "realtime": {
+      "mae": 4.41,
+      "rmse": 6.87,
+      "bias": -0.21,
+      "within_2min": 40.3,
+      "within_5min": 69.9,
+      "within_10min": 89.0
+    }
   }
 }

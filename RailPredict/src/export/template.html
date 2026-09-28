@@ -283,7 +283,7 @@ function renderDashboard() {
         <div class="note">
           <p><strong>How to read this:</strong> The <strong style="color:var(--blue)">blue line</strong> is what the system predicted the average delay would be each day. The <strong style="color:#ef5350">red dashed line</strong> is what actually happened. A wide gap on any day means the model was caught off-guard.</p>
           <p>${predOverallText}${worstDayText}${trendText}</p>
-          <p>These figures blend the <strong>day-ahead model</strong> (fires before a live signal is available) and the <strong>real-time model</strong> (fires once Darwin reports a current delay). The real-time model is significantly more accurate — see the <em>Model training benchmarks</em> section below for per-model test results.</p>
+          <p>These figures blend the <strong>day-ahead model</strong> (fires before a live signal is available) and the <strong>real-time model</strong> (fires once Darwin reports a current delay). Per-model test results (temporal holdout) appear in the <em>Model training benchmarks</em> section when a valid training run is available.</p>
           <div class="note-tags">
             ${gradeTag(g10min, 'Predictions are accurate', 'Predictions are broadly on track', 'Predictions need improvement')}
             ${tag('tag-target', '✓ Lines overlapping = accurate')}
@@ -457,15 +457,15 @@ function renderDashboard() {
     renderBenchCards('cards-bench-rt', benchRtCards);
     document.getElementById('note-bench').innerHTML = `
       <p><strong>Two-model cascade:</strong> The system runs two LightGBM ONNX models in sequence.
-      The <strong>day-ahead model</strong> (10 features) fires before a live Darwin delay reading is available — it uses route pattern, rolling 7-day stats, and time of day.
-      The <strong>real-time model</strong> (15 features) activates once Darwin reports a current delay, and feeds the live signal alongside the same pattern features.
-      The live blended MAE (${fmt1(s.mean_abs_error_mins)} min, shown above) sits between these two because it covers observations from both models together.</p>
-      <p>Baseline trimmed-mean MAE was <strong>${fmt1(b.baseline_mae)} min</strong>. Both models beat it substantially. Real-time model reduces error by <strong>${fmt1(b.baseline_mae - b.realtime.mae)} min</strong> vs baseline.</p>
+      The <strong>day-ahead model</strong> (14 features) fires before a live Darwin delay reading is available; it uses route pattern, rolling stats from prior runs, and time of day.
+      The <strong>real-time model</strong> (22 features) activates once Darwin reports a current delay and predicts the journey's final delay from that earlier reading.
+      Test results come from a date-ordered holdout (the latest service dates), never a random split.</p>
+      <p>Baseline trimmed-mean MAE was <strong>${fmt1(b.baseline_mae)} min</strong>${b.realtime_persistence_mae != null ? `; the real-time persistence baseline (final delay = current reading) was <strong>${fmt1(b.realtime_persistence_mae)} min</strong>` : ''}.</p>
       <div class="note-tags">
         ${tag('tag-target', `Trained: ${esc(b.trained_at)}`)}
         ${tag('tag-target', `${b.train_rows.toLocaleString()} train rows`)}
         ${tag('tag-target', `${b.test_rows.toLocaleString()} test rows`)}
-        ${tag('tag-good', `Baseline ${fmt1(b.baseline_mae)} min → real-time ${fmt1(b.realtime.mae)} min`)}
+        ${b.test_dates ? tag('tag-target', `Test dates: ${esc(b.test_dates)}`) : ''}
       </div>`;
   }
 

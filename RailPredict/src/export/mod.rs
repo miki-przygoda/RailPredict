@@ -80,12 +80,23 @@ pub struct ModelBenchmarkStats {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ModelBenchmarks {
+    /// `"valid"` for results from the temporal-holdout pipeline (compare_models.py v8+).
+    /// Anything else (e.g. `"withdrawn"`) or a missing field means the numbers must not
+    /// be shown -- pre-v8 files were produced by a leaky, randomly split evaluation.
+    #[serde(default)]
+    pub status:       Option<String>,
     pub trained_at:   String,
     pub train_rows:   u64,
     pub test_rows:    u64,
     pub baseline_mae: f64,
     pub day_ahead:    ModelBenchmarkStats,
     pub realtime:     ModelBenchmarkStats,
+    /// Test window (service dates) of the temporal holdout.
+    #[serde(default)]
+    pub test_dates:   Option<String>,
+    /// Real-time persistence baseline MAE (predict final delay = current reading).
+    #[serde(default)]
+    pub realtime_persistence_mae: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -196,6 +207,11 @@ pub async fn export_site(db: &Db, output_path: &Path, days: u32) -> anyhow::Resu
 // Data gathering
 // ---------------------------------------------------------------------------
 
+/// Only benchmarks explicitly marked `"status": "valid"` are rendered.
+fn benchmarks_publishable(b: &ModelBenchmarks) -> bool {
+    b.status.as_deref() == Some("valid")
+}
+
 fn load_benchmarks() -> Option<ModelBenchmarks> {
     // Walk up from the binary's working directory looking for models/benchmarks.json.
     let candidates = [
@@ -206,7 +222,7 @@ fn load_benchmarks() -> Option<ModelBenchmarks> {
         if let Ok(text) = std::fs::read_to_string(path)
             && let Ok(b) = serde_json::from_str::<ModelBenchmarks>(&text)
         {
-            return Some(b);
+            return benchmarks_publishable(&b).then_some(b);
         }
     }
     None
@@ -373,4 +389,33 @@ async fn query_hourly(db: &Db, days: i32) -> anyhow::Result<Vec<HourlyStat>> {
         observations: r.observations,
         mean_delay:   r.mean_delay,
     }).collect())
+}
+
+#[cfg(test)]
+mod benchmark_tests {
+    use super::*;
+
+    const STATS: &str = r#"{"mae":1,"rmse":1,"bias":0,"within_2min":1,"within_5min":1,"within_10min":1}"#;
+
+    fn parse(status: &str) -> ModelBenchmarks {
+        let json = format!(
+            r#"{{{status}"trained_at":"2026-06-01","train_rows":1,"test_rows":1,"baseline_mae":1,"day_ahead":{STATS},"realtime":{STATS}}}"#
+        );
+        serde_json::from_str(&json).expect("benchmarks json")
+    }
+
+    #[test]
+    fn legacy_benchmarks_without_status_are_not_published() {
+        assert!(!benchmarks_publishable(&parse("")));
+    }
+
+    #[test]
+    fn withdrawn_benchmarks_are_not_published() {
+        assert!(!benchmarks_publishable(&parse(r#""status":"withdrawn","#)));
+    }
+
+    #[test]
+    fn valid_benchmarks_are_published() {
+        assert!(benchmarks_publishable(&parse(r#""status":"valid","#)));
+    }
 }
