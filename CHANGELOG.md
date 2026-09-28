@@ -2,9 +2,44 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.21.0" -- 25/06/2026**
+**version = "1.21.1" -- 28/09/2026**
 
 ---
+
+## v1.21.1 -- 28/09/2026
+
+**Evaluation review fixes: model benchmarks withdrawn, /health checks the feed.**
+
+- **Published ML accuracy withdrawn.** All earlier model MAEs (real-time 3.97 / 4.09 /
+  4.41 min, day-ahead 13.10-14.39 min, incl. the figures quoted in older entries below)
+  are not valid:
+  - *Target leakage:* the real-time `current_delay_mins` training feature was
+    `delay_mins * U(0.7, 1.3)`, the label plus noise (`compare_models.py`,
+    `train_models.py`, and the synthetic generator).
+  - *Random split:* `compare_models.py` scored on a 15% random stratified split of
+    time-series data; rolling features also included the current run's own snapshots and
+    encodings were fitted on the full frame.
+  - *Bad labels:* the benchmarks were trained on data from before the v1.15.3 origin-delay
+    fix, when `delay_history` measured journey duration.
+  `models/benchmarks.json` is marked `"status": "withdrawn"`, the export report only renders
+  benchmarks marked `"valid"`, and `docs/model-performance.md` / README say so. Numbers are
+  withdrawn pending a retrain on a temporal split.
+- **Training pipeline fixed (`compare_models.py` v8).** Real-time target = the journey's
+  final observed delay, `current_delay_mins` = an earlier snapshot's own reading;
+  date-ordered fit/val/test holdout; prior-date-only rolling stats (Rust
+  `rolling_stats_7d` now skips the current UTC day to match); train-only encodings;
+  synthetic rows opt-in (`--synthetic`) and day-ahead only; `--since` label floor (default 2026-06-05); persistence
+  baseline reported. Feature layout (14/22) unchanged, so `onnx_engine.rs` indices still
+  match. `train_models.py` (stale 10/15 layout, leaky) is now a shim to
+  `compare_models.py`, which `make train` runs directly. Models were **not** retrained
+  here: the training DB is not available locally. DB-free leakage tests in
+  `scripts/test_compare_models.py`.
+- **/health reflects ingestion.** Adds Darwin feed freshness (time since the last STOMP
+  message, `FEED_STALE_AFTER_SECS`, default 300): a stale feed returns 503 even when
+  Postgres answers `SELECT 1`. New `darwin_feed_lag_seconds` gauge on `/metrics`.
+- **Docs: nothing unwired described as live.** Request coalescing, circuit breaker, rate
+  limiter and weather promotions are "built, not wired" (nothing drives the poll
+  consumer). The "latency histograms" claim now lists the metrics that actually exist.
 
 ## v1.21.0 — 25/06/2026
 

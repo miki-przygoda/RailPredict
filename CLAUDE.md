@@ -2,7 +2,7 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.21.0" -- 25/06/2026**
+**version = "1.21.1" -- 28/09/2026**
 
 ---
 
@@ -68,7 +68,8 @@ RailPredict/                        ← repo root
 │   ├── run_hsp_fetch.sh            ← launcher for 4 parallel HSP shards
 │   ├── seed_history.py             ← synthetic delay backfill (use before live data exists)
 │   ├── seed_stations.py            ← populate stations table from OpenStreetMap Overpass
-│   ├── train_models.py             ← standalone training script (older; prefer compare_models.py)
+│   ├── train_models.py             ← deprecated shim; runs compare_models.py
+│   ├── test_compare_models.py      ← DB-free leakage regression tests (python -m unittest)
 │   └── requirements.txt            ← Python deps for all scripts
 └── RailPredict/                    ← Rust crate root
     ├── Cargo.toml                  ← crate manifest; version must match project version
@@ -98,6 +99,7 @@ RailPredict/                        ← repo root
         │   └── circuit_breaker.rs  ← Closed/Open/HalfOpen; FAILURE_THRESHOLD=3, COOL_DOWN_SECS=30
         ├── ingestion/
         │   ├── mod.rs              ← IngestionPipeline; PipelineContext (Arc-shared, survives reconnect)
+        │   ├── feed_health.rs      ← Darwin feed freshness for /health + darwin_feed_lag_seconds gauge
         │   ├── stomp_client.rs     ← Darwin STOMP over TLS (tokio-rustls); BoxReader abstraction
         │   ├── filter.rs           ← message taxonomy; SequenceGuard; check_tiploc_cascade
         │   ├── parser.rs           ← quick-xml event parser; TS + deactivated messages
@@ -179,6 +181,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 - A single-`BinaryHeap` global poll scheduler (one task, never `tokio::spawn` per train) is the pattern to use when Tier C live polling is (re)built
 
 ### Networking (`src/networking/`)
+> **Current status: built, not wired.** The poll consumer in `main.rs` only acts on same-state "poll tick" events, which nothing emits since `PollManager` was removed, and `gbr_client.rs` must not be wired live until its endpoint/auth contract is reconciled. Do not describe coalescing / circuit breaking as live in user-facing docs.
 - Request coalescing (`coalescer.rs`): if a request for a `TrainId` is already in-flight, register a `oneshot` sender and wait; first responder fans the result to all waiters
 - Rate limiter (`rate_limiter.rs`) sits in front of all outbound GBR calls; token bucket, `MAX_REQUESTS_PER_SECOND=10`, `BURST_CAPACITY=20`
 - Circuit breaker (`circuit_breaker.rs`): on a 503 from GBR, enter "Cache Only" mode; `FAILURE_THRESHOLD=3`, `COOL_DOWN_SECS=30`; `#[cold]` on `record_failure`
@@ -204,6 +207,7 @@ The rule: serve from the lowest tier possible. Only escalate to Tier C when the 
 
 ### ML Pipeline (`scripts/`)
 - `compare_models.py` trains day-ahead and real-time LightGBM models, applies equal-tier sample weighting to correct the severe-delay bias in the Darwin feed, and exports to ONNX
+- **Evaluation rules (v1.21.1):** date-ordered holdout only (never a random split); no feature may be derived from the label (the real-time target is the journey's final delay, `current_delay_mins` is an earlier snapshot's reading); rolling stats use prior service dates only; fit encodings on training dates only. Earlier published MAEs are withdrawn -- see `docs/model-performance.md`
 - Feature count is fixed: 14 for day-ahead, 22 for real-time (= day-ahead + 8 live signals) — changing this requires matching updates to `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`)
 - The training corpus stays internal (`delay_history` + the frozen `railpredict` corpus DB); it is not exported or distributed
 

@@ -105,6 +105,11 @@ These are subsystems that exist but are not connected to each other. The app bui
 and some tests pass, but several advertised features do nothing at runtime.
 
 ### 2.1 PollManager fires but nobody calls GBR
+
+> **Status (v1.21.1): built, not wired.** The poll consumer was added to `main.rs`, but
+> `PollManager` was later removed (`be012f7`), so nothing emits the same-state events the
+> consumer waits for. Coalescer, rate limiter and circuit breaker have no live traffic, and
+> `gbr_client.rs` must not be wired until its contract is reconciled with the real upstream.
 `PollManager::fire_poll` emits a `StateChangeEvent` on the broadcast channel, but
 **nothing consumes that event to trigger an actual GBR API call**. The entire
 networking layer — `Coalescer`, `RateLimiter`, `CircuitBreaker`, `LiveGbrClient` —
@@ -510,6 +515,10 @@ acquires each lock and copies the needed fields in one pass, returning plain str
 Handlers get a `Vec<DepartureBoardEntry>` directly without touching `AppState` guts.
 
 ### 7.2 No Prometheus metrics endpoint ✓ COMPLETED v1.1.2
+
+> `/metrics` exists with ingestion counters, `registry_train_count`, `db_flush_duration_ms`,
+> `prediction_error_mins` and (v1.21.1) `darwin_feed_lag_seconds`. There are **no per-route
+> HTTP latency histograms**, and `gbr_api_latency_ms` only records on the unwired GBR path.
 `tracing` is wired but there is no `/metrics` endpoint. Latency histograms per route,
 registry size, flush counts, STOMP reconnect counts, circuit breaker state — none are
 observable without reading logs.

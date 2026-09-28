@@ -1,6 +1,6 @@
 # RailPredict
 
-**v1.21.0 — June 2026**
+**v1.21.1 -- September 2026**
 
 A UK rail data engine written in Rust. RailPredict subscribes directly to the **Darwin Push Port** — National Rail's STOMP-based firehose of every train movement in the country — and uses that stream to build an intelligent buffer between users and the Great British Railways API. The vast majority of queries are answered from local state, in-memory cache, and statistical prediction; the only call that ever hits GBR directly is the one that genuinely requires it: final ticket purchase.
 
@@ -50,11 +50,11 @@ Dormant → Monitored → Active → Critical → Terminal
 
 External events — signal failures, weather alerts, route-level disruption flags — can force emergency promotion regardless of departure time.
 
-### Request Coalescing
-If 50 users are watching the same train, one outbound call is made and the result is fanned out to all 50. The coalescer deduplicates concurrent in-flight requests by key and wires late arrivals directly onto the pending future.
+### Request Coalescing *(built, not wired)*
+Designed so that if 50 users are watching the same train, one outbound call is made and the result is fanned out to all 50: the coalescer deduplicates concurrent in-flight requests by key and wires late arrivals onto the pending future. It is unit-tested but has no live caller yet -- see *What Isn't Here Yet*.
 
-### Circuit Breaker
-If GBR starts returning errors, the system enters **Cache Only** mode and stops sending requests until GBR recovers. Callers see cached data; GBR sees no additional load.
+### Circuit Breaker *(built, not wired)*
+Designed so that if GBR starts returning errors, the system enters **Cache Only** mode and stops sending requests until GBR recovers. Unit-tested, but like the coalescer it only sits on the unwired Tier C poll path.
 
 ### Statistical Prediction Engine (Tier B)
 Per-service delay history is stored in Postgres and loaded into memory at startup. The engine computes:
@@ -69,11 +69,11 @@ Per-service delay history is stored in Postgres and loaded into memory at startu
 | Component                                                               | Status   |
 |:------------------------------------------------------------------------|:---------|
 | Core types (`TrainId`, `TrainStatus`, `Stamped<T>`)                     | Complete |
-| Urgency state machine + poll manager                                    | Complete |
+| Urgency states (set inline by ingestion; poll manager removed)          | Partial  |
 | Darwin Push Port ingestion (STOMP/TLS, XML parse, filter)               | Complete |
 | In-memory train registry (`DashMap`, concurrent)                        | Complete |
-| Request coalescer + rate limiter                                        | Complete |
-| Circuit breaker (threshold, cool-down, state transitions)               | Complete |
+| Request coalescer + rate limiter                                        | Built, not wired |
+| Circuit breaker (threshold, cool-down, state transitions)               | Built, not wired |
 | Prediction engine (Tier B — delay probability, confidence)              | Complete |
 | Postgres schema + migrations (sqlx, compile-time checked)               | Complete |
 | Delay history flush (`ON CONFLICT DO UPDATE`)                           | Complete |
@@ -83,9 +83,9 @@ Per-service delay history is stored in Postgres and loaded into memory at startu
 | Frontend — departure board, train detail, search autocomplete           | Complete |
 | Developer Console — registry probe, event monitor, ingest UI            | Complete |
 | Ticket purchase demo (simulated end-to-end booking flow)                | Complete |
-| Prometheus metrics (`/metrics`, ingestion counters, latency histograms) | Complete |
+| Prometheus metrics (`/metrics`, ingestion counters, feed-lag gauge, flush/prediction-error histograms) | Complete |
 | Rate limiting (`tower_governor`, 60 req/s per IP)                       | Complete |
-| Weather volatility promotions (Open-Meteo, configurable anchors)        | Complete |
+| Weather volatility promotions (Open-Meteo polling runs; promotion only on the unwired poll path) | Built, not wired |
 | Push notifications (ntfy.sh, fires on Critical state promotions)        | Complete |
 | Full-journey capture (`journeys` + `journey_calls`, cancellation capture)| Complete |
 | Operator league + drill-down (`/operators`, real per-TOC coverage)      | Complete |
@@ -148,7 +148,7 @@ The server starts on `0.0.0.0:3000` by default. Visit:
 | `/search`  | Departure board — station autocomplete, live trains             |
 | `/dev`     | Diagnostics — registry probe, event monitor, ingest UI          |
 | `/metrics` | Prometheus metrics endpoint                                     |
-| `/health`  | DB health probe                                                 |
+| `/health`  | DB probe + Darwin feed freshness (503 if the feed is silent > `FEED_STALE_AFTER_SECS`, default 300 s) |
 
 ---
 
@@ -161,9 +161,9 @@ src/
 ├── db/             sqlx queries — history flush, static data, timetables
 ├── frontend/       maud page handlers (dashboard, search, detail, dev)
 ├── ingestion/      Darwin STOMP client, XML parser, GTFS ingest
-├── networking/     Coalescer, circuit breaker, rate limiter, GBR client
+├── networking/     Coalescer, circuit breaker, rate limiter, GBR client (built, not wired)
 ├── prediction/     Tier B engine — delay probability, confidence scoring
-├── state_machine/  Urgency states, poll manager, state transitions
+├── state_machine/  Urgency states + StateChangeEvent (poll manager removed)
 ├── types/          TrainId, TrainStatus, Stamped<T>, shared domain types
 └── weather/        Weather anchor polling (ntfy integration, optional)
 
@@ -179,7 +179,7 @@ scripts/            Python ML training, data export, and DB seeding utilities
 | File | Contents |
 |:-----|:---------|
 | [`docs/improvements.md`](docs/improvements.md) | Full index of architectural decisions made across all epics. Treat as constraints before touching any module. |
-| [`docs/model-performance.md`](docs/model-performance.md) | ML model accuracy breakdown — MAE, tier distribution, feature importance. |
+| [`docs/model-performance.md`](docs/model-performance.md) | ML evaluation method. Earlier published MAEs are **withdrawn** (target leakage + random split); no valid figures until retraining. |
 | [`docs/model-improvement-plan.md`](docs/model-improvement-plan.md) | Rationale behind the v1.12.0 LightGBM improvements (bias correction, feature fixes, hyperparameter scaling). |
 | [`CLAUDE.md`](CLAUDE.md) | Architecture reference — full module map, key patterns, and engineering conventions. |
 | [`SECURITY.md`](SECURITY.md) | Secrets inventory and rotation procedure. |
@@ -189,6 +189,10 @@ scripts/            Python ML training, data export, and DB seeding utilities
 ## What Isn't Here Yet
 
 **Live ticket purchase (Tier C).** The GBR Retail API purchase endpoint (`POST /bookings`) is not wired; the product surfaces a "Ticketing — coming soon" stub in its place. The blocker is API tier access: the GBR sandbox grants read access freely, but write (purchase) access requires a separate commercial agreement. The circuit breaker, idempotency layer, and `purchase_attempts` table are already built and ready to connect.
+
+**Live GBR polling (Tier C reads).** `networking/` holds a GBR client, request coalescer, token-bucket rate limiter and circuit breaker, all unit-tested, and `main.rs` spawns a poll consumer when `GBR_API_KEY` is set. Nothing drives it: the consumer only acts on same-state "poll tick" events, and since the poll manager was removed nothing emits them. The GBR client's endpoint/auth contract also still has to be reconciled with the real upstream before it may be wired (see `networking/gbr_client.rs`). The `gbr_api_latency_ms` histogram therefore never records in practice, and the weather-driven promotion that lives on the same path is inactive too. Every live read today comes from Darwin.
+
+**Validated model accuracy.** Earlier published MAEs (e.g. real-time 4.09 / 4.41 min) are withdrawn: the real-time model was trained with a label-derived `current_delay_mins` feature and scored on a random split of time-series data, on labels from before the v1.15.3 delay fix. The training pipeline is fixed (temporal holdout, no leakage); valid numbers need a retrain. See [`docs/model-performance.md`](docs/model-performance.md).
 
 ---
 
@@ -200,7 +204,7 @@ scripts/            Python ML training, data export, and DB seeding utilities
 
 **No JavaScript frameworks.** The frontend is `maud` (server-side HTML) + `htmx` for partial updates + a small amount of vanilla JS for the autocomplete event delegation and SSE event feed. No build step, no bundler, no hydration.
 
-**Predictability over cleverness.** The state machine, circuit breaker, and coalescer all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/dev`, `/metrics`, and the live event monitor.
+**Predictability over cleverness.** The state machine, circuit breaker, and coalescer (the latter two not yet wired) all have explicit, observable state. Every transition is logged. The system is designed to be debuggable at runtime through `/dev`, `/metrics`, and the live event monitor.
 
 **Dependency hygiene.** `cargo deny` enforces licence compatibility and blocks known-vulnerable crate versions on every build. Secrets are documented with rotation cadence in `SECURITY.md`; none are committed or logged.
 

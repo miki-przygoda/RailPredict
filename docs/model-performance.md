@@ -1,29 +1,60 @@
-# ML Delay Prediction — Model Performance
+# ML Delay Prediction -- Model Performance
 
-**Last evaluated:** 30 May 2026  
-**Data source:** Live Darwin Push Port feed (UK National Rail)  
-**Models:** LightGBM v3, exported as ONNX — `models/day_ahead.onnx`, `models/realtime.onnx`  
-**Training script:** `scripts/compare_models.py`
+**Status: no valid accuracy figures are currently published.**
+**Last updated:** 28 September 2026 (v1.21.1)
+**Models:** LightGBM, exported as ONNX -- `models/day_ahead.onnx`, `models/realtime.onnx`
+**Training script:** `scripts/compare_models.py` (v8)
 
 ---
 
-## Current Results (v3 — 30 May 2026)
+## Withdrawn results
 
-Trained on **3,036,926 real Darwin observations** (21–30 May 2026, bad days excluded).  
-Test set: 15% random stratified split (455,539 rows).
+Every MAE previously published for these models -- in this file, `models/benchmarks.json`,
+the README, the generated `docs/*.html` reports and the CHANGELOG (e.g. real-time MAE
+3.97 / 4.09 / 4.41 min, day-ahead 13.10-14.39 min) -- is **withdrawn**. They are not
+valid estimates of prediction accuracy, for three independent reasons:
 
-| Model | MAE | RMSE | Bias | ±2 min | ±5 min | ±10 min |
-|---|---|---|---|---|---|---|
-| **Day-ahead** (10 features) | **14.12 min** | 21.75 min | −6.34 min | 14.2% | 32.1% | 54.3% |
-| **Real-time** (15 features) | **4.09 min** | 6.42 min | −0.15 min | 42.9% | 72.5% | 90.3% |
-| Trimmed-mean baseline | 17.98 min | — | — | — | — | — |
+1. **Target leakage (real-time model).** The `current_delay_mins` training feature was
+   built as `delay_mins * U(0.7, 1.3)`: the label itself plus multiplicative noise. The
+   model learned to read the answer back from its input. This was in both
+   `compare_models.py` and the older `train_models.py`; the synthetic generator did the
+   same with `U(0.85, 1.15)`.
+2. **Random split on time-series data.** The test set was a "15% random stratified
+   split". Snapshots of the same journey, and observations minutes apart at the same
+   station, landed on both sides, so the test set was not unseen data. Rolling features
+   also included the current run's own earlier snapshots, and encodings/operator means
+   were fitted on the full frame (test included).
+3. **Invalid labels.** Until the v1.15.3 fix (05/06/2026), `delay_history.delay_mins`
+   measured journey progress (time since origin departure), not origin delay (median
+   ~21-32 min vs a true median of 0). All published benchmarks were trained on
+   late-May / 1 June 2026 data, before that fix.
 
-**vs. previous models (trained 28 May on ~1.4M rows):**
+The committed `.onnx` files are from that pipeline. They keep the 14/22-feature layout
+the Rust engine expects, so the runtime still loads them, but their accuracy is unknown
+until they are retrained. The live `/predictions` page scores logged predictions against
+real outcomes and is not affected by this retraction.
 
-| Model | Previous MAE | Current MAE | Delta |
-|---|---|---|---|
-| Day-ahead | 17.59 min | 14.12 min | ▼ 3.47 min |
-| Real-time | 5.92 min | 4.09 min | ▼ 1.83 min |
+---
+
+## Evaluation method (v8, current)
+
+| Aspect | Now |
+|---|---|
+| Label floor | `--since 2026-06-05` (post label fix) by default |
+| Split | Date-ordered: last ~15% of service dates = test, the ~10% before = early-stopping validation, the rest = fit. No journey straddles a boundary. |
+| Real-time rows | Non-final snapshots of each journey (pattern + UTC service date) |
+| Real-time target | The journey's **final** observed origin delay |
+| `current_delay_mins` | The snapshot's own Darwin reading (what the engine sees at prediction time) |
+| Real-time baseline | Persistence: predict final = current reading |
+| Day-ahead baseline | Per-pattern trimmed mean |
+| Rolling stats | Prior service dates only (same in Rust, `HistoricalStore::rolling_stats_7d`) |
+| Encodings / operator means | Fitted on the fit dates only; unseen values -> 0 (OOV), as at inference |
+| Synthetic rows | Off by default (`--synthetic`); if enabled, day-ahead fit set only, never in validation, test or the real-time model |
+
+`models/benchmarks.json` is only rendered by the export report when it carries
+`"status": "valid"`, which only `compare_models.py` v8+ writes.
+`scripts/test_compare_models.py` holds DB-free leakage regression tests
+(`python -m unittest scripts/test_compare_models.py`).
 
 ---
 
@@ -31,139 +62,68 @@ Test set: 15% random stratified split (455,539 rows).
 
 ### Two-model cascade
 
-The engine tries models in order, falling back if a model isn't loaded or an encoding is unknown:
-
 ```
 Darwin TS message arrives
-  │
-  ├─ reported_delay_mins available?
-  │     YES → realtime.onnx (15 features)
-  │     NO  → day_ahead.onnx (10 features)
-  │
-  └─ ONNX returns None (unknown TIPLOC or model not loaded)?
-        → trimmed-mean statistical fallback (needs ≥3 historical samples)
+  |
+  |- reported_delay_mins available?
+  |     YES -> realtime.onnx (22 features)
+  |     NO  -> day_ahead.onnx (14 features)
+  |
+  '- ONNX returns None (model not loaded)?
+        -> trimmed-mean statistical fallback (needs >=3 historical samples)
 ```
 
-### Day-ahead model — 10 features
+### Day-ahead model -- 14 features
 
-Used when a train hasn't yet produced a live Darwin delay reading (pre-departure, dormant/monitored state).
+`weekday`, `departure_hour`, `month`, `is_peak`, `origin_crs_enc`, `uid_prefix_enc`,
+`rolling_mean_7d`, `rolling_std_7d`, `rolling_ontime_7d`, `sample_count_log`,
+`rolling_mean_14d`, `rolling_std_14d`, `weekday_operator_enc`, `operator_relative_delay`.
 
-| # | Feature | Source | Importance |
-|---|---|---|---|
-| 0 | `origin_crs_enc` | TIPLOC label-encoded from `feature_meta.json` | ████████████████████████████ |
-| 1 | `rolling_std_7d` | 7-day std dev of delay for this service pattern | ██████████████████████ |
-| 2 | `rolling_mean_7d` | 7-day mean delay for this service pattern | █████████████████████ |
-| 3 | `sample_count_log` | log1p(n), where n = 7-day sample count | ████████████████████ |
-| 4 | `rolling_ontime_7d` | % of services on time in last 7 days (0–100) | ███████████████ |
-| 5 | `departure_hour` | Planned departure hour 0–23 | ██████████████ |
-| 6 | `uid_prefix_enc` | First char of UID (proxy for train operating company) | ██████████ |
-| 7 | `weekday` | 0 = Monday … 6 = Sunday | ██████ |
-| 8 | `is_peak` | Hour ∈ {7,8,16,17,18} ∧ weekday ≤ 4 | █ |
-| 9 | `month` | 1–12 | — (zero — insufficient seasonal range) |
+### Real-time model -- 22 features (day-ahead + 8)
 
-### Real-time model — 15 features (day-ahead + 5)
+`current_delay_mins`, `preceding_delay_mins`, `wind_mph`, `volatility_score`,
+`mins_until_departure`, `station_congestion_30m`, `operator_cascade_delay`,
+`predecessor_train_delay`.
 
-Activated once the Darwin feed reports a live delay for an active train.
-
-| # | Feature | Source | Importance |
-|---|---|---|---|
-| 0 | `origin_crs_enc` | TIPLOC label-encoded | ████████████████████████████ |
-| 1 | `current_delay_mins` | Darwin reported delay (trained with ±30% noise) | ███████████████████████████ |
-| 2 | `mins_until_departure` | Scheduled departure − now | █████████████████████████ |
-| 3 | `rolling_mean_7d` | 7-day mean delay | ████████████████████████ |
-| 4 | `rolling_std_7d` | 7-day std dev of delay | ████████████████████████ |
-| 5 | `sample_count_log` | log1p(7-day sample count) | ███████████████████ |
-| 6 | `rolling_ontime_7d` | % on time last 7 days | ███████████████ |
-| 7 | `preceding_delay_mins` | Most recent service at same origin within ±20 min | █████████████ |
-| 8 | `departure_hour` | Planned departure hour 0–23 | █████████████ |
-| 9 | `uid_prefix_enc` | TOC proxy from UID prefix | ████████ |
-| 10 | `weekday` | 0–6 | ████ |
-| 11 | `is_peak` | Peak hour flag | █ |
-| 12 | `month` | 1–12 | — (zero — insufficient seasonal range) |
-| 13 | `wind_mph` | Open-Meteo weather anchor | — (zero — WEATHER_ANCHORS not configured) |
-| 14 | `volatility_score` | 0–3 wind/incident composite | — (zero — WEATHER_ANCHORS not configured) |
-
-**Training note:** `current_delay_mins` was multiplied by U(0.7, 1.3) noise during training to stop the model simply copying the input and force integration of pattern context with the live signal.
+The order is fixed and must match `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEATURES`).
 
 ### Statistical fallback
 
-When neither ONNX model fires (e.g. TIPLOC not in training vocabulary):
-- Trimmed mean of the service pattern's historical records (trims top/bottom 10%)
-- Requires ≥3 samples; emits no prediction otherwise
-- Confidence decays exponentially if the most recent sample is >21 days old: `confidence × exp(−days / 21)`
-- Blends in preceding-service delay at the same origin (0.6/0.4 weight) when a correlated service is found within ±20 min
+- Trimmed mean of the pattern's historical records (trims top/bottom 10%), >=3 samples
+- Confidence decays as `confidence * exp(-days / 21)` when the newest sample is >21 days old
+- Blends in preceding-service delay at the same origin (0.6/0.4) within +/-20 min
 
 ---
 
-## Training Data
+## Known limitations
 
-| Property | Value |
-|---|---|
-| Source | Live Darwin Push Port feed (real observations) |
-| Training window | 21–30 May 2026 |
-| Total rows (after filter) | 3,036,926 |
-| Excluded days | 2026-05-21, 2026-05-27 (startup reconnect artifacts — massive negative delays) |
-| Delay filter | `delay_mins BETWEEN -30 AND 240` |
-| Unique TIPLOCs | 2,662 stations in `feature_meta.json` |
-| UID prefix encodings | 18 TOC prefixes |
-| Train / test split | 85% / 15% random stratified by delay tier |
-
-### Delay tier distribution (training set)
-
-| Tier | Definition | Share | Real-world UK % |
-|---|---|---|---|
-| Severe | > 30 min | 53.0% | ~2% |
-| Moderate | 6–30 min | 32.2% | ~5% |
-| On-time | ≤ 0 min | 10.4% | ~85% |
-| Slight | 1–5 min | 4.4% | ~8% |
-
-The Darwin feed generates a training record every time a train's delay changes by ≥2 minutes, but only every ~5 minutes for on-time trains. This produces severe overrepresentation of delayed trains. Equal-tier sample weighting is applied during training so each tier contributes 25% of the total gradient weight.
-
-### Feature engineering notes
-
-- **`preceding_delay_mins`**: computed via `pandas.merge_asof` — for each record, the most recent observation at the same TIPLOC within the prior 20 minutes with a different UID. **66% of rows have a non-zero predecessor** (mean predecessor delay: 32.1 min).
-- **`mins_until_departure`**: approximated from `departure_hour` and `recorded_at`. Range: −360 to +360 min, mean: +49.4 min.
-
----
-
-## Known Limitations
-
-**1. Dataset is 10 days old — no seasonal signal yet**  
-`month` has zero feature importance because all data falls within a single month (May 2026). Models will not generalise to winter timetable changes, engineering works, or bank holiday patterns until the dataset spans multiple months. Rolling 7-day features partially compensate within the current window.
-
-**2. 28 May dominates the dataset**  
-1.34M of 3.04M rows (44%) are from a single day. This means gradient steps are disproportionately shaped by that day's conditions. A per-day row cap would reduce this dominance. Planned fix in a future training run.
-
-**3. Bad day filter has a timezone edge case**  
-`recorded_at::date NOT IN ('2026-05-21', '2026-05-27')` uses the timestamp's local timezone for the date cast. BST (+01:00) means some records near midnight land on the wrong date. 21 May and 27 May still show ~11K rows each in training despite being listed as excluded. Fix: cast to UTC before date comparison.
-
-**4. Day-ahead model has a −6.34 min bias**  
-The day-ahead model systematically underestimates delays. This is partly a consequence of the imbalanced training distribution (severe delays overrepresented despite sample weighting). Will improve as the dataset grows and `month` starts carrying seasonal signal. A post-inference +6 min offset is a short-term mitigation option.
-
-**5. Weather features are zeros without `WEATHER_ANCHORS` configured**  
-`wind_mph` and `volatility_score` are only non-zero if `WEATHER_ANCHORS` is set in the environment. Without it, the real-time model uses pattern + current delay only. Configuring even one anchor (e.g. London) would activate these features.
-
-**6. `uid_prefix` encodes TOC, not route**  
-The first character of the UID identifies the train operating company — a proxy for route characteristics but cannot distinguish individual routes within a TOC. Route-level or headcode encoding would give finer granularity.
-
-**7. No coverage below 3 samples per pattern**  
-The statistical fallback emits no prediction for patterns with fewer than 3 historical records. New TIPLOCs entering the feed will have zero coverage until records accumulate.
+1. **No valid numbers yet.** See above; retrain on post-fix data with `make train`.
+2. **Real-time training rows need multi-snapshot journeys.** `record_outcome` writes on a
+   >=2 min change or every 5 min, so on-time trains that Darwin stops updating produce few
+   snapshots. The "on-time heartbeat" task in `main.rs` that was meant to fill this gap
+   listens for same-state poll events that nothing currently emits.
+3. **Snapshots after departure.** Once a train has left its origin, its origin delay is
+   final, so later snapshots are trivially predictable. They are kept (the engine also
+   predicts for en-route trains), which flatters both the model and the persistence
+   baseline; compare the model against that baseline, not in isolation.
+4. **`predecessor_train_delay` is a proxy in training.** Training has no Association
+   turnround data, so it copies `preceding_delay_mins`; at inference it comes from Darwin
+   NP associations. This is train/serve skew, not leakage.
+5. **Weather is a single anchor.** Training wind comes from the Open-Meteo archive at
+   Heathrow (hourly); if the fetch fails the features are zero.
+6. **`month` carries no signal** until the data spans several months.
+7. **`uid_prefix` encodes TOC, not route.**
+8. **Journey key uses the UTC date**, so a run that crosses UTC midnight splits in two.
 
 ---
 
 ## Retraining
 
-As live Darwin data accumulates, retrain with:
-
 ```bash
-cd scripts
-python3.11 compare_models.py
-# Outputs: ../models/day_ahead.onnx, ../models/realtime.onnx, ../models/feature_meta.json
-# Then restart the server to load new models
+make train                   # labels from 2026-06-05 onwards
+make train SINCE=2026-07-01  # later floor
 ```
 
-Models are picked up from `models/` at server startup — no recompilation needed.
-
-Retraining takes ~5–10 minutes on a laptop at 3M+ rows (LightGBM, 1500 estimators, 127 leaves). Accuracy improves naturally as the dataset grows and begins to cover multiple months, routes, and seasonal patterns.
-
-The training corpus is held internally in the `delay_history` table (and the frozen `railpredict` corpus DB); it is not distributed.
+Outputs `models/day_ahead.onnx`, `models/realtime.onnx`, `models/feature_meta.json` and
+`models/benchmarks.json`; restart the server to load them. The training corpus stays
+internal (`delay_history`); it is not distributed.
