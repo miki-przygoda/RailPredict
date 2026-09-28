@@ -31,9 +31,13 @@ The current version and last worked on date should be noted at the top of this f
   synthetic rows opt-in (`--synthetic`) and day-ahead only; `--since` label floor (default 2026-06-05); persistence
   baseline reported. Feature layout (14/22) unchanged, so `onnx_engine.rs` indices still
   match. `train_models.py` (stale 10/15 layout, leaky) is now a shim to
-  `compare_models.py`, which `make train` runs directly. Models were **not** retrained
-  here: the training DB is not available locally. DB-free leakage tests in
+  `compare_models.py`, which `make train` runs directly. DB-free leakage tests in
   `scripts/test_compare_models.py`.
+- **First leak-free run, not shipped.** On 5 days of post-fix data (5-10 June, test =
+  10 June) the models scored real-time MAE 5.16 vs a 1.02 persistence baseline and
+  day-ahead 7.36 vs a 2.09 trimmed-mean baseline (both biased ~+4.5 min, likely from
+  equal-tier weighting built for the pre-fix data). The previous `.onnx` files stay in
+  place; see `docs/model-performance.md`.
 - **/health reflects ingestion.** Adds Darwin feed freshness (time since the last STOMP
   message, `FEED_STALE_AFTER_SECS`, default 300): a stale feed returns 503 even when
   Postgres answers `SELECT 1`. New `darwin_feed_lag_seconds` gauge on `/metrics`.

@@ -36,6 +36,35 @@ real outcomes and is not affected by this retraction.
 
 ---
 
+## First v8 run (28/09/2026) -- not shipped
+
+Run on the local post-fix corpus (`railpredict_v2`, 1.93M rows, 5-10 June 2026), default
+settings (no synthetic rows, equal-tier weights). Split: fit 5-8 June, validation 9 June,
+test 10 June (one partial day, 188k rows).
+
+| Model | Test MAE | Bias | Baseline MAE |
+|---|---|---|---|
+| Day-ahead (14 features) | 7.36 min | +4.48 | trimmed mean: 2.09 min |
+| Day-ahead HC (3k trees) | 6.76 min | +4.62 | |
+| Real-time (22 features) | 5.16 min | +4.60 | persistence: 1.02 min |
+| Real-time HC (3k trees) | 4.68 min | +3.01 | |
+
+**Both models lose to their trivial baselines**, so these models were not committed and the
+previous `.onnx` files remain in place (accuracy unknown, see above). Likely causes:
+
+- *Equal-tier sample weighting* (severe delays weighted ~18x) was designed for the pre-fix
+  data, where most rows looked severely delayed. On correct labels (median 0) it drags every
+  prediction upward, hence the ~+4.5 min bias.
+- *Five days of data.* Rolling features are near-empty: a pattern includes the weekday, so a
+  7-day window has at most one prior run, which the corpus does not contain yet.
+- The Rust side adds `DAY_AHEAD_BIAS_MINS = 6` to day-ahead output, calibrated to the old
+  models; it must be revisited with any retrain.
+
+Any fix to weighting or features must be chosen on the validation dates, not on the test
+day, before numbers are published.
+
+---
+
 ## Evaluation method (v8, current)
 
 | Aspect | Now |
@@ -97,7 +126,7 @@ The order is fixed and must match `onnx_engine.rs` (`N_DAY_FEATURES`, `N_RT_FEAT
 
 ## Known limitations
 
-1. **No valid numbers yet.** See above; retrain on post-fix data with `make train`.
+1. **No shippable model yet.** The first leak-free run lost to trivial baselines (see above).
 2. **Real-time training rows need multi-snapshot journeys.** `record_outcome` writes on a
    >=2 min change or every 5 min, so on-time trains that Darwin stops updating produce few
    snapshots. The "on-time heartbeat" task in `main.rs` that was meant to fill this gap

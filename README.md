@@ -192,7 +192,7 @@ scripts/            Python ML training, data export, and DB seeding utilities
 
 **Live GBR polling (Tier C reads).** `networking/` holds a GBR client, request coalescer, token-bucket rate limiter and circuit breaker, all unit-tested, and `main.rs` spawns a poll consumer when `GBR_API_KEY` is set. Nothing drives it: the consumer only acts on same-state "poll tick" events, and since the poll manager was removed nothing emits them. The GBR client's endpoint/auth contract also still has to be reconciled with the real upstream before it may be wired (see `networking/gbr_client.rs`). The `gbr_api_latency_ms` histogram therefore never records in practice, and the weather-driven promotion that lives on the same path is inactive too. Every live read today comes from Darwin.
 
-**Validated model accuracy.** Earlier published MAEs (e.g. real-time 4.09 / 4.41 min) are withdrawn: the real-time model was trained with a label-derived `current_delay_mins` feature and scored on a random split of time-series data, on labels from before the v1.15.3 delay fix. The training pipeline is fixed (temporal holdout, no leakage); valid numbers need a retrain. See [`docs/model-performance.md`](docs/model-performance.md).
+**Validated model accuracy.** Earlier published MAEs (e.g. real-time 4.09 / 4.41 min) are withdrawn: the real-time model was trained with a label-derived `current_delay_mins` feature and scored on a random split of time-series data, on labels from before the v1.15.3 delay fix. The training pipeline is fixed (temporal holdout, no leakage). Its first honest run, on five days of post-fix data, lost to trivial baselines, so no new model is shipped yet. See [`docs/model-performance.md`](docs/model-performance.md).
 
 ---
 
