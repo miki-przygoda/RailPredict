@@ -92,12 +92,12 @@ struct ParsedReason {
 fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
     e.attributes()
         .filter_map(|a| a.ok())
-        .find(|a| a.key.local_name().as_ref() == name)
-        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        .find(|a| a.key.local_name().as_ref().as_bytes() == name)
+        .map(|a| a.value.to_string())
 }
 
 fn reason_kind(e: &BytesStart) -> Option<ReasonKind> {
-    match e.local_name().as_ref() {
+    match e.local_name().as_ref().as_bytes() {
         b"LateReason" => Some(ReasonKind::Late),
         b"CancelReason" => Some(ReasonKind::Cancel),
         _ => None,
@@ -142,14 +142,13 @@ fn parse_reasons(xml: &str) -> Vec<ParsedReason> {
             Ok(Event::Text(t)) => {
                 if let Some(p) = pending.as_mut()
                     && p.1.is_none()
-                    && let Ok(s) = t.unescape()
-                    && let Ok(code) = s.trim().parse::<i32>()
+                    && let Ok(code) = t.xml10_content().trim().parse::<i32>()
                 {
                     p.1 = Some(code);
                 }
             }
             Ok(Event::End(ref e)) => {
-                if matches!(e.local_name().as_ref(), b"LateReason" | b"CancelReason")
+                if matches!(e.local_name().as_ref().as_bytes(), b"LateReason" | b"CancelReason")
                     && let Some((kind, Some(code), tiploc, near)) = pending.take()
                 {
                     out.push(ParsedReason { kind, code, tiploc, near });

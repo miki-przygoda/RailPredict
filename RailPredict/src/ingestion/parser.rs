@@ -245,7 +245,7 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                 // immediately follow their element with no intervening element).
                 pending_text = None;
 
-                match local.as_ref() {
+                match local.as_ref().as_bytes() {
                     b"Pport" => {
                         pport_ts = Some(extract_pport_ts(e)?);
                     }
@@ -369,7 +369,7 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                         pending_text = Some(PendingText::Plat);
                     }
                     b"LateReason" | b"CancelReason" => {
-                        let kind = if local.as_ref() == b"LateReason" {
+                        let kind = if local.as_ref().as_bytes() == b"LateReason" {
                             ReasonKind::Late
                         } else {
                             ReasonKind::Cancel
@@ -466,7 +466,11 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
 
             Ok(Event::Text(ref t)) => match pending_text.take() {
                 Some(PendingText::Plat) => {
-                    if let Ok(s) = t.unescape() {
+                    {
+                        // Platform text is a bare number, so there are no entity
+                        // references to resolve (quick-xml >= 0.38 reports those as
+                        // separate GeneralRef events).
+                        let s = t.xml10_content();
                         let p = s.trim().to_string();
                         if !p.is_empty() {
                             let is_first = current_call.as_ref().map(|c| c.seq) == Some(0);
@@ -481,8 +485,7 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
                     }
                 }
                 Some(PendingText::ReasonCode) => {
-                    if let Ok(s) = t.unescape()
-                        && let Ok(code) = s.trim().parse::<i32>()
+                    if let Ok(code) = t.xml10_content().trim().parse::<i32>()
                         && let Some(pr) = pending_reason.as_mut()
                     {
                         pr.1 = Some(code);
@@ -492,7 +495,7 @@ pub fn parse_pport(xml: &str) -> Result<(DateTime<Utc>, Vec<ParsedUpdate>), Pars
             },
 
             Ok(Event::End(ref e)) => {
-                match e.local_name().as_ref() {
+                match e.local_name().as_ref().as_bytes() {
                     b"TS" => {
                         if let Some(mut ts) = current_ts.take() {
                             if let Some(call) = current_call.take() {
@@ -568,16 +571,16 @@ fn attr_str(
 ) -> Result<String, ParseError> {
     e.attributes()
         .filter_map(|a| a.ok())
-        .find(|a| a.key.local_name().as_ref() == name)
-        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        .find(|a| a.key.local_name().as_ref().as_bytes() == name)
+        .map(|a| a.value.to_string())
         .ok_or(ParseError::MissingAttribute { element, attr })
 }
 
 fn attr_opt(e: &BytesStart, name: &[u8]) -> Option<String> {
     e.attributes()
         .filter_map(|a| a.ok())
-        .find(|a| a.key.local_name().as_ref() == name)
-        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        .find(|a| a.key.local_name().as_ref().as_bytes() == name)
+        .map(|a| a.value.to_string())
 }
 
 fn attr_bool(e: &BytesStart, name: &[u8]) -> bool {

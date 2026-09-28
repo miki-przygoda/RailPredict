@@ -2,7 +2,28 @@
 
 The current version and last worked on date should be noted at the top of this file below this line:
 
-**version = "1.21.1" -- 28/09/2026**
+**version = "1.21.2" -- 28/09/2026**
+
+---
+
+## v1.21.2 -- 28/09/2026
+
+**CI fixes: delay_history partitions, dependency advisories.**
+
+- **delay_history had no partition after 2026-07-01.** Migration 006 only created
+  quarterly partitions up to 2026 Q2, so every insert since 1 July failed with
+  "no partition of relation delay_history found for row" (SQLSTATE 23514): production
+  stopped recording delay history and the `db_*` integration tests, which insert `NOW()`,
+  failed. New migration `20240417120020` adds quarterly partitions through 2028 Q4 plus a
+  `DEFAULT` partition so a missing range can no longer reject inserts. Add the 2029
+  quarters before 2029-01-01 to keep the default partition empty.
+- **cargo deny advisories.** Updated `anyhow` 1.0.104 (RUSTSEC-2026-0190),
+  `crossbeam-epoch` 0.9.21 (RUSTSEC-2026-0204), `h2` 0.4.19 (RUSTSEC-2026-0258),
+  `rustls` 0.23.45 (RUSTSEC-2026-0285) and the yanked `der` 0.8.0 -> 0.8.2.
+- **quick-xml 0.37 -> 0.42** (RUSTSEC-2026-0194, RUSTSEC-2026-0195). Names and attribute
+  values are now `&str`; `BytesText::unescape` is gone, so the parser reads platform
+  numbers and reason codes with `xml10_content()`. Both are bare numbers with no entity
+  references, so behaviour is unchanged.
 
 ---
 
