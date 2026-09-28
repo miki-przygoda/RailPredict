@@ -18,7 +18,13 @@
 //! [10] rolling_mean_14d  [11] rolling_std_14d
 //! [12] weekday_operator_enc  [13] operator_relative_delay
 //!
+//! Rolling stats [6]-[11] cover prior runs only (current UTC day excluded; see
+//! `HistoricalStore::rolling_stats_7d`).
+//!
 //! ## Real-time (22 features = day-ahead + 8)
+//! Target (compare_models.py v8+): the journey's final observed origin delay.
+//! `current_delay_mins` is the Darwin reading at prediction time. Models trained
+//! before v8 used a label-derived stand-in for it (target leak) -- see CHANGELOG 1.21.1.
 //! [14] current_delay_mins  [15] preceding_delay_mins  [16] wind_mph
 //! [17] volatility_score    [18] mins_until_departure  [19] station_congestion_30m
 //! [20] operator_cascade_delay  [21] predecessor_train_delay

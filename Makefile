@@ -83,9 +83,13 @@ seed-stations:
 
 # Train ML delay prediction models and export them as ONNX.
 # Reads DATABASE_URL from .env (swaps @db: → @localhost: automatically).
-# Outputs: models/day_ahead.onnx, models/realtime.onnx, models/feature_meta.json
+# Outputs: models/day_ahead.onnx, models/realtime.onnx, models/feature_meta.json,
+#          models/benchmarks.json (temporal-holdout test results)
+# Only delay_history rows from the v1.15.3 label fix (2026-06-05) onwards are used;
+# override with: make train SINCE=2026-07-01   (SINCE=all disables the floor)
 # Restart the server after training to pick up the new models.
+SINCE ?= 2026-06-05
 train:
 	@test -d scripts/.venv || python3 -m venv scripts/.venv
 	scripts/.venv/bin/pip install -q -r scripts/requirements.txt
-	scripts/.venv/bin/python scripts/train_models.py
+	scripts/.venv/bin/python scripts/compare_models.py --since $(SINCE)

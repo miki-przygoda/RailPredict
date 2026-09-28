@@ -148,17 +148,33 @@ impl HistoricalStore {
     /// Returns `RollingStats::default()` (all zeros) when no 7-day data exists, so
     /// callers can always build a complete ML feature vector without Option handling.
     /// The 14d fields will be zero only if no records exist in the 14-day window.
+    ///
+    /// Only **prior runs** count: records from the current UTC day are skipped. A
+    /// pattern includes the weekday, so same-day records are this run's own earlier
+    /// snapshots (ingestion calls `record_outcome` before predicting) -- its outcome,
+    /// not its history. Matches `add_rolling_features` in `scripts/compare_models.py`.
     pub fn rolling_stats_7d(&self, pattern: &ServicePattern) -> RollingStats {
+        self.rolling_stats_at(pattern, Utc::now())
+    }
+
+    /// [`Self::rolling_stats_7d`] evaluated at an explicit `now` (tests).
+    pub fn rolling_stats_at(&self, pattern: &ServicePattern, now: DateTime<Utc>) -> RollingStats {
         let Some(entry) = self.inner.get(pattern) else {
             return RollingStats::default();
         };
-        let now = Utc::now();
         let cutoff_7d  = now - Duration::days(7);
         let cutoff_14d = now - Duration::days(14);
+        let current_day_start = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .map_or(now, |d| d.and_utc());
 
         let mut v7: Vec<i32> = Vec::new();
         let mut v14: Vec<i32> = Vec::new();
         for r in entry.iter() {
+            if r.recorded_at >= current_day_start {
+                continue;
+            }
             if r.recorded_at >= cutoff_7d {
                 v7.push(r.delay_mins);
                 v14.push(r.delay_mins);
@@ -237,6 +253,24 @@ mod tests {
             origin_crs: "LDS".to_string(),
             departure_hour: 9,
         }
+    }
+
+    #[test]
+    fn rolling_stats_ignore_the_current_runs_own_snapshots() {
+        use chrono::TimeZone;
+        let store = HistoricalStore::new();
+        let now = Utc.with_ymd_and_hms(2026, 6, 8, 9, 30, 0).unwrap();
+        let at = |d: i32, t: DateTime<Utc>| DelayRecord { delay_mins: d, predicted_delay_mins: None, recorded_at: t };
+        // Last week's run (prior history) ...
+        store.insert(pattern(), at(4, now - Duration::days(7) + Duration::minutes(5)));
+        store.insert(pattern(), at(6, now - Duration::days(7) + Duration::minutes(10)));
+        // ... and two snapshots of today's run, which must not count.
+        store.insert(pattern(), at(40, now - Duration::minutes(20)));
+        store.insert(pattern(), at(45, now - Duration::minutes(5)));
+
+        let r = store.rolling_stats_at(&pattern(), now);
+        assert!((r.mean_delay - 5.0).abs() < 1e-6, "mean {} should use prior runs only", r.mean_delay);
+        assert!((r.sample_count_log - 3.0_f32.ln()).abs() < 1e-6);
     }
 
     #[test]
